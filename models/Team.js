@@ -3,40 +3,20 @@ const Schema = mongoose.Schema;
 
 // 1. Team (Nhóm dự án)
 const TeamSchema = new Schema({
-    class: { type: Schema.Types.ObjectId, ref: 'Class' },
+    class_id: { type: Schema.Types.ObjectId, ref: 'Class', required: true },
     project_name: String,
     
-    // Cấu hình Jira
-    jira_config: {
-        project_key: String, // SWP
-        board_id: Number,    // Quan trọng để lấy Sprint
-        url: String,
-        api_token: String    // Encrypted
-    },
+    // Cấu hình Jira (flat fields theo schema)
+    jira_project_key: String, // e.g. SWP
+    jira_board_id: Number,     // REQUIRED for Agile API
+    jira_url: String,
+    api_token_jira: String,   // Encrypted
     
-    // Cấu hình GitHub
-    github_config: {
-        repo_url: String,
-        api_token: String    // Encrypted
-    },
+    // Cấu hình GitHub (flat fields theo schema)
+    github_repo_url: String,
+    api_token_github: String, // Encrypted
     
     last_sync_at: Date
 });
 
-// 2. Team Member (Bảng Mapping quan trọng nhất)
-const TeamMemberSchema = new Schema({
-    team: { type: Schema.Types.ObjectId, ref: 'Team' },
-    student: { type: Schema.Types.ObjectId, ref: 'Student' },
-    
-    // Mapping ID
-    jira_account_id: String, // ID dài loằng ngoằng của Jira
-    github_username: String,
-    
-    role: { type: String, enum: ['Leader', 'Member'], default: 'Member' },
-    is_active: { type: Boolean, default: true }
-});
-
-module.exports = {
-    Team: mongoose.model('Team', TeamSchema),
-    TeamMember: mongoose.model('TeamMember', TeamMemberSchema)
-};
+module.exports = mongoose.model('Team', TeamSchema);

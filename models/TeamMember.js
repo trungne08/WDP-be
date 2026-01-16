@@ -2,18 +2,17 @@ const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
 const TeamMemberSchema = new Schema({
-    team: { type: Schema.Types.ObjectId, ref: 'Team' },
-    student: { type: Schema.Types.ObjectId, ref: 'Student' },
+    team_id: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
+    student_id: { type: Schema.Types.ObjectId, ref: 'Student', required: true },
     
     // Mapping ID
-    jira_account_id: String,
+    jira_account_id: String, // Jira Account ID
     github_username: String,
     
-    // SỬA: Enum viết in hoa
-    role: { 
+    role_in_team: { 
         type: String, 
-        enum: ['LEADER', 'MEMBER'], 
-        default: 'MEMBER' 
+        enum: ['Leader', 'Member'], 
+        default: 'Member' 
     },
     
     is_active: { type: Boolean, default: true }

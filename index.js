@@ -22,6 +22,10 @@ const connectDB = async () => {
 
 connectDB();
 
+// Import routes từ server.js
+const setupRoutes = require('./server');
+setupRoutes(app);
+
 // API Test thử xem server sống hay chết
 app.get('/', (req, res) => {
   res.send('Backend SWP đang chạy ngon lành cành đào!');

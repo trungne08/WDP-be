@@ -3,7 +3,7 @@ const Schema = mongoose.Schema;
 
 // 1. Sprint
 const SprintSchema = new Schema({
-    team: { type: Schema.Types.ObjectId, ref: 'Team' },
+    team_id: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
     jira_sprint_id: Number, // ID gốc bên Jira
     name: String,
     state: String, // active, closed
@@ -16,8 +16,8 @@ const SprintSchema = new Schema({
 
 // 2. Jira Task
 const JiraTaskSchema = new Schema({
-    sprint: { type: Schema.Types.ObjectId, ref: 'Sprint' },
-    assignee: { type: Schema.Types.ObjectId, ref: 'TeamMember' }, // Link về bảng Member
+    sprint_id: { type: Schema.Types.ObjectId, ref: 'Sprint', required: true },
+    assignee_id: { type: Schema.Types.ObjectId, ref: 'TeamMember', required: true },
     
     issue_key: String, // SWP-123
     issue_id: String,
