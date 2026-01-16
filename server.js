@@ -1,26 +1,25 @@
-const express = require('express');
-const dotenv = require('dotenv');
-const connectDB = require('./config/db');
+const bcrypt = require('bcryptjs'); // Import thư viện
+const Admin = require('./models/Admin');
 
-// 1. Load biến môi trường từ file .env
-dotenv.config();
+app.get('/api/seed-test', async (req, res) => {
+    try {
+        const count = await Admin.countDocuments();
+        if (count > 0) return res.send('⚠️ Có Admin rồi, không tạo nữa.');
 
-// 2. Kết nối Database
-connectDB();
+        // 1. Tạo mật khẩu mã hóa (Hash)
+        const salt = await bcrypt.genSalt(10);
+        const hashedPassword = await bcrypt.hash('123456', salt); // Mật khẩu là 123456
 
-const app = express();
+        // 2. Lưu vào DB
+        const newAdmin = await Admin.create({
+            email: "admin@gmail.com",
+            full_name: "Super Admin",
+            password: hashedPassword, // Lưu chuỗi loằng ngoằng vào đây
+            role: "ADMIN"
+        });
 
-// Middleware để đọc JSON gửi lên
-app.use(express.json());
-
-// --- ROUTES CỦA BẠN SẼ NẰM Ở ĐÂY ---
-app.get('/', (req, res) => {
-    res.send('API is running...');
-});
-
-// 3. Chạy server với PORT từ .env (5000)
-const PORT = process.env.PORT || 5000;
-
-app.listen(PORT, () => {
-    console.log(`🚀 Server running on PORT ${PORT}`);
+        res.json({ msg: "✅ Tạo Admin thành công!", data: newAdmin });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }
 });
