@@ -12,5 +12,6 @@ module.exports = {
     GithubCommit: require('./GitData'),
     PeerReview: require('./Assessment').PeerReview,
     SprintAssessment: require('./Assessment').SprintAssessment,
-    RiskAlert: require('./RiskAlert')
+    RiskAlert: require('./RiskAlert'),
+    OTP: require('./OTP')
 };

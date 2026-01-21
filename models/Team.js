@@ -1,6 +1,15 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
+const SyncHistorySchema = new Schema(
+    {
+        synced_at: { type: Date, default: Date.now },
+        stats: { type: Schema.Types.Mixed, default: {} },
+        errors: { type: [String], default: [] }
+    },
+    { _id: false }
+);
+
 // 1. Team (Nhóm dự án)
 const TeamSchema = new Schema({
     class_id: { type: Schema.Types.ObjectId, ref: 'Class', required: true },
@@ -16,7 +25,8 @@ const TeamSchema = new Schema({
     github_repo_url: String,
     api_token_github: String, // Encrypted
     
-    last_sync_at: Date
+    last_sync_at: Date,
+    sync_history: { type: [SyncHistorySchema], default: [] }
 });
 
 module.exports = mongoose.model('Team', TeamSchema);

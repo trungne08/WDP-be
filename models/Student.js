@@ -7,8 +7,10 @@ const StudentSchema = new Schema({
     full_name: String,
     avatar_url: String,
     major: String,
+    password: { type: String, required: true },
     // Thêm role cố định
     role: { type: String, default: 'STUDENT', immutable: true },
+    is_verified: { type: Boolean, default: false }, // Email đã được xác minh chưa
     created_at: { type: Date, default: Date.now }
 });
 

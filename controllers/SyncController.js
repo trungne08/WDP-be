@@ -1,6 +1,7 @@
 const Team = require('../models/Team');
 const GithubCommit = require('../models/GitData');
 const { Sprint, JiraTask } = require('../models/JiraData');
+const TeamMember = require('../models/TeamMember');
 const GithubService = require('../services/GithubService');
 const JiraService = require('../services/JiraService');
 
@@ -70,17 +71,33 @@ exports.syncTeamData = async (req, res) => {
                     // Lấy Task của Sprint này
                     const tasks = await JiraService.fetchTasksInSprint(team.jira_url, sprintData.id, team.api_token_jira);
                     for (const task of tasks) {
+                        // Map assignee_account_id -> TeamMember nếu đã mapping
+                        let assigneeMemberId = null;
+                        if (task.assignee_account_id) {
+                            const member = await TeamMember.findOne({
+                                team_id: teamId,
+                                jira_account_id: task.assignee_account_id
+                            }).select('_id');
+                            assigneeMemberId = member ? member._id : null;
+                        }
+
                         await JiraTask.findOneAndUpdate(
                             { issue_id: task.issue_id },
                             {
                                 sprint_id: savedSprint._id,
+                                assignee_id: assigneeMemberId,
                                 issue_key: task.issue_key,
+                                issue_id: task.issue_id,
+                                summary: task.summary,
                                 status_name: task.status_name,
                                 status_category: task.status_category,
+                                assignee_account_id: task.assignee_account_id,
+                                assignee_name: task.assignee_name,
                                 story_point: task.story_point,
-                                updated_at: new Date()
+                                created_at: task.created_at ? new Date(task.created_at) : undefined,
+                                updated_at: task.updated_at ? new Date(task.updated_at) : new Date()
                             },
-                            { upsert: true }
+                            { upsert: true, new: true }
                         );
                         results.jira_tasks++;
                     }
@@ -94,7 +111,23 @@ exports.syncTeamData = async (req, res) => {
         }
 
         // Cập nhật thời gian Sync
-        await Team.findByIdAndUpdate(teamId, { last_sync_at: new Date() });
+        const now = new Date();
+        await Team.findByIdAndUpdate(teamId, {
+            last_sync_at: now,
+            $push: {
+                sync_history: {
+                    $each: [
+                        {
+                            synced_at: now,
+                            stats: results,
+                            errors: results.errors || []
+                        }
+                    ],
+                    $position: 0,
+                    $slice: 20
+                }
+            }
+        });
 
         res.json({ 
             message: "✅ Đồng bộ hoàn tất (theo cấu hình có sẵn)!", 
