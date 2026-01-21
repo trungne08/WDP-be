@@ -3,7 +3,27 @@ const nodemailer = require('nodemailer');
 // Cấu hình email transporter
 // Hỗ trợ: Gmail, Brevo (Sendinblue), và các SMTP service khác
 const createTransporter = () => {
-    // Nếu có EMAIL_HOST và EMAIL_PORT, dùng SMTP trực tiếp (ưu tiên)
+    // Ưu tiên 1: Nếu có EMAIL_SERVICE = 'brevo', tự động dùng Brevo SMTP (bỏ qua EMAIL_HOST)
+    if (process.env.EMAIL_SERVICE === 'brevo' || process.env.EMAIL_SERVICE === 'Brevo') {
+        console.log('📧 Sử dụng Brevo SMTP (tự động cấu hình)');
+        return nodemailer.createTransport({
+            host: 'smtp-relay.brevo.com',
+            port: 587, // Brevo khuyến nghị dùng port 587 với TLS
+            secure: false, // false for 587, true for 465
+            auth: {
+                user: process.env.EMAIL_USER, // Email đăng ký Brevo
+                pass: process.env.EMAIL_PASSWORD // SMTP key từ Brevo dashboard
+            },
+            connectionTimeout: 30000,
+            socketTimeout: 30000,
+            greetingTimeout: 30000,
+            tls: {
+                rejectUnauthorized: false
+            }
+        });
+    }
+    
+    // Ưu tiên 2: Nếu có EMAIL_HOST và EMAIL_PORT, dùng SMTP tùy chỉnh
     if (process.env.EMAIL_HOST && process.env.EMAIL_PORT) {
         const port = parseInt(process.env.EMAIL_PORT) || 587;
         const secure = process.env.EMAIL_SECURE === 'true' || port === 465;
@@ -27,26 +47,6 @@ const createTransporter = () => {
             socketTimeout: 30000, // 30 giây
             greetingTimeout: 30000, // 30 giây
             // Tùy chọn cho Render - không từ chối các chứng chỉ không hợp lệ
-            tls: {
-                rejectUnauthorized: false
-            }
-        });
-    }
-    
-    // Nếu có EMAIL_SERVICE = 'brevo', tự động dùng Brevo SMTP
-    if (process.env.EMAIL_SERVICE === 'brevo' || process.env.EMAIL_SERVICE === 'Brevo') {
-        console.log('📧 Sử dụng Brevo SMTP');
-        return nodemailer.createTransport({
-            host: 'smtp-relay.brevo.com',
-            port: 587, // Brevo khuyến nghị dùng port 587 với TLS
-            secure: false, // false for 587, true for 465
-            auth: {
-                user: process.env.EMAIL_USER, // Email đăng ký Brevo
-                pass: process.env.EMAIL_PASSWORD // SMTP key từ Brevo dashboard
-            },
-            connectionTimeout: 30000,
-            socketTimeout: 30000,
-            greetingTimeout: 30000,
             tls: {
                 rejectUnauthorized: false
             }
