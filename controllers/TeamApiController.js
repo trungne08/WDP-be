@@ -153,7 +153,15 @@ exports.seedMembers = async (req, res) => {
 exports.getMembers = async (req, res) => {
     try {
         const { teamId } = req.params;
-        if (!isValidObjectId(teamId)) return res.status(400).json({ error: 'teamId không hợp lệ' });
+        if (!isValidObjectId(teamId)) {
+            return res.status(400).json({ error: 'teamId không hợp lệ' });
+        }
+
+        // Kiểm tra team có tồn tại không
+        const team = await Team.findById(teamId).select('_id').lean();
+        if (!team) {
+            return res.status(404).json({ error: 'Không tìm thấy team' });
+        }
 
         const members = await TeamMember.find({ team_id: teamId })
             .populate('student_id', 'student_code email full_name avatar_url major')
@@ -174,6 +182,7 @@ exports.getMembers = async (req, res) => {
 
         res.json({ total: mapped.length, members: mapped });
     } catch (error) {
+        console.error('getMembers error:', error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -182,10 +191,23 @@ exports.getMembers = async (req, res) => {
 exports.getJiraUsers = async (req, res) => {
     try {
         const { teamId } = req.params;
-        if (!isValidObjectId(teamId)) return res.status(400).json({ error: 'teamId không hợp lệ' });
+        if (!isValidObjectId(teamId)) {
+            return res.status(400).json({ error: 'teamId không hợp lệ' });
+        }
+
+        // Kiểm tra team có tồn tại không
+        const team = await Team.findById(teamId).select('_id').lean();
+        if (!team) {
+            return res.status(404).json({ error: 'Không tìm thấy team' });
+        }
 
         const sprints = await Sprint.find({ team_id: teamId }).select('_id').lean();
         const sprintIds = sprints.map(s => s._id);
+        
+        if (sprintIds.length === 0) {
+            return res.json({ total: 0, users: [] });
+        }
+
         const tasks = await JiraTask.find({ sprint_id: { $in: sprintIds } })
             .select('assignee_account_id assignee_name')
             .lean();
@@ -203,6 +225,7 @@ exports.getJiraUsers = async (req, res) => {
 
         res.json({ total: map.size, users: Array.from(map.values()) });
     } catch (error) {
+        console.error('getJiraUsers error:', error);
         res.status(500).json({ error: error.message });
     }
 };

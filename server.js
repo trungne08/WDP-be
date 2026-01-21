@@ -486,6 +486,22 @@ module.exports = (app) => {
      *         required: true
      *         schema:
      *           type: string
+     *     responses:
+     *       200:
+     *         description: Danh sách thành viên
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 members:
+     *                   type: array
+     *       400:
+     *         description: teamId không hợp lệ
+     *       404:
+     *         description: Không tìm thấy team
      */
     app.get('/teams/:teamId/members', TeamApiController.getMembers);
 
@@ -502,6 +518,22 @@ module.exports = (app) => {
      *         required: true
      *         schema:
      *           type: string
+     *     responses:
+     *       200:
+     *         description: Danh sách Jira users
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 users:
+     *                   type: array
+     *       400:
+     *         description: teamId không hợp lệ
+     *       404:
+     *         description: Không tìm thấy team
      */
     app.get('/teams/:teamId/jira-users', TeamApiController.getJiraUsers);
 
@@ -543,6 +575,17 @@ module.exports = (app) => {
      *         required: true
      *         schema:
      *           type: string
+     *     responses:
+     *       200:
+     *         description: Dashboard data
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *       400:
+     *         description: teamId không hợp lệ
+     *       404:
+     *         description: Không tìm thấy team
      */
     app.get('/teams/:teamId/dashboard', TeamApiController.getDashboard);
 
@@ -569,6 +612,20 @@ module.exports = (app) => {
      *         required: false
      *         schema:
      *           type: string
+     *     responses:
+     *       200:
+     *         description: Danh sách tasks
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 tasks:
+     *                   type: array
+     *       400:
+     *         description: teamId không hợp lệ
      */
     app.get('/teams/:teamId/tasks', TeamApiController.getTasks);
 
@@ -590,6 +647,20 @@ module.exports = (app) => {
      *         required: false
      *         schema:
      *           type: number
+     *     responses:
+     *       200:
+     *         description: Danh sách commits
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 commits:
+     *                   type: array
+     *       400:
+     *         description: teamId không hợp lệ
      */
     app.get('/teams/:teamId/commits', TeamApiController.getCommits);
 
@@ -606,6 +677,20 @@ module.exports = (app) => {
      *         required: true
      *         schema:
      *           type: string
+     *     responses:
+     *       200:
+     *         description: Bảng xếp hạng
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 ranking:
+     *                   type: array
+     *       400:
+     *         description: teamId không hợp lệ
      */
     app.get('/teams/:teamId/ranking', TeamApiController.getRanking);
 };
