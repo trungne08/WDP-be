@@ -27,12 +27,12 @@ const createTransporter = () => {
         });
     }
     
-    // Mặc định: Cấu hình tường minh với Gmail SMTP (port 587 với TLS)
-    // Đây là cách khuyến nghị để tránh lỗi handshake trên server
+    // Mặc định: Thử port 465 (SSL) trước vì Render thường chặn port 587
+    // Port 465 dùng SSL trực tiếp, không cần STARTTLS - ít bị chặn hơn
     return nodemailer.createTransport({
         host: 'smtp.gmail.com',
-        port: 587, // Sử dụng cổng 587 cho TLS
-        secure: false, // false cho cổng 587, true cho cổng 465
+        port: 465, // Dùng SSL thay vì STARTTLS (port 587)
+        secure: true, // SSL required for port 465
         auth: {
             user: process.env.EMAIL_USER,
             pass: process.env.EMAIL_PASSWORD
