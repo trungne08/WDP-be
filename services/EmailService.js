@@ -1,22 +1,46 @@
 const nodemailer = require('nodemailer');
 
 // Cấu hình email transporter
-// Mặc định dùng Gmail, có thể thay đổi trong .env
+// Mặc định dùng Gmail SMTP trực tiếp (tốt hơn cho Render)
 const createTransporter = () => {
+    // Nếu có EMAIL_HOST và EMAIL_PORT, dùng SMTP trực tiếp
+    if (process.env.EMAIL_HOST && process.env.EMAIL_PORT) {
+        return nodemailer.createTransport({
+            host: process.env.EMAIL_HOST,
+            port: parseInt(process.env.EMAIL_PORT) || 587,
+            secure: process.env.EMAIL_SECURE === 'true' || false, // true for 465, false for other ports
+            auth: {
+                user: process.env.EMAIL_USER,
+                pass: process.env.EMAIL_PASSWORD
+            },
+            // Tăng timeout để tránh timeout trên Render
+            connectionTimeout: 30000, // 30 giây
+            socketTimeout: 30000, // 30 giây
+            greetingTimeout: 30000, // 30 giây
+            // Tùy chọn cho Render
+            tls: {
+                rejectUnauthorized: false // Cho phép self-signed certificates
+            }
+        });
+    }
+    
+    // Mặc định dùng Gmail SMTP trực tiếp (tốt hơn service 'gmail' trên Render)
     return nodemailer.createTransport({
-        service: process.env.EMAIL_SERVICE || 'gmail',
+        host: 'smtp.gmail.com',
+        port: 587,
+        secure: false, // true for 465, false for other ports
         auth: {
-            user: process.env.EMAIL_USER, // Email gửi đi
-            pass: process.env.EMAIL_PASSWORD // App Password (không phải password thường)
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASSWORD
         },
-        // Thêm timeout và connection options để tránh timeout trên Render
-        connectionTimeout: 10000, // 10 giây
-        socketTimeout: 10000, // 10 giây
-        greetingTimeout: 10000, // 10 giây
-        // Tăng số lần thử kết nối
-        pool: true,
-        maxConnections: 1,
-        maxMessages: 3
+        // Tăng timeout để tránh timeout trên Render
+        connectionTimeout: 30000, // 30 giây
+        socketTimeout: 30000, // 30 giây
+        greetingTimeout: 30000, // 30 giây
+        // Tùy chọn cho Render
+        tls: {
+            rejectUnauthorized: false // Cho phép self-signed certificates
+        }
     });
 };
 
@@ -117,7 +141,15 @@ const sendVerificationOTPEmail = async (toEmail, otpCode, role) => {
         return { success: true, messageId: info.messageId };
     } catch (error) {
         console.error('❌ Lỗi gửi email:', error.message);
-        throw error;
+        
+        // Phân loại lỗi để báo rõ ràng hơn
+        if (error.code === 'ETIMEDOUT' || error.code === 'ECONNECTION') {
+            throw new Error('Không thể kết nối đến server email. Vui lòng kiểm tra kết nối mạng hoặc cấu hình email.');
+        } else if (error.code === 'EAUTH') {
+            throw new Error('Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD trong .env');
+        } else {
+            throw error;
+        }
     }
 };
 
