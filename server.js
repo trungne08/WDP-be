@@ -291,7 +291,7 @@ module.exports = (app) => {
      *   get:
      *     summary: Tạo Admin test mặc định
      *     tags: [Utility]
-     *     description: Tạo một Admin mặc định để test (email: admin@gmail.com, password: 123456). Chỉ tạo nếu chưa có Admin nào trong DB.
+     *     description: Tạo một Admin mặc định để test. Email admin@gmail.com, password 123456. Chỉ tạo nếu chưa có Admin nào trong DB.
      *     responses:
      *       200:
      *         description: Tạo Admin thành công hoặc đã có Admin rồi
