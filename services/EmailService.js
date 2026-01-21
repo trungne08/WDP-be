@@ -1,12 +1,18 @@
 const nodemailer = require('nodemailer');
 
 // Cấu hình email transporter
-// Cấu hình tường minh (explicit) với host và port - tốt hơn cho Render/Heroku/AWS
+// Hỗ trợ: Gmail, Brevo (Sendinblue), và các SMTP service khác
 const createTransporter = () => {
-    // Nếu có EMAIL_HOST và EMAIL_PORT, dùng SMTP trực tiếp
+    // Nếu có EMAIL_HOST và EMAIL_PORT, dùng SMTP trực tiếp (ưu tiên)
     if (process.env.EMAIL_HOST && process.env.EMAIL_PORT) {
         const port = parseInt(process.env.EMAIL_PORT) || 587;
         const secure = process.env.EMAIL_SECURE === 'true' || port === 465;
+        
+        console.log('📧 Sử dụng SMTP tùy chỉnh:', {
+            host: process.env.EMAIL_HOST,
+            port: port,
+            secure: secure
+        });
         
         return nodemailer.createTransport({
             host: process.env.EMAIL_HOST,
@@ -27,15 +33,35 @@ const createTransporter = () => {
         });
     }
     
-    // Mặc định: Thử port 465 (SSL) trước vì Render thường chặn port 587
-    // Port 465 dùng SSL trực tiếp, không cần STARTTLS - ít bị chặn hơn
+    // Nếu có EMAIL_SERVICE = 'brevo', tự động dùng Brevo SMTP
+    if (process.env.EMAIL_SERVICE === 'brevo' || process.env.EMAIL_SERVICE === 'Brevo') {
+        console.log('📧 Sử dụng Brevo SMTP');
+        return nodemailer.createTransport({
+            host: 'smtp-relay.brevo.com',
+            port: 587, // Brevo khuyến nghị dùng port 587 với TLS
+            secure: false, // false for 587, true for 465
+            auth: {
+                user: process.env.EMAIL_USER, // Email đăng ký Brevo
+                pass: process.env.EMAIL_PASSWORD // SMTP key từ Brevo dashboard
+            },
+            connectionTimeout: 30000,
+            socketTimeout: 30000,
+            greetingTimeout: 30000,
+            tls: {
+                rejectUnauthorized: false
+            }
+        });
+    }
+    
+    // Mặc định: Gmail SMTP (port 465 SSL)
+    console.log('📧 Sử dụng Gmail SMTP (mặc định)');
     return nodemailer.createTransport({
         host: 'smtp.gmail.com',
         port: 465, // Dùng SSL thay vì STARTTLS (port 587)
         secure: true, // SSL required for port 465
         auth: {
             user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASSWORD
+            pass: process.env.EMAIL_PASSWORD // Phải dùng App Password
         },
         // Tăng timeout để tránh timeout trên Render
         connectionTimeout: 30000, // 30 giây
@@ -68,8 +94,9 @@ const sendOTPEmail = async (toEmail, otpCode, role) => {
         // Log thông tin cấu hình (không log password)
         console.log('📧 Đang gửi email từ:', process.env.EMAIL_USER);
         console.log('📧 Đến:', toEmail);
-        console.log('📧 SMTP Host:', process.env.EMAIL_HOST || 'smtp.gmail.com');
-        console.log('📧 SMTP Port:', process.env.EMAIL_PORT || '465');
+        console.log('📧 Email Service:', process.env.EMAIL_SERVICE || 'Gmail (mặc định)');
+        console.log('📧 SMTP Host:', process.env.EMAIL_HOST || (process.env.EMAIL_SERVICE === 'brevo' ? 'smtp-relay.brevo.com' : 'smtp.gmail.com'));
+        console.log('📧 SMTP Port:', process.env.EMAIL_PORT || (process.env.EMAIL_SERVICE === 'brevo' ? '587' : '465'));
 
         const transporter = createTransporter();
 
@@ -154,8 +181,9 @@ const sendVerificationOTPEmail = async (toEmail, otpCode, role) => {
         // Log thông tin cấu hình (không log password)
         console.log('📧 Đang gửi email từ:', process.env.EMAIL_USER);
         console.log('📧 Đến:', toEmail);
-        console.log('📧 SMTP Host:', process.env.EMAIL_HOST || 'smtp.gmail.com');
-        console.log('📧 SMTP Port:', process.env.EMAIL_PORT || '465');
+        console.log('📧 Email Service:', process.env.EMAIL_SERVICE || 'Gmail (mặc định)');
+        console.log('📧 SMTP Host:', process.env.EMAIL_HOST || (process.env.EMAIL_SERVICE === 'brevo' ? 'smtp-relay.brevo.com' : 'smtp.gmail.com'));
+        console.log('📧 SMTP Port:', process.env.EMAIL_PORT || (process.env.EMAIL_SERVICE === 'brevo' ? '587' : '465'));
 
         const transporter = createTransporter();
 
