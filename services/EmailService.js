@@ -1,14 +1,17 @@
 const nodemailer = require('nodemailer');
 
 // Cấu hình email transporter
-// Mặc định dùng Gmail SMTP trực tiếp (tốt hơn cho Render)
+// Cấu hình tường minh (explicit) với host và port - tốt hơn cho Render/Heroku/AWS
 const createTransporter = () => {
     // Nếu có EMAIL_HOST và EMAIL_PORT, dùng SMTP trực tiếp
     if (process.env.EMAIL_HOST && process.env.EMAIL_PORT) {
+        const port = parseInt(process.env.EMAIL_PORT) || 587;
+        const secure = process.env.EMAIL_SECURE === 'true' || port === 465;
+        
         return nodemailer.createTransport({
             host: process.env.EMAIL_HOST,
-            port: parseInt(process.env.EMAIL_PORT) || 587,
-            secure: process.env.EMAIL_SECURE === 'true' || false, // true for 465, false for other ports
+            port: port,
+            secure: secure, // true for 465, false for other ports
             auth: {
                 user: process.env.EMAIL_USER,
                 pass: process.env.EMAIL_PASSWORD
@@ -17,18 +20,19 @@ const createTransporter = () => {
             connectionTimeout: 30000, // 30 giây
             socketTimeout: 30000, // 30 giây
             greetingTimeout: 30000, // 30 giây
-            // Tùy chọn cho Render
+            // Tùy chọn cho Render - không từ chối các chứng chỉ không hợp lệ
             tls: {
-                rejectUnauthorized: false // Cho phép self-signed certificates
+                rejectUnauthorized: false
             }
         });
     }
     
-    // Mặc định dùng Gmail SMTP trực tiếp (tốt hơn service 'gmail' trên Render)
+    // Mặc định: Cấu hình tường minh với Gmail SMTP (port 587 với TLS)
+    // Đây là cách khuyến nghị để tránh lỗi handshake trên server
     return nodemailer.createTransport({
         host: 'smtp.gmail.com',
-        port: 587,
-        secure: false, // true for 465, false for other ports
+        port: 587, // Sử dụng cổng 587 cho TLS
+        secure: false, // false cho cổng 587, true cho cổng 465
         auth: {
             user: process.env.EMAIL_USER,
             pass: process.env.EMAIL_PASSWORD
@@ -37,10 +41,11 @@ const createTransporter = () => {
         connectionTimeout: 30000, // 30 giây
         socketTimeout: 30000, // 30 giây
         greetingTimeout: 30000, // 30 giây
-        // Tùy chọn cho Render
+        // Tùy chọn cho Render - không từ chối các chứng chỉ không hợp lệ
         tls: {
-            rejectUnauthorized: false // Cho phép self-signed certificates
-        }
+            rejectUnauthorized: false // Hữu ích trên một số server render
+        },
+        debug: process.env.NODE_ENV === 'development' // Enable debug in development
     });
 };
 
@@ -85,13 +90,18 @@ const sendOTPEmail = async (toEmail, otpCode, role) => {
         console.log('✅ Email OTP đã được gửi:', info.messageId);
         return { success: true, messageId: info.messageId };
     } catch (error) {
+        // Log chi tiết lỗi để debug (quan trọng để xem Google trả về gì)
         console.error('❌ Lỗi gửi email:', error.message);
+        console.error('❌ Error code:', error.code);
+        console.error('❌ Chi tiết lỗi email:', error);
         
         // Phân loại lỗi để báo rõ ràng hơn
-        if (error.code === 'ETIMEDOUT' || error.code === 'ECONNECTION') {
-            throw new Error('Không thể kết nối đến server email. Vui lòng kiểm tra kết nối mạng hoặc cấu hình email.');
+        if (error.code === 'ETIMEDOUT' || error.code === 'ECONNECTION' || error.code === 'ESOCKET') {
+            throw new Error('Không thể kết nối đến server email. Render có thể đang chặn SMTP port. Vui lòng thử dùng port 465 (SSL) hoặc email service khác như SendGrid.');
         } else if (error.code === 'EAUTH') {
-            throw new Error('Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD trong .env');
+            throw new Error('Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD (phải dùng App Password cho Gmail). Nếu Google báo "Suspicious sign-in", hãy vào Google Account > Security để xác nhận.');
+        } else if (error.code === 'ECONNREFUSED') {
+            throw new Error('Kết nối bị từ chối. Render có thể đang chặn SMTP port. Vui lòng thử dùng email service khác như SendGrid.');
         } else {
             throw error;
         }
@@ -140,13 +150,18 @@ const sendVerificationOTPEmail = async (toEmail, otpCode, role) => {
         console.log('✅ Email OTP xác minh đã được gửi:', info.messageId);
         return { success: true, messageId: info.messageId };
     } catch (error) {
+        // Log chi tiết lỗi để debug (quan trọng để xem Google trả về gì)
         console.error('❌ Lỗi gửi email:', error.message);
+        console.error('❌ Error code:', error.code);
+        console.error('❌ Chi tiết lỗi email:', error);
         
         // Phân loại lỗi để báo rõ ràng hơn
-        if (error.code === 'ETIMEDOUT' || error.code === 'ECONNECTION') {
-            throw new Error('Không thể kết nối đến server email. Vui lòng kiểm tra kết nối mạng hoặc cấu hình email.');
+        if (error.code === 'ETIMEDOUT' || error.code === 'ECONNECTION' || error.code === 'ESOCKET') {
+            throw new Error('Không thể kết nối đến server email. Render có thể đang chặn SMTP port. Vui lòng thử dùng port 465 (SSL) hoặc email service khác như SendGrid.');
         } else if (error.code === 'EAUTH') {
-            throw new Error('Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD trong .env');
+            throw new Error('Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD (phải dùng App Password cho Gmail). Nếu Google báo "Suspicious sign-in", hãy vào Google Account > Security để xác nhận.');
+        } else if (error.code === 'ECONNREFUSED') {
+            throw new Error('Kết nối bị từ chối. Render có thể đang chặn SMTP port. Vui lòng thử dùng email service khác như SendGrid.');
         } else {
             throw error;
         }
