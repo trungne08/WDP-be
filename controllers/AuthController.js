@@ -44,7 +44,6 @@ const requestRegistrationOTP = async (req, res) => {
         await OTP.create({
             email,
             otp_code: otpCode,
-            verification_token: null, // Không dùng nữa
             role: 'STUDENT', // Tạm thời set default, sẽ được update khi register
             type: 'VERIFICATION',
             expires_at: expiresAt
@@ -161,9 +160,8 @@ const register = async (req, res) => {
             });
         }
 
-        // Đánh dấu OTP đã sử dụng
-        otpRecord.is_used = true;
-        await otpRecord.save();
+        // Xóa OTP ngay sau khi verify thành công (đã dùng rồi không cần giữ)
+        await OTP.deleteOne({ _id: otpRecord._id });
 
         // Trả về user (không trả password)
         const userResponse = newUser.toObject();
@@ -325,7 +323,6 @@ const forgotPassword = async (req, res) => {
         await OTP.create({
             email,
             otp_code: otpCode,
-            verification_token: null, // Không dùng nữa
             role,
             type: 'RESET_PASSWORD',
             expires_at: expiresAt
@@ -421,9 +418,8 @@ const verifyOTPAndResetPassword = async (req, res) => {
         user.password = hashedPassword;
         await user.save();
 
-        // Đánh dấu OTP đã sử dụng
-        otpRecord.is_used = true;
-        await otpRecord.save();
+        // Xóa OTP ngay sau khi verify thành công (đã dùng rồi không cần giữ)
+        await OTP.deleteOne({ _id: otpRecord._id });
 
         res.json({
             message: '✅ Đặt lại mật khẩu thành công! Bạn có thể đăng nhập với mật khẩu mới.'
@@ -490,9 +486,8 @@ const verifyRegistrationOTP = async (req, res) => {
         user.is_verified = true;
         await user.save();
 
-        // Đánh dấu OTP đã sử dụng
-        otpRecord.is_used = true;
-        await otpRecord.save();
+        // Xóa OTP ngay sau khi verify thành công (đã dùng rồi không cần giữ)
+        await OTP.deleteOne({ _id: otpRecord._id });
 
         // Trả về user (không trả password)
         const userResponse = user.toObject();

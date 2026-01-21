@@ -4,7 +4,6 @@ const Schema = mongoose.Schema;
 const OTPSchema = new Schema({
     email: { type: String, required: true, index: true },
     otp_code: { type: String, required: true, index: true },
-    verification_token: { type: String, default: null }, // Không dùng nữa, để null
     role: { 
         type: String, 
         enum: ['ADMIN', 'LECTURER', 'STUDENT'],
@@ -22,5 +21,8 @@ const OTPSchema = new Schema({
 
 // Tự động xóa OTP sau 10 phút (expires_at)
 OTPSchema.index({ expires_at: 1 }, { expireAfterSeconds: 0 });
+
+// Tạo index cho email và otp_code (không tạo cho verification_token)
+OTPSchema.index({ email: 1, otp_code: 1 });
 
 module.exports = mongoose.model('OTP', OTPSchema);
