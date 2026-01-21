@@ -8,7 +8,15 @@ const createTransporter = () => {
         auth: {
             user: process.env.EMAIL_USER, // Email gửi đi
             pass: process.env.EMAIL_PASSWORD // App Password (không phải password thường)
-        }
+        },
+        // Thêm timeout và connection options để tránh timeout trên Render
+        connectionTimeout: 10000, // 10 giây
+        socketTimeout: 10000, // 10 giây
+        greetingTimeout: 10000, // 10 giây
+        // Tăng số lần thử kết nối
+        pool: true,
+        maxConnections: 1,
+        maxMessages: 3
     });
 };
 
@@ -54,7 +62,15 @@ const sendOTPEmail = async (toEmail, otpCode, role) => {
         return { success: true, messageId: info.messageId };
     } catch (error) {
         console.error('❌ Lỗi gửi email:', error.message);
-        throw error;
+        
+        // Phân loại lỗi để báo rõ ràng hơn
+        if (error.code === 'ETIMEDOUT' || error.code === 'ECONNECTION') {
+            throw new Error('Không thể kết nối đến server email. Vui lòng kiểm tra kết nối mạng hoặc cấu hình email.');
+        } else if (error.code === 'EAUTH') {
+            throw new Error('Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD trong .env');
+        } else {
+            throw error;
+        }
     }
 };
 
