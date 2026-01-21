@@ -40,8 +40,8 @@ GithubCommitSchema.statics.processCommit = async function(commitData, teamId) {
         const diffInMs = new Date(commitData.commit_date) - new Date(lastValidCommit.commit_date);
         const diffInMinutes = diffInMs / (1000 * 60);
 
-        if (diffInMinutes < 30) { // Cooldown > 30m theo schema
-            return { is_counted: false, reason: `Too soon (${Math.round(diffInMinutes)}m < 30m)` };
+        if (diffInMinutes < 10) { // Cooldown > 10m theo schema
+            return { is_counted: false, reason: `Too soon (${Math.round(diffInMinutes)}m < 10m)` };
         }
     }
 

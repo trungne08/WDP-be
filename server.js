@@ -1,5 +1,7 @@
 const bcrypt = require('bcryptjs'); // Import thư viện
 const models = require('./models');
+const TeamController = require('./controllers/TeamController');
+const SyncController = require('./controllers/SyncController');
 
 // Export function để setup routes
 module.exports = (app) => {
@@ -92,4 +94,54 @@ module.exports = (app) => {
             res.status(500).json({ error: error.message });
         }
     });
+
+    app.put('/api/teams/:teamId/config', TeamController.updateTeamConfig);
+
+    // 2. API SYNC (User bấm nút Sync -> Server tự chạy)
+    app.post('/api/teams/:teamId/sync', SyncController.syncTeamData);
+
+    // API TẠO NHANH TEAM (Chạy cái này để lấy ID chuẩn)
+    app.post('/api/seed-team', async (req, res) => {
+        try {
+            // 1. Import Mongoose rõ ràng
+            const mongoose = require('mongoose'); 
+            // 2. Import Model Team
+            const Team = require('./models/Team'); 
+
+            // 3. Tạo data với ID chuẩn
+            const newTeam = await Team.create({
+                project_name: "Nhóm Test API Mới Tinh",
+                class_id: new mongoose.Types.ObjectId(), // <--- Cú pháp chuẩn là đây
+                jira_project_key: "SWP",
+                last_sync_at: null
+            });
+            
+            res.json({
+                message: "✅ Đã tạo nhóm thành công! Dùng ID này nha:",
+                team_id: newTeam._id,
+                data: newTeam
+            });
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+    
+    app.get('/api/check-db', async (req, res) => {
+    try {
+        const mongoose = require('mongoose');
+        const { JiraTask } = require('./models/JiraData'); // Sửa đường dẫn nếu file nằm chỗ khác
+        
+        const count = await JiraTask.countDocuments();
+        const allTasks = await JiraTask.find({});
+
+        res.json({
+            message: "🔍 KẾT QUẢ ĐIỀU TRA:",
+            database_name: mongoose.connection.name, // <--- ĐÂY LÀ CÁI CHÚNG TA CẦN
+            host: mongoose.connection.host,
+            total_tasks_found: count,
+            data: allTasks
+        });
+    } catch (error) {
+        res.status(500).json({ error: error.message });
+    }});
 };
