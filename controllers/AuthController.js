@@ -36,8 +36,13 @@ const requestRegistrationOTP = async (req, res) => {
         const expiresAt = new Date();
         expiresAt.setMinutes(expiresAt.getMinutes() + 10);
 
-        // Xóa các OTP cũ của email này (nếu có) - không cần role nữa
-        await OTP.deleteMany({ email, is_used: false, type: 'VERIFICATION' });
+        // Xóa các OTP cũ của email này (nếu có) - chỉ xóa OTP chưa hết hạn và chưa dùng
+        // Lưu ý: OTP đã dùng sẽ bị xóa ngay sau khi verify, nên chỉ cần xóa OTP chưa hết hạn
+        await OTP.deleteMany({ 
+            email, 
+            type: 'VERIFICATION',
+            expires_at: { $gt: new Date() } // Chỉ xóa OTP chưa hết hạn
+        });
 
         // Lưu OTP vào database với type là 'VERIFICATION' (không có role ở đây)
         // Role sẽ được set khi đăng ký ở bước 2
@@ -67,6 +72,15 @@ const requestRegistrationOTP = async (req, res) => {
 
     } catch (error) {
         console.error('Request registration OTP error:', error);
+        
+        // Nếu lỗi duplicate key do index cũ, báo rõ ràng
+        if (error.message && error.message.includes('verification_token')) {
+            return res.status(500).json({ 
+                error: 'Lỗi database: Index cũ verification_token vẫn còn. Vui lòng liên hệ admin để xóa index này trên MongoDB Atlas.',
+                details: error.message
+            });
+        }
+        
         res.status(500).json({ error: error.message });
     }
 };
@@ -100,11 +114,11 @@ const register = async (req, res) => {
         }
 
         // Kiểm tra OTP hợp lệ trước (không cần role vì OTP chỉ lưu email)
+        // Lưu ý: OTP đã dùng sẽ bị xóa ngay, nên không cần check is_used
         const otpRecord = await OTP.findOne({
             email,
             otp_code,
             type: 'VERIFICATION',
-            is_used: false,
             expires_at: { $gt: new Date() } // Chưa hết hạn
         });
 
@@ -316,8 +330,13 @@ const forgotPassword = async (req, res) => {
         const expiresAt = new Date();
         expiresAt.setMinutes(expiresAt.getMinutes() + 10);
 
-        // Xóa các OTP cũ của email này (nếu có)
-        await OTP.deleteMany({ email, role, is_used: false, type: 'RESET_PASSWORD' });
+        // Xóa các OTP cũ của email này (nếu có) - chỉ xóa OTP chưa hết hạn
+        await OTP.deleteMany({ 
+            email, 
+            role, 
+            type: 'RESET_PASSWORD',
+            expires_at: { $gt: new Date() } // Chỉ xóa OTP chưa hết hạn
+        });
 
         // Lưu OTP vào database
         await OTP.create({
@@ -378,11 +397,11 @@ const verifyOTPAndResetPassword = async (req, res) => {
         }
 
         // Tìm OTP hợp lệ bằng email và otp_code (tự động tìm role từ OTP record)
+        // Lưu ý: OTP đã dùng sẽ bị xóa ngay, nên không cần check is_used
         const otpRecord = await OTP.findOne({
             email,
             otp_code,
             type: 'RESET_PASSWORD',
-            is_used: false,
             expires_at: { $gt: new Date() } // Chưa hết hạn
         });
 
@@ -446,11 +465,11 @@ const verifyRegistrationOTP = async (req, res) => {
         }
 
         // Tìm OTP hợp lệ bằng email và otp_code
+        // Lưu ý: OTP đã dùng sẽ bị xóa ngay, nên không cần check is_used
         const otpRecord = await OTP.findOne({
             email,
             otp_code,
             type: 'VERIFICATION',
-            is_used: false,
             expires_at: { $gt: new Date() } // Chưa hết hạn
         });
 
