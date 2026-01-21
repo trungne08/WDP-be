@@ -3,11 +3,17 @@ const Schema = mongoose.Schema;
 
 const OTPSchema = new Schema({
     email: { type: String, required: true, index: true },
-    otp_code: { type: String, required: true },
+    otp_code: { type: String, required: true, index: true },
+    verification_token: { type: String, required: true, unique: true, index: true }, // Token để verify chỉ với OTP
     role: { 
         type: String, 
         enum: ['ADMIN', 'LECTURER', 'STUDENT'],
         required: true 
+    },
+    type: {
+        type: String,
+        enum: ['VERIFICATION', 'RESET_PASSWORD'],
+        default: 'VERIFICATION'
     },
     expires_at: { type: Date, required: true },
     is_used: { type: Boolean, default: false },

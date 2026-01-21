@@ -12,17 +12,85 @@ module.exports = (app) => {
     // ==========================================
     /**
      * @swagger
-     * /api/auth/register:
+     * /api/auth/request-registration-otp:
      *   post:
-     *     summary: Đăng ký tài khoản mới (cần xác minh email bằng OTP)
+     *     summary: Yêu cầu OTP để đăng ký (Bước 1)
      *     tags: [Auth]
-     *     description: Sau khi đăng ký thành công, hệ thống sẽ gửi mã OTP về email. Bạn cần gọi API `/api/auth/verify-registration-otp` để xác minh email trước khi có thể đăng nhập.
+     *     description: Chỉ cần nhập email để nhận OTP qua email. Sau đó gọi API `/api/auth/register` với OTP và đầy đủ thông tin để hoàn tất đăng ký.
      *     requestBody:
      *       required: true
      *       content:
      *         application/json:
      *           schema:
-     *             $ref: '#/components/schemas/RegisterRequest'
+     *             type: object
+     *             required:
+     *               - email
+     *             properties:
+     *               email:
+     *                 type: string
+     *                 format: email
+     *                 example: student@fpt.edu.vn
+     *     responses:
+     *       200:
+     *         description: OTP đã được gửi đến email
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                 expires_in_minutes:
+     *                   type: number
+     *       400:
+     *         description: Email đã được sử dụng hoặc lỗi validation
+     *       403:
+     *         description: Không cho phép đăng ký ADMIN
+     *       500:
+     *         description: Lỗi server hoặc không thể gửi email
+     */
+    app.post('/api/auth/request-registration-otp', AuthController.requestRegistrationOTP);
+
+    /**
+     * @swagger
+     * /api/auth/register:
+     *   post:
+     *     summary: Đăng ký tài khoản mới với OTP (Bước 2)
+     *     tags: [Auth]
+     *     description: Nhập đầy đủ thông tin + OTP đã nhận được qua email để hoàn tất đăng ký. Tài khoản sẽ được kích hoạt ngay sau khi đăng ký thành công.
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - role
+     *               - email
+     *               - password
+     *               - otp_code
+     *             properties:
+     *               role:
+     *                 type: string
+     *                 enum: [LECTURER, STUDENT]
+     *               email:
+     *                 type: string
+     *                 format: email
+     *               password:
+     *                 type: string
+     *               otp_code:
+     *                 type: string
+     *                 description: Mã OTP 6 chữ số nhận được qua email
+     *               full_name:
+     *                 type: string
+     *               avatar_url:
+     *                 type: string
+     *               student_code:
+     *                 type: string
+     *                 description: Bắt buộc nếu role=STUDENT
+     *               major:
+     *                 type: string
+     *                 description: Cho STUDENT
      *           examples:
      *             lecturer:
      *               summary: Đăng ký Lecturer
@@ -30,6 +98,7 @@ module.exports = (app) => {
      *                 role: LECTURER
      *                 email: lecturer@fpt.edu.vn
      *                 password: "123456"
+     *                 otp_code: "123456"
      *                 full_name: Trần Thị Giảng Viên
      *                 avatar_url: https://example.com/avatar.jpg
      *             student:
@@ -38,6 +107,7 @@ module.exports = (app) => {
      *                 role: STUDENT
      *                 email: student@fpt.edu.vn
      *                 password: "123456"
+     *                 otp_code: "123456"
      *                 student_code: SE150000
      *                 full_name: Lê Văn Sinh Viên
      *                 major: Software Engineering
@@ -55,21 +125,10 @@ module.exports = (app) => {
      *                   oneOf:
      *                     - $ref: '#/components/schemas/Lecturer'
      *                     - $ref: '#/components/schemas/Student'
-     *                 requires_verification:
-     *                   type: boolean
-     *                   description: Luôn là true, cần verify OTP để kích hoạt tài khoản
+     *       400:
+     *         description: OTP không hợp lệ, đã hết hạn, hoặc email/student_code đã tồn tại
      *       403:
      *         description: Không cho phép đăng ký ADMIN
-     *         content:
-     *           application/json:
-     *             schema:
-     *               $ref: '#/components/schemas/Error'
-     *       400:
-     *         description: Lỗi validation hoặc email đã tồn tại
-     *         content:
-     *           application/json:
-     *             schema:
-     *               $ref: '#/components/schemas/Error'
      *       500:
      *         description: Lỗi server
      */
@@ -90,17 +149,13 @@ module.exports = (app) => {
      *             type: object
      *             required:
      *               - email
-     *               - role
      *               - otp_code
      *             properties:
      *               email:
      *                 type: string
      *                 format: email
      *                 example: student@fpt.edu.vn
-     *               role:
-     *                 type: string
-     *                 enum: [LECTURER, STUDENT]
-     *                 example: STUDENT
+     *                 description: Email đã đăng ký
      *               otp_code:
      *                 type: string
      *                 example: "123456"
@@ -189,18 +244,15 @@ module.exports = (app) => {
      *             type: object
      *             required:
      *               - email
-     *               - role
      *               - otp_code
      *               - new_password
+     *               - confirm_password
      *             properties:
      *               email:
      *                 type: string
      *                 format: email
-     *                 example: admin@gmail.com
-     *               role:
-     *                 type: string
-     *                 enum: [LECTURER, STUDENT]
-     *                 example: STUDENT
+     *                 example: student@fpt.edu.vn
+     *                 description: Email đã đăng ký
      *               otp_code:
      *                 type: string
      *                 example: "123456"
@@ -209,6 +261,10 @@ module.exports = (app) => {
      *                 type: string
      *                 example: "newpassword123"
      *                 description: Mật khẩu mới (tối thiểu 6 ký tự)
+     *               confirm_password:
+     *                 type: string
+     *                 example: "newpassword123"
+     *                 description: Xác nhận mật khẩu mới (phải khớp với new_password)
      *     responses:
      *       200:
      *         description: Đặt lại mật khẩu thành công
@@ -559,6 +615,26 @@ module.exports = (app) => {
      *             properties:
      *               jira_account_id: { type: string }
      *               github_username: { type: string }
+     *     responses:
+     *       200:
+     *         description: Cập nhật mapping thành công
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                   example: "✅ Cập nhật mapping thành công!"
+     *                 member:
+     *                   type: object
+     *                   description: Thông tin member đã được cập nhật
+     *       400:
+     *         description: memberId không hợp lệ hoặc thiếu dữ liệu
+     *       404:
+     *         description: Không tìm thấy member
+     *       500:
+     *         description: Lỗi server
      */
     app.put('/members/:memberId/mapping', TeamApiController.updateMemberMapping);
 

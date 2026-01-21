@@ -1,15 +1,83 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const models = require('../models');
 const OTP = require('../models/OTP');
 const { sendOTPEmail, sendVerificationOTPEmail } = require('../services/EmailService');
 
 // ==========================================
-// ĐĂNG KÝ (REGISTER)
+// YÊU CẦU OTP ĐĂNG KÝ (REQUEST REGISTRATION OTP)
+// ==========================================
+const requestRegistrationOTP = async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        // Validate input
+        if (!email) {
+            return res.status(400).json({ 
+                error: 'Email là bắt buộc' 
+            });
+        }
+
+        // Kiểm tra email đã tồn tại chưa (trong cả Lecturer và Student)
+        const existingLecturer = await models.Lecturer.findOne({ email });
+        const existingStudent = await models.Student.findOne({ email });
+
+        if (existingLecturer || existingStudent) {
+            return res.status(400).json({ 
+                error: 'Email đã được sử dụng' 
+            });
+        }
+
+        // Tạo mã OTP 6 chữ số
+        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
+        
+        // Thời gian hết hạn: 10 phút
+        const expiresAt = new Date();
+        expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+
+        // Xóa các OTP cũ của email này (nếu có) - không cần role nữa
+        await OTP.deleteMany({ email, is_used: false, type: 'VERIFICATION' });
+
+        // Lưu OTP vào database với type là 'VERIFICATION' (không có role ở đây)
+        // Role sẽ được set khi đăng ký ở bước 2
+        await OTP.create({
+            email,
+            otp_code: otpCode,
+            verification_token: '', // Không dùng nữa nhưng giữ để không lỗi schema
+            role: 'STUDENT', // Tạm thời set default, sẽ được update khi register
+            type: 'VERIFICATION',
+            expires_at: expiresAt
+        });
+
+        // Gửi email OTP (không cần role trong email nữa)
+        try {
+            await sendVerificationOTPEmail(email, otpCode, 'USER'); // Generic role
+            res.json({
+                message: 'Mã OTP đã được gửi đến email của bạn. Vui lòng kiểm tra hộp thư (bao gồm cả thư mục Spam).',
+                expires_in_minutes: 10
+            });
+        } catch (emailError) {
+            console.error('Lỗi gửi email:', emailError);
+            // Xóa OTP đã tạo nếu gửi email thất bại
+            await OTP.deleteOne({ email, otp_code: otpCode });
+            return res.status(500).json({ 
+                error: 'Không thể gửi email OTP. Vui lòng kiểm tra cấu hình email hoặc thử lại sau.' 
+            });
+        }
+
+    } catch (error) {
+        console.error('Request registration OTP error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// ==========================================
+// ĐĂNG KÝ (REGISTER) - VỚI OTP
 // ==========================================
 const register = async (req, res) => {
     try {
-        const { role, email, password, full_name, student_code, avatar_url, major } = req.body;
+        const { role, email, password, otp_code, full_name, student_code, avatar_url, major } = req.body;
 
         // Validate role - KHÔNG CHO PHÉP ĐĂNG KÝ ADMIN
         if (!['LECTURER', 'STUDENT'].includes(role)) {
@@ -19,9 +87,9 @@ const register = async (req, res) => {
         }
 
         // Validate required fields
-        if (!email || !password) {
+        if (!email || !password || !otp_code) {
             return res.status(400).json({ 
-                error: 'Email và password là bắt buộc' 
+                error: 'Email, password và otp_code là bắt buộc' 
             });
         }
 
@@ -32,40 +100,55 @@ const register = async (req, res) => {
             });
         }
 
+        // Kiểm tra OTP hợp lệ trước (không cần role vì OTP chỉ lưu email)
+        const otpRecord = await OTP.findOne({
+            email,
+            otp_code,
+            type: 'VERIFICATION',
+            is_used: false,
+            expires_at: { $gt: new Date() } // Chưa hết hạn
+        });
+
+        if (!otpRecord) {
+            return res.status(400).json({ 
+                error: 'Mã OTP không hợp lệ hoặc đã hết hạn. Vui lòng yêu cầu mã OTP mới.' 
+            });
+        }
+
+        // Kiểm tra email đã tồn tại chưa (double check)
+        let existingUser = null;
+        if (role === 'LECTURER') {
+            existingUser = await models.Lecturer.findOne({ email });
+        } else if (role === 'STUDENT') {
+            existingUser = await models.Student.findOne({ 
+                $or: [{ email }, { student_code }] 
+            });
+        }
+
+        if (existingUser) {
+            return res.status(400).json({ 
+                error: role === 'STUDENT' ? 'Email hoặc student_code đã được sử dụng' : 'Email đã được sử dụng'
+            });
+        }
+
         // Hash password
         const salt = await bcrypt.genSalt(10);
         const hashedPassword = await bcrypt.hash(password, salt);
 
         let newUser;
 
-        // Tạo user theo role (CHỈ LECTURER và STUDENT) với is_verified = false
+        // Tạo user theo role (CHỈ LECTURER và STUDENT) với is_verified = true (vì đã verify OTP)
         if (role === 'LECTURER') {
-            // Check email đã tồn tại chưa
-            const existingLecturer = await models.Lecturer.findOne({ email });
-            if (existingLecturer) {
-                return res.status(400).json({ error: 'Email đã được sử dụng' });
-            }
-
             newUser = await models.Lecturer.create({
                 email,
                 password: hashedPassword,
                 full_name: full_name || '',
                 avatar_url: avatar_url || '',
                 role: 'LECTURER',
-                is_verified: false // Chưa verify email
+                is_verified: true // Đã verify OTP rồi
             });
         } 
         else if (role === 'STUDENT') {
-            // Check email hoặc student_code đã tồn tại chưa
-            const existingStudent = await models.Student.findOne({ 
-                $or: [{ email }, { student_code }] 
-            });
-            if (existingStudent) {
-                return res.status(400).json({ 
-                    error: 'Email hoặc student_code đã được sử dụng' 
-                });
-            }
-
             newUser = await models.Student.create({
                 email,
                 password: hashedPassword,
@@ -74,51 +157,22 @@ const register = async (req, res) => {
                 avatar_url: avatar_url || '',
                 major: major || '',
                 role: 'STUDENT',
-                is_verified: false // Chưa verify email
+                is_verified: true // Đã verify OTP rồi
             });
         }
 
-        // Tạo mã OTP 6 chữ số để xác minh email
-        const otpCode = Math.floor(100000 + Math.random() * 900000).toString();
-        
-        // Thời gian hết hạn: 10 phút
-        const expiresAt = new Date();
-        expiresAt.setMinutes(expiresAt.getMinutes() + 10);
+        // Đánh dấu OTP đã sử dụng
+        otpRecord.is_used = true;
+        await otpRecord.save();
 
-        // Xóa các OTP cũ của email này (nếu có)
-        await OTP.deleteMany({ email, role, is_used: false });
+        // Trả về user (không trả password)
+        const userResponse = newUser.toObject();
+        delete userResponse.password;
 
-        // Lưu OTP vào database với type là 'VERIFICATION'
-        await OTP.create({
-            email,
-            otp_code: otpCode,
-            role,
-            expires_at: expiresAt
+        res.status(201).json({
+            message: `✅ Đăng ký ${role} thành công!`,
+            user: userResponse
         });
-
-        // Gửi email OTP xác minh
-        try {
-            await sendVerificationOTPEmail(email, otpCode, role);
-            
-            // Trả về user (không trả password)
-            const userResponse = newUser.toObject();
-            delete userResponse.password;
-
-            res.status(201).json({
-                message: `✅ Đăng ký ${role} thành công! Vui lòng kiểm tra email để xác minh tài khoản.`,
-                user: userResponse,
-                requires_verification: true
-            });
-        } catch (emailError) {
-            console.error('Lỗi gửi email:', emailError);
-            // Xóa user đã tạo nếu gửi email thất bại
-            await (role === 'LECTURER' ? models.Lecturer : models.Student).findByIdAndDelete(newUser._id);
-            // Xóa OTP đã tạo
-            await OTP.deleteOne({ email, otp_code: otpCode });
-            return res.status(500).json({ 
-                error: 'Không thể gửi email xác minh. Vui lòng kiểm tra cấu hình email hoặc thử lại sau.' 
-            });
-        }
 
     } catch (error) {
         console.error('Register error:', error);
@@ -265,13 +319,15 @@ const forgotPassword = async (req, res) => {
         expiresAt.setMinutes(expiresAt.getMinutes() + 10);
 
         // Xóa các OTP cũ của email này (nếu có)
-        await OTP.deleteMany({ email, role, is_used: false });
+        await OTP.deleteMany({ email, role, is_used: false, type: 'RESET_PASSWORD' });
 
         // Lưu OTP vào database
         await OTP.create({
             email,
             otp_code: otpCode,
+            verification_token: '', // Không dùng nữa nhưng giữ để không lỗi schema
             role,
+            type: 'RESET_PASSWORD',
             expires_at: expiresAt
         });
 
@@ -302,18 +358,19 @@ const forgotPassword = async (req, res) => {
 // ==========================================
 const verifyOTPAndResetPassword = async (req, res) => {
     try {
-        const { email, role, otp_code, new_password } = req.body;
+        const { email, otp_code, new_password, confirm_password } = req.body;
 
         // Validate input
-        if (!email || !role || !otp_code || !new_password) {
+        if (!email || !otp_code || !new_password || !confirm_password) {
             return res.status(400).json({ 
-                error: 'Email, role, otp_code và new_password là bắt buộc' 
+                error: 'Email, otp_code, new_password và confirm_password là bắt buộc' 
             });
         }
 
-        if (!['LECTURER', 'STUDENT'].includes(role)) {
-            return res.status(403).json({
-                error: 'Chỉ hỗ trợ đặt lại mật khẩu cho LECTURER và STUDENT.'
+        // Kiểm tra mật khẩu mới và xác nhận mật khẩu phải giống nhau
+        if (new_password !== confirm_password) {
+            return res.status(400).json({ 
+                error: 'Mật khẩu mới và xác nhận mật khẩu không khớp' 
             });
         }
 
@@ -323,11 +380,11 @@ const verifyOTPAndResetPassword = async (req, res) => {
             });
         }
 
-        // Tìm OTP hợp lệ
+        // Tìm OTP hợp lệ bằng email và otp_code (tự động tìm role từ OTP record)
         const otpRecord = await OTP.findOne({
             email,
-            role,
             otp_code,
+            type: 'RESET_PASSWORD',
             is_used: false,
             expires_at: { $gt: new Date() } // Chưa hết hạn
         });
@@ -338,12 +395,16 @@ const verifyOTPAndResetPassword = async (req, res) => {
             });
         }
 
-        // Tìm user
+        // Tự động tìm user bằng email và role từ OTP record
         let user = null;
-        if (role === 'LECTURER') {
+        if (otpRecord.role === 'LECTURER') {
             user = await models.Lecturer.findOne({ email });
-        } else if (role === 'STUDENT') {
+        } else if (otpRecord.role === 'STUDENT') {
             user = await models.Student.findOne({ email });
+        } else {
+            return res.status(403).json({
+                error: 'Chỉ hỗ trợ đặt lại mật khẩu cho LECTURER và STUDENT.'
+            });
         }
 
         if (!user) {
@@ -379,26 +440,20 @@ const verifyOTPAndResetPassword = async (req, res) => {
 // ==========================================
 const verifyRegistrationOTP = async (req, res) => {
     try {
-        const { email, role, otp_code } = req.body;
+        const { email, otp_code } = req.body;
 
         // Validate input
-        if (!email || !role || !otp_code) {
+        if (!email || !otp_code) {
             return res.status(400).json({ 
-                error: 'Email, role và otp_code là bắt buộc' 
+                error: 'Email và otp_code là bắt buộc' 
             });
         }
 
-        if (!['LECTURER', 'STUDENT'].includes(role)) {
-            return res.status(400).json({ 
-                error: 'Role không hợp lệ' 
-            });
-        }
-
-        // Tìm OTP hợp lệ
+        // Tìm OTP hợp lệ bằng email và otp_code
         const otpRecord = await OTP.findOne({
             email,
-            role,
             otp_code,
+            type: 'VERIFICATION',
             is_used: false,
             expires_at: { $gt: new Date() } // Chưa hết hạn
         });
@@ -409,11 +464,11 @@ const verifyRegistrationOTP = async (req, res) => {
             });
         }
 
-        // Tìm user
+        // Tìm user bằng email và role từ OTP record
         let user = null;
-        if (role === 'LECTURER') {
+        if (otpRecord.role === 'LECTURER') {
             user = await models.Lecturer.findOne({ email });
-        } else if (role === 'STUDENT') {
+        } else if (otpRecord.role === 'STUDENT') {
             user = await models.Student.findOne({ email });
         }
 
@@ -455,6 +510,7 @@ const verifyRegistrationOTP = async (req, res) => {
 };
 
 module.exports = {
+    requestRegistrationOTP,
     register,
     login,
     forgotPassword,
