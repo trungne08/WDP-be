@@ -15,7 +15,7 @@ exports.syncTeamData = async (req, res) => {
         // ❌ XÓA DÒNG CHECK CỨNG NHẮC CŨ: if (!team.api_token_github || !team.api_token_jira) ...
 
         console.log(`⏳ Đang Sync dữ liệu cho Team: ${team.project_name}...`);
-        const results = { git: 0, jira_sprints: 0, jira_tasks: 0, errors: [] };
+        const results = { git: 0, jira_sprints: 0, jira_tasks: 0, sync_errors: [] };
 
         // ==========================================
         // PHẦN 1: GITHUB (Chỉ chạy nếu có Token)
@@ -41,7 +41,7 @@ exports.syncTeamData = async (req, res) => {
                 results.git = commits.length;
             } catch (err) {
                 console.error("Lỗi Sync Git:", err.message);
-                results.errors.push(`Git Error: ${err.message}`);
+                results.sync_errors.push(`Git Error: ${err.message}`);
             }
         } else {
             console.log("⏩ Bỏ qua GitHub (Chưa có Token)");
@@ -104,7 +104,7 @@ exports.syncTeamData = async (req, res) => {
                 }
             } catch (err) {
                 console.error("Lỗi Sync Jira:", err.message);
-                results.errors.push(`Jira Error: ${err.message}`);
+                results.sync_errors.push(`Jira Error: ${err.message}`);
             }
         } else {
              console.log("⏩ Bỏ qua Jira (Chưa có Token)");
@@ -120,7 +120,7 @@ exports.syncTeamData = async (req, res) => {
                         {
                             synced_at: now,
                             stats: results,
-                            errors: results.errors || []
+                            sync_errors: results.sync_errors || []
                         }
                     ],
                     $position: 0,

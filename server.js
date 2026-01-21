@@ -339,79 +339,74 @@ module.exports = (app) => {
     app.post('/api/auth/login', AuthController.login);
 
     // ==========================================
-    // UTILITY APIs
+    // TEAM MANAGEMENT APIs
     // ==========================================
+
+    // 1) POST /api/teams (Tạo team mới)
     /**
      * @swagger
-     * /api/seed-test:
-     *   get:
-     *     summary: Tạo Admin test mặc định
-     *     tags: [Utility]
-     *     description: Tạo một Admin mặc định để test. Email admin@gmail.com, password 123456. Chỉ tạo nếu chưa có Admin nào trong DB.
+     * /api/teams:
+     *   post:
+     *     summary: Tạo nhóm mới để lấy Team ID
+     *     tags: [Team Management]
      *     responses:
      *       200:
-     *         description: Tạo Admin thành công hoặc đã có Admin rồi
+     *         description: Tạo team thành công
      *         content:
      *           application/json:
      *             schema:
      *               type: object
      *               properties:
-     *                 msg:
+     *                 message:
+     *                   type: string
+     *                 team_id:
      *                   type: string
      *                 data:
-     *                   $ref: '#/components/schemas/Admin'
+     *                   type: object
      *       500:
      *         description: Lỗi server
      */
-    app.get('/api/seed-test', async (req, res) => {
-        try {
-            const count = await models.Admin.countDocuments();
-            if (count > 0) return res.send('⚠️ Có Admin rồi, không tạo nữa.');
+    app.post('/api/teams', TeamApiController.seedTeam);
 
-            // 1. Tạo mật khẩu mã hóa (Hash)
-            const salt = await bcrypt.genSalt(10);
-            const hashedPassword = await bcrypt.hash('123456', salt); // Mật khẩu là 123456
-
-            // 2. Lưu vào DB
-            const newAdmin = await models.Admin.create({
-                email: "admin@gmail.com",
-                full_name: "Super Admin",
-                password: hashedPassword, // Lưu chuỗi loằng ngoằng vào đây
-                role: "ADMIN"
-            });
-
-            res.json({ msg: "✅ Tạo Admin thành công!", data: newAdmin });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-
-    // ==========================================
-    // TEAM APIs (theo bảng API)
-    // ==========================================
-
-    // 1) POST /seed-team
+    // 2) GET /api/teams/:teamId (Xem thông tin team)
     /**
      * @swagger
-     * /seed-team:
-     *   post:
-     *     summary: Tạo nhóm mới (seed) để lấy Team ID
-     *     tags: [Teams]
+     * /api/teams/{teamId}:
+     *   get:
+     *     summary: Xem thông tin team + thống kê nhanh
+     *     tags: [Team Management]
+     *     parameters:
+     *       - in: path
+     *         name: teamId
+     *         required: true
+     *         schema:
+     *           type: string
      *     responses:
      *       200:
-     *         description: Tạo team thành công
-     *       500:
-     *         description: Lỗi server
+     *         description: Thông tin team
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 team:
+     *                   type: object
+     *                 counts:
+     *                   type: object
+     *       400:
+     *         description: teamId không hợp lệ
+     *       404:
+     *         description: Không tìm thấy team
      */
-    app.post('/seed-team', TeamApiController.seedTeam);
+    app.get('/api/teams/:teamId', TeamApiController.getTeam);
 
-    // 2) PUT /teams/:teamId/config
+    // 3) PUT /api/teams/:teamId/config
     /**
      * @swagger
-     * /teams/{teamId}/config:
+     * /api/teams/{teamId}/config:
      *   put:
      *     summary: Lưu cấu hình Jira/GitHub cho team
-     *     tags: [Teams]
+     *     tags: [Team Configuration]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -439,36 +434,19 @@ module.exports = (app) => {
      *       500:
      *         description: Lỗi server
      */
-    app.put('/teams/:teamId/config', TeamController.updateTeamConfig);
+    app.put('/api/teams/:teamId/config', TeamController.updateTeamConfig);
 
-    // 3) GET /teams/:teamId
+    // ==========================================
+    // TEAM SYNC APIs
+    // ==========================================
+
+    // 4) POST /api/teams/:teamId/sync
     /**
      * @swagger
-     * /teams/{teamId}:
-     *   get:
-     *     summary: Xem thông tin team + thống kê nhanh
-     *     tags: [Teams]
-     *     parameters:
-     *       - in: path
-     *         name: teamId
-     *         required: true
-     *         schema:
-     *           type: string
-     *     responses:
-     *       200:
-     *         description: Thông tin team
-     *       404:
-     *         description: Không tìm thấy team
-     */
-    app.get('/teams/:teamId', TeamApiController.getTeam);
-
-    // 4) POST /teams/:teamId/sync
-    /**
-     * @swagger
-     * /teams/{teamId}/sync:
+     * /api/teams/{teamId}/sync:
      *   post:
      *     summary: Kích hoạt sync Jira/Sprint/Task và Git/Commit
-     *     tags: [Teams]
+     *     tags: [Team Sync]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -481,15 +459,15 @@ module.exports = (app) => {
      *       500:
      *         description: Lỗi server
      */
-    app.post('/teams/:teamId/sync', SyncController.syncTeamData);
+    app.post('/api/teams/:teamId/sync', SyncController.syncTeamData);
 
-    // 5) GET /teams/:teamId/sync-history
+    // 5) GET /api/teams/:teamId/sync-history
     /**
      * @swagger
-     * /teams/{teamId}/sync-history:
+     * /api/teams/{teamId}/sync-history:
      *   get:
      *     summary: Xem lịch sử sync (tối đa 20 lần gần nhất)
-     *     tags: [Teams]
+     *     tags: [Team Sync]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -500,15 +478,19 @@ module.exports = (app) => {
      *       200:
      *         description: Lịch sử sync
      */
-    app.get('/teams/:teamId/sync-history', TeamApiController.getSyncHistory);
+    app.get('/api/teams/:teamId/sync-history', TeamApiController.getSyncHistory);
 
-    // 6) POST /teams/:teamId/seed-members
+    // ==========================================
+    // TEAM MEMBERS APIs
+    // ==========================================
+
+    // 6) POST /api/teams/:teamId/seed-members
     /**
      * @swagger
-     * /teams/{teamId}/seed-members:
+     * /api/teams/{teamId}/seed-members:
      *   post:
      *     summary: Tạo SV giả + member trong team để test
-     *     tags: [Teams]
+     *     tags: [Team Members]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -527,15 +509,15 @@ module.exports = (app) => {
      *       200:
      *         description: Seed thành công
      */
-    app.post('/teams/:teamId/seed-members', TeamApiController.seedMembers);
+    app.post('/api/teams/:teamId/seed-members', TeamApiController.seedMembers);
 
-    // 7) GET /teams/:teamId/members
+    // 7) GET /api/teams/:teamId/members
     /**
      * @swagger
-     * /teams/{teamId}/members:
+     * /api/teams/{teamId}/members:
      *   get:
      *     summary: Lấy danh sách thành viên (kèm mapping Jira/Git)
-     *     tags: [Teams]
+     *     tags: [Team Members]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -559,15 +541,15 @@ module.exports = (app) => {
      *       404:
      *         description: Không tìm thấy team
      */
-    app.get('/teams/:teamId/members', TeamApiController.getMembers);
+    app.get('/api/teams/:teamId/members', TeamApiController.getMembers);
 
-    // 8) GET /teams/:teamId/jira-users
+    // 8) GET /api/teams/:teamId/jira-users
     /**
      * @swagger
-     * /teams/{teamId}/jira-users:
+     * /api/teams/{teamId}/jira-users:
      *   get:
      *     summary: Lấy DS user Jira (từ dữ liệu task đã sync)
-     *     tags: [Teams]
+     *     tags: [Team Members]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -591,15 +573,15 @@ module.exports = (app) => {
      *       404:
      *         description: Không tìm thấy team
      */
-    app.get('/teams/:teamId/jira-users', TeamApiController.getJiraUsers);
+    app.get('/api/teams/:teamId/jira-users', TeamApiController.getJiraUsers);
 
-    // 9) PUT /members/:memberId/mapping
+    // 9) PUT /api/members/:memberId/mapping
     /**
      * @swagger
-     * /members/{memberId}/mapping:
+     * /api/members/{memberId}/mapping:
      *   put:
      *     summary: Mapping Jira accountId và GitHub username cho member
-     *     tags: [Teams]
+     *     tags: [Team Members]
      *     parameters:
      *       - in: path
      *         name: memberId
@@ -636,15 +618,19 @@ module.exports = (app) => {
      *       500:
      *         description: Lỗi server
      */
-    app.put('/members/:memberId/mapping', TeamApiController.updateMemberMapping);
+    app.put('/api/members/:memberId/mapping', TeamApiController.updateMemberMapping);
 
-    // 10) GET /teams/:teamId/dashboard
+    // ==========================================
+    // TEAM DATA APIs (Dashboard, Tasks, Commits, Ranking)
+    // ==========================================
+
+    // 10) GET /api/teams/:teamId/dashboard
     /**
      * @swagger
-     * /teams/{teamId}/dashboard:
+     * /api/teams/{teamId}/dashboard:
      *   get:
      *     summary: Overview tổng quan (Task/Commit/Sprint)
-     *     tags: [Teams]
+     *     tags: [Team Data]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -663,15 +649,15 @@ module.exports = (app) => {
      *       404:
      *         description: Không tìm thấy team
      */
-    app.get('/teams/:teamId/dashboard', TeamApiController.getDashboard);
+    app.get('/api/teams/:teamId/dashboard', TeamApiController.getDashboard);
 
-    // 11) GET /teams/:teamId/tasks?sprintId=&status=
+    // 11) GET /api/teams/:teamId/tasks?sprintId=&status=
     /**
      * @swagger
-     * /teams/{teamId}/tasks:
+     * /api/teams/{teamId}/tasks:
      *   get:
      *     summary: Danh sách task (lọc theo sprintId/status)
-     *     tags: [Teams]
+     *     tags: [Team Data]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -703,15 +689,15 @@ module.exports = (app) => {
      *       400:
      *         description: teamId không hợp lệ
      */
-    app.get('/teams/:teamId/tasks', TeamApiController.getTasks);
+    app.get('/api/teams/:teamId/tasks', TeamApiController.getTasks);
 
-    // 12) GET /teams/:teamId/commits?limit=10
+    // 12) GET /api/teams/:teamId/commits?limit=10
     /**
      * @swagger
-     * /teams/{teamId}/commits:
+     * /api/teams/{teamId}/commits:
      *   get:
      *     summary: Nhặt commit gần nhất
-     *     tags: [Teams]
+     *     tags: [Team Data]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -738,15 +724,15 @@ module.exports = (app) => {
      *       400:
      *         description: teamId không hợp lệ
      */
-    app.get('/teams/:teamId/commits', TeamApiController.getCommits);
+    app.get('/api/teams/:teamId/commits', TeamApiController.getCommits);
 
-    // 13) GET /teams/:teamId/ranking
+    // 13) GET /api/teams/:teamId/ranking
     /**
      * @swagger
-     * /teams/{teamId}/ranking:
+     * /api/teams/{teamId}/ranking:
      *   get:
      *     summary: Bảng đóng góp (Jira Done SP + counted commits)
-     *     tags: [Teams]
+     *     tags: [Team Data]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -768,5 +754,5 @@ module.exports = (app) => {
      *       400:
      *         description: teamId không hợp lệ
      */
-    app.get('/teams/:teamId/ranking', TeamApiController.getRanking);
+    app.get('/api/teams/:teamId/ranking', TeamApiController.getRanking);
 };

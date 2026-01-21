@@ -44,7 +44,7 @@ const requestRegistrationOTP = async (req, res) => {
         await OTP.create({
             email,
             otp_code: otpCode,
-            verification_token: '', // Không dùng nữa nhưng giữ để không lỗi schema
+            verification_token: null, // Không dùng nữa
             role: 'STUDENT', // Tạm thời set default, sẽ được update khi register
             type: 'VERIFICATION',
             expires_at: expiresAt
@@ -325,7 +325,7 @@ const forgotPassword = async (req, res) => {
         await OTP.create({
             email,
             otp_code: otpCode,
-            verification_token: '', // Không dùng nữa nhưng giữ để không lỗi schema
+            verification_token: null, // Không dùng nữa
             role,
             type: 'RESET_PASSWORD',
             expires_at: expiresAt

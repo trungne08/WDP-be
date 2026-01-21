@@ -5,7 +5,7 @@ const SyncHistorySchema = new Schema(
     {
         synced_at: { type: Date, default: Date.now },
         stats: { type: Schema.Types.Mixed, default: {} },
-        errors: { type: [String], default: [] }
+        sync_errors: { type: [String], default: [] }
     },
     { _id: false }
 );
