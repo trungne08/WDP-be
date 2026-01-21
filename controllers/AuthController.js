@@ -467,84 +467,10 @@ const verifyOTPAndResetPassword = async (req, res) => {
     }
 };
 
-// ==========================================
-// XÁC MINH EMAIL ĐĂNG KÝ (VERIFY REGISTRATION OTP)
-// ==========================================
-const verifyRegistrationOTP = async (req, res) => {
-    try {
-        const { email, otp_code } = req.body;
-
-        // Validate input
-        if (!email || !otp_code) {
-            return res.status(400).json({ 
-                error: 'Email và otp_code là bắt buộc' 
-            });
-        }
-
-        // Tìm OTP hợp lệ bằng email và otp_code
-        // Lưu ý: OTP đã dùng sẽ bị xóa ngay, nên không cần check is_used
-        const otpRecord = await OTP.findOne({
-            email,
-            otp_code,
-            type: 'VERIFICATION',
-            expires_at: { $gt: new Date() } // Chưa hết hạn
-        });
-
-        if (!otpRecord) {
-            return res.status(400).json({ 
-                error: 'Mã OTP không hợp lệ hoặc đã hết hạn. Vui lòng yêu cầu mã OTP mới.' 
-            });
-        }
-
-        // Tìm user bằng email và role từ OTP record
-        let user = null;
-        if (otpRecord.role === 'LECTURER') {
-            user = await models.Lecturer.findOne({ email });
-        } else if (otpRecord.role === 'STUDENT') {
-            user = await models.Student.findOne({ email });
-        }
-
-        if (!user) {
-            return res.status(404).json({ 
-                error: 'Không tìm thấy người dùng' 
-            });
-        }
-
-        // Nếu đã verify rồi thì không cần làm gì
-        if (user.is_verified) {
-            return res.json({
-                message: 'Email đã được xác minh trước đó.',
-                user: user.toObject()
-            });
-        }
-
-        // Cập nhật is_verified = true
-        user.is_verified = true;
-        await user.save();
-
-        // Xóa OTP ngay sau khi verify thành công (đã dùng rồi không cần giữ)
-        await OTP.deleteOne({ _id: otpRecord._id });
-
-        // Trả về user (không trả password)
-        const userResponse = user.toObject();
-        delete userResponse.password;
-
-        res.json({
-            message: '✅ Xác minh email thành công! Bạn có thể đăng nhập ngay bây giờ.',
-            user: userResponse
-        });
-
-    } catch (error) {
-        console.error('Verify registration OTP error:', error);
-        res.status(500).json({ error: error.message });
-    }
-};
-
 module.exports = {
     requestRegistrationOTP,
     register,
     login,
     forgotPassword,
-    verifyOTPAndResetPassword,
-    verifyRegistrationOTP
+    verifyOTPAndResetPassword
 };

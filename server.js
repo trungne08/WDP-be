@@ -136,55 +136,6 @@ module.exports = (app) => {
 
     /**
      * @swagger
-     * /api/auth/verify-registration-otp:
-     *   post:
-     *     summary: Xác minh email đăng ký bằng OTP
-     *     tags: [Auth]
-     *     description: Xác minh email sau khi đăng ký. Chỉ áp dụng cho LECTURER và STUDENT.
-     *     requestBody:
-     *       required: true
-     *       content:
-     *         application/json:
-     *           schema:
-     *             type: object
-     *             required:
-     *               - email
-     *               - otp_code
-     *             properties:
-     *               email:
-     *                 type: string
-     *                 format: email
-     *                 example: student@fpt.edu.vn
-     *                 description: Email đã đăng ký
-     *               otp_code:
-     *                 type: string
-     *                 example: "123456"
-     *                 description: Mã OTP 6 chữ số nhận được qua email khi đăng ký
-     *     responses:
-     *       200:
-     *         description: Xác minh email thành công
-     *         content:
-     *           application/json:
-     *             schema:
-     *               type: object
-     *               properties:
-     *                 message:
-     *                   type: string
-     *                 user:
-     *                   oneOf:
-     *                     - $ref: '#/components/schemas/Lecturer'
-     *                     - $ref: '#/components/schemas/Student'
-     *       400:
-     *         description: OTP không hợp lệ hoặc đã hết hạn
-     *       404:
-     *         description: Không tìm thấy người dùng
-     *       500:
-     *         description: Lỗi server
-     */
-    app.post('/api/auth/verify-registration-otp', AuthController.verifyRegistrationOTP);
-
-    /**
-     * @swagger
      * /api/auth/forgot-password:
      *   post:
      *     summary: Yêu cầu gửi OTP qua email để đặt lại mật khẩu
@@ -285,7 +236,7 @@ module.exports = (app) => {
      *   post:
      *     summary: Đăng nhập vào hệ thống
      *     tags: [Auth]
-     *     description: LECTURER và STUDENT phải xác minh email trước khi đăng nhập (gọi `/api/auth/verify-registration-otp` sau khi đăng ký).
+     *     description: LECTURER và STUDENT sẽ được tự động xác minh email khi đăng ký thành công (API `/api/auth/register` đã verify OTP và set is_verified = true).
      *     requestBody:
      *       required: true
      *       content:
