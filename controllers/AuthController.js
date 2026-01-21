@@ -62,23 +62,28 @@ const requestRegistrationOTP = async (req, res) => {
                 expires_in_minutes: 10
             });
         } catch (emailError) {
-            console.error('Lỗi gửi email:', emailError);
+            console.error('❌ Lỗi gửi email trong requestRegistrationOTP:', emailError);
+            console.error('❌ Error message:', emailError.message);
+            if (emailError.originalError) {
+                console.error('❌ Original error:', emailError.originalError);
+            }
+            
             // Xóa OTP đã tạo nếu gửi email thất bại
             await OTP.deleteOne({ email, otp_code: otpCode });
             
-            // Phân loại lỗi để báo rõ ràng hơn
-            let errorMessage = 'Không thể gửi email OTP.';
-            if (emailError.message && emailError.message.includes('timeout')) {
-                errorMessage = 'Không thể kết nối đến server email (timeout). Vui lòng kiểm tra cấu hình EMAIL_USER và EMAIL_PASSWORD trên Render, hoặc thử lại sau.';
-            } else if (emailError.message && emailError.message.includes('EAUTH')) {
-                errorMessage = 'Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD trên Render (phải dùng App Password cho Gmail).';
-            } else if (emailError.message && emailError.message.includes('ECONNECTION')) {
-                errorMessage = 'Không thể kết nối đến server email. Render có thể đang chặn SMTP port. Vui lòng thử lại sau hoặc liên hệ admin.';
-            }
+            // Sử dụng error message từ EmailService (đã được format rõ ràng)
+            const errorMessage = emailError.message || 'Không thể gửi email OTP.';
             
+            // Trả về error với details nếu là development hoặc trên Render (để debug)
+            const isRender = process.env.RENDER || process.env.NODE_ENV === 'production';
             return res.status(500).json({ 
                 error: errorMessage,
-                details: process.env.NODE_ENV === 'development' ? emailError.message : undefined
+                // Chỉ trả về details nếu là development hoặc trên Render để debug
+                details: (process.env.NODE_ENV === 'development' || isRender) ? {
+                    message: emailError.message,
+                    code: emailError.originalError?.code || emailError.code,
+                    responseCode: emailError.originalError?.responseCode
+                } : undefined
             });
         }
 

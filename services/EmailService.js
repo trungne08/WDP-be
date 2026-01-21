@@ -60,8 +60,16 @@ const sendOTPEmail = async (toEmail, otpCode, role) => {
         // Kiểm tra cấu hình email
         if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
             console.error('⚠️ EMAIL_USER hoặc EMAIL_PASSWORD chưa được cấu hình trong .env');
+            console.error('⚠️ EMAIL_USER:', process.env.EMAIL_USER ? 'Đã có' : 'THIẾU');
+            console.error('⚠️ EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? 'Đã có' : 'THIẾU');
             throw new Error('Email service chưa được cấu hình. Vui lòng kiểm tra file .env');
         }
+
+        // Log thông tin cấu hình (không log password)
+        console.log('📧 Đang gửi email từ:', process.env.EMAIL_USER);
+        console.log('📧 Đến:', toEmail);
+        console.log('📧 SMTP Host:', process.env.EMAIL_HOST || 'smtp.gmail.com');
+        console.log('📧 SMTP Port:', process.env.EMAIL_PORT || '465');
 
         const transporter = createTransporter();
 
@@ -91,20 +99,39 @@ const sendOTPEmail = async (toEmail, otpCode, role) => {
         return { success: true, messageId: info.messageId };
     } catch (error) {
         // Log chi tiết lỗi để debug (quan trọng để xem Google trả về gì)
-        console.error('❌ Lỗi gửi email:', error.message);
+        console.error('❌ ========== LỖI GỬI EMAIL (sendOTPEmail) ==========');
+        console.error('❌ Error message:', error.message);
         console.error('❌ Error code:', error.code);
-        console.error('❌ Chi tiết lỗi email:', error);
+        console.error('❌ Error response:', error.response || 'N/A');
+        console.error('❌ Error responseCode:', error.responseCode || 'N/A');
+        console.error('❌ Error command:', error.command || 'N/A');
+        console.error('❌ Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+        console.error('❌ ====================================');
         
         // Phân loại lỗi để báo rõ ràng hơn
+        let errorMessage = 'Không thể gửi email OTP.';
+        
         if (error.code === 'ETIMEDOUT' || error.code === 'ECONNECTION' || error.code === 'ESOCKET') {
-            throw new Error('Không thể kết nối đến server email. Render có thể đang chặn SMTP port. Vui lòng thử dùng port 465 (SSL) hoặc email service khác như SendGrid.');
-        } else if (error.code === 'EAUTH') {
-            throw new Error('Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD (phải dùng App Password cho Gmail). Nếu Google báo "Suspicious sign-in", hãy vào Google Account > Security để xác nhận.');
+            errorMessage = 'Không thể kết nối đến server email. Render có thể đang chặn SMTP port. Vui lòng kiểm tra cấu hình EMAIL_USER và EMAIL_PASSWORD trên Render, đảm bảo dùng App Password cho Gmail.';
+        } else if (error.code === 'EAUTH' || error.responseCode === 535) {
+            errorMessage = 'Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD trên Render. Lưu ý: Phải dùng App Password cho Gmail (không dùng mật khẩu thường). Vào Google Account > Security > App passwords để tạo App Password.';
         } else if (error.code === 'ECONNREFUSED') {
-            throw new Error('Kết nối bị từ chối. Render có thể đang chặn SMTP port. Vui lòng thử dùng email service khác như SendGrid.');
-        } else {
-            throw error;
+            errorMessage = 'Kết nối bị từ chối. Render có thể đang chặn SMTP port. Vui lòng kiểm tra cấu hình EMAIL_HOST và EMAIL_PORT trên Render.';
+        } else if (error.code === 'ENOTFOUND') {
+            errorMessage = 'Không tìm thấy server email. Vui lòng kiểm tra EMAIL_HOST trên Render (mặc định là smtp.gmail.com).';
+        } else if (error.responseCode === 553) {
+            errorMessage = 'Địa chỉ email người gửi không hợp lệ. Vui lòng kiểm tra EMAIL_USER trên Render.';
+        } else if (error.responseCode === 550) {
+            errorMessage = 'Địa chỉ email người nhận không hợp lệ hoặc bị từ chối.';
+        } else if (error.message && error.message.includes('Invalid login')) {
+            errorMessage = 'Đăng nhập email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD trên Render. Phải dùng App Password cho Gmail.';
+        } else if (error.message && error.message.includes('Email service chưa được cấu hình')) {
+            errorMessage = 'Email service chưa được cấu hình trên Render. Vui lòng thêm các biến môi trường: EMAIL_USER và EMAIL_PASSWORD trong Render dashboard.';
         }
+        
+        const detailedError = new Error(errorMessage);
+        detailedError.originalError = error;
+        throw detailedError;
     }
 };
 
@@ -119,8 +146,16 @@ const sendVerificationOTPEmail = async (toEmail, otpCode, role) => {
         // Kiểm tra cấu hình email
         if (!process.env.EMAIL_USER || !process.env.EMAIL_PASSWORD) {
             console.error('⚠️ EMAIL_USER hoặc EMAIL_PASSWORD chưa được cấu hình trong .env');
+            console.error('⚠️ EMAIL_USER:', process.env.EMAIL_USER ? 'Đã có' : 'THIẾU');
+            console.error('⚠️ EMAIL_PASSWORD:', process.env.EMAIL_PASSWORD ? 'Đã có' : 'THIẾU');
             throw new Error('Email service chưa được cấu hình. Vui lòng kiểm tra file .env');
         }
+
+        // Log thông tin cấu hình (không log password)
+        console.log('📧 Đang gửi email từ:', process.env.EMAIL_USER);
+        console.log('📧 Đến:', toEmail);
+        console.log('📧 SMTP Host:', process.env.EMAIL_HOST || 'smtp.gmail.com');
+        console.log('📧 SMTP Port:', process.env.EMAIL_PORT || '465');
 
         const transporter = createTransporter();
 
@@ -151,20 +186,39 @@ const sendVerificationOTPEmail = async (toEmail, otpCode, role) => {
         return { success: true, messageId: info.messageId };
     } catch (error) {
         // Log chi tiết lỗi để debug (quan trọng để xem Google trả về gì)
-        console.error('❌ Lỗi gửi email:', error.message);
+        console.error('❌ ========== LỖI GỬI EMAIL (sendVerificationOTPEmail) ==========');
+        console.error('❌ Error message:', error.message);
         console.error('❌ Error code:', error.code);
-        console.error('❌ Chi tiết lỗi email:', error);
+        console.error('❌ Error response:', error.response || 'N/A');
+        console.error('❌ Error responseCode:', error.responseCode || 'N/A');
+        console.error('❌ Error command:', error.command || 'N/A');
+        console.error('❌ Full error:', JSON.stringify(error, Object.getOwnPropertyNames(error)));
+        console.error('❌ ====================================');
         
         // Phân loại lỗi để báo rõ ràng hơn
+        let errorMessage = 'Không thể gửi email OTP.';
+        
         if (error.code === 'ETIMEDOUT' || error.code === 'ECONNECTION' || error.code === 'ESOCKET') {
-            throw new Error('Không thể kết nối đến server email. Render có thể đang chặn SMTP port. Vui lòng thử dùng port 465 (SSL) hoặc email service khác như SendGrid.');
-        } else if (error.code === 'EAUTH') {
-            throw new Error('Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD (phải dùng App Password cho Gmail). Nếu Google báo "Suspicious sign-in", hãy vào Google Account > Security để xác nhận.');
+            errorMessage = 'Không thể kết nối đến server email. Render có thể đang chặn SMTP port. Vui lòng kiểm tra cấu hình EMAIL_USER và EMAIL_PASSWORD trên Render, đảm bảo dùng App Password cho Gmail.';
+        } else if (error.code === 'EAUTH' || error.responseCode === 535) {
+            errorMessage = 'Xác thực email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD trên Render. Lưu ý: Phải dùng App Password cho Gmail (không dùng mật khẩu thường). Vào Google Account > Security > App passwords để tạo App Password.';
         } else if (error.code === 'ECONNREFUSED') {
-            throw new Error('Kết nối bị từ chối. Render có thể đang chặn SMTP port. Vui lòng thử dùng email service khác như SendGrid.');
-        } else {
-            throw error;
+            errorMessage = 'Kết nối bị từ chối. Render có thể đang chặn SMTP port. Vui lòng kiểm tra cấu hình EMAIL_HOST và EMAIL_PORT trên Render.';
+        } else if (error.code === 'ENOTFOUND') {
+            errorMessage = 'Không tìm thấy server email. Vui lòng kiểm tra EMAIL_HOST trên Render (mặc định là smtp.gmail.com).';
+        } else if (error.responseCode === 553) {
+            errorMessage = 'Địa chỉ email người gửi không hợp lệ. Vui lòng kiểm tra EMAIL_USER trên Render.';
+        } else if (error.responseCode === 550) {
+            errorMessage = 'Địa chỉ email người nhận không hợp lệ hoặc bị từ chối.';
+        } else if (error.message && error.message.includes('Invalid login')) {
+            errorMessage = 'Đăng nhập email thất bại. Vui lòng kiểm tra EMAIL_USER và EMAIL_PASSWORD trên Render. Phải dùng App Password cho Gmail.';
+        } else if (error.message && error.message.includes('Email service chưa được cấu hình')) {
+            errorMessage = 'Email service chưa được cấu hình trên Render. Vui lòng thêm các biến môi trường: EMAIL_USER và EMAIL_PASSWORD trong Render dashboard.';
         }
+        
+        const detailedError = new Error(errorMessage);
+        detailedError.originalError = error;
+        throw detailedError;
     }
 };
 
