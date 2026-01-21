@@ -13,9 +13,13 @@ const options = {
         },
         servers: [
             {
+                url: process.env.RENDER_EXTERNAL_URL || process.env.SERVER_URL || 'http://localhost:5000',
+                description: process.env.RENDER_EXTERNAL_URL ? 'Production server (Render)' : 'Development server',
+            },
+            ...(process.env.RENDER_EXTERNAL_URL ? [] : [{
                 url: 'http://localhost:5000',
                 description: 'Development server',
-            },
+            }]),
         ],
         components: {
             schemas: {
