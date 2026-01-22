@@ -347,7 +347,56 @@ const sendVerificationOTPEmail = async (toEmail, otpCode, role) => {
     }
 };
 
+/**
+ * Gửi email thông báo cho sinh viên chưa đăng ký khi được import vào lớp
+ * @param {string} toEmail - Email người nhận
+ * @param {string} studentName - Tên sinh viên
+ * @param {string} className - Tên lớp học
+ * @param {string} rollNumber - MSSV
+ */
+const sendPendingEnrollmentEmail = async (toEmail, studentName, className, rollNumber) => {
+    try {
+        const subject = '📚 Thông báo: Bạn đã được thêm vào lớp học - WDP';
+        const htmlContent = `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+                <h2 style="color: #333;">📚 Thông báo từ hệ thống WDP</h2>
+                <p>Xin chào <strong>${studentName || rollNumber}</strong>,</p>
+                <p>Bạn đã được giảng viên thêm vào lớp học <strong>${className}</strong> trong hệ thống WDP.</p>
+                <p>Tuy nhiên, bạn <strong>chưa có tài khoản</strong> trong hệ thống.</p>
+                <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
+                    <p style="margin: 0;"><strong>⚠️ Vui lòng đăng ký tài khoản ngay để tham gia lớp học:</strong></p>
+                    <ul style="margin: 10px 0 0 20px;">
+                        <li>Truy cập hệ thống WDP</li>
+                        <li>Đăng ký tài khoản với MSSV: <strong>${rollNumber}</strong></li>
+                        <li>Sau khi đăng ký, bạn sẽ tự động được thêm vào lớp học</li>
+                    </ul>
+                </div>
+                <p>Nếu bạn đã có tài khoản, vui lòng đăng nhập và kiểm tra lại.</p>
+                <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
+                <p style="color: #999; font-size: 12px;">Email này được gửi tự động từ hệ thống WDP. Vui lòng không trả lời email này.</p>
+            </div>
+        `;
+        const textContent = `Bạn đã được thêm vào lớp học ${className} nhưng chưa có tài khoản. Vui lòng đăng ký tài khoản với MSSV ${rollNumber} để tham gia lớp học.`;
+
+        // Ưu tiên dùng Brevo API nếu có BREVO_API_KEY
+        if (process.env.BREVO_API_KEY) {
+            console.log('📡 Sử dụng Brevo API để gửi email thông báo enrollment');
+            return await sendEmailViaBrevoAPI(toEmail, subject, htmlContent, textContent);
+        }
+
+        // Fallback về SMTP
+        console.log('📧 Sử dụng SMTP để gửi email thông báo enrollment');
+        return await sendEmailViaSMTP(toEmail, subject, htmlContent, textContent);
+    } catch (error) {
+        console.error('❌ Lỗi gửi email thông báo enrollment:', error.message);
+        // Không throw error để không ảnh hưởng đến quá trình import
+        // Chỉ log để theo dõi
+        return { success: false, error: error.message };
+    }
+};
+
 module.exports = {
     sendOTPEmail,
-    sendVerificationOTPEmail
+    sendVerificationOTPEmail,
+    sendPendingEnrollmentEmail
 };

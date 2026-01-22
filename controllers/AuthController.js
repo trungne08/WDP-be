@@ -3,6 +3,9 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const models = require('../models');
 const OTP = require('../models/OTP');
+const PendingEnrollment = require('../models/PendingEnrollment');
+const Team = require('../models/Team');
+const TeamMember = require('../models/TeamMember');
 const { sendOTPEmail, sendVerificationOTPEmail } = require('../services/EmailService');
 
 // ==========================================
@@ -200,6 +203,78 @@ const register = async (req, res) => {
                 role: 'STUDENT',
                 is_verified: true // Đã verify OTP rồi
             });
+
+            // ==========================================
+            // TỰ ĐỘNG ENROLL VÀO LỚP NẾU CÓ TRONG PENDING ENROLLMENT
+            // ==========================================
+            try {
+                // Tìm pending enrollment theo student_code hoặc email
+                const pendingEnrollments = await PendingEnrollment.find({
+                    enrolled: false,
+                    $or: [
+                        { roll_number: student_code.trim() },
+                        { email: email.toLowerCase().trim() }
+                    ]
+                });
+
+                const enrolledClasses = [];
+
+                for (const pending of pendingEnrollments) {
+                    try {
+                        // Tìm hoặc tạo Team theo Group
+                        let team = await Team.findOne({
+                            class_id: pending.class_id,
+                            project_name: `Group ${pending.group}`
+                        });
+
+                        if (!team) {
+                            // Tạo team mới nếu chưa có
+                            team = await Team.create({
+                                class_id: pending.class_id,
+                                project_name: `Group ${pending.group}`
+                            });
+                        }
+
+                        // Kiểm tra TeamMember đã tồn tại chưa
+                        const existingMember = await TeamMember.findOne({
+                            team_id: team._id,
+                            student_id: newUser._id
+                        });
+
+                        if (!existingMember) {
+                            // Tạo TeamMember (enroll vào lớp)
+                            await TeamMember.create({
+                                team_id: team._id,
+                                student_id: newUser._id,
+                                role_in_team: pending.is_leader ? 'Leader' : 'Member',
+                                is_active: true
+                            });
+
+                            // Đánh dấu đã enroll
+                            pending.enrolled = true;
+                            pending.enrolled_at = new Date();
+                            await pending.save();
+
+                            enrolledClasses.push({
+                                class_id: pending.class_id.toString(),
+                                group: pending.group,
+                                role: pending.is_leader ? 'Leader' : 'Member'
+                            });
+                        }
+                    } catch (enrollError) {
+                        console.error(`Lỗi enroll vào lớp ${pending.class_id}:`, enrollError);
+                        // Tiếp tục với lớp khác, không dừng lại
+                    }
+                }
+
+                // Thêm thông tin enrolled classes vào response nếu có
+                if (enrolledClasses.length > 0) {
+                    console.log(`✅ Tự động enroll ${enrolledClasses.length} lớp cho sinh viên ${student_code}`);
+                }
+            } catch (autoEnrollError) {
+                // Không throw error, chỉ log để không ảnh hưởng đến quá trình đăng ký
+                console.error('Lỗi tự động enroll:', autoEnrollError);
+            }
         }
 
         // Xóa OTP ngay sau khi verify thành công (đã dùng rồi không cần giữ)
@@ -637,6 +712,72 @@ const getProfile = async (req, res) => {
 };
 
 // ==========================================
+// CẬP NHẬT PROFILE (UPDATE PROFILE)
+// ==========================================
+/**
+ * PUT /auth/me
+ * Cập nhật thông tin profile của user hiện tại
+ */
+const updateProfile = async (req, res) => {
+    try {
+        // req.user và req.role đã được set bởi authenticateToken middleware
+        const user = req.user;
+        const role = req.role;
+        const { full_name, avatar_url, major, ent } = req.body;
+
+        // Validate: ít nhất phải có một trường để update
+        if (!full_name && !avatar_url && major === undefined && ent === undefined) {
+            return res.status(400).json({
+                error: 'Vui lòng cung cấp ít nhất một trường để cập nhật (full_name, avatar_url, major, ent)'
+            });
+        }
+
+        // Cập nhật các trường được phép theo role
+        if (full_name !== undefined) {
+            user.full_name = full_name;
+        }
+
+        // Admin không có avatar_url
+        if (avatar_url !== undefined && role !== 'ADMIN') {
+            user.avatar_url = avatar_url;
+        }
+
+        // Chỉ Student mới có major và ent
+        if (role === 'STUDENT') {
+            if (major !== undefined) {
+                user.major = major;
+            }
+            if (ent !== undefined) {
+                user.ent = ent;
+            }
+        } else {
+            // Nếu không phải Student mà gửi major hoặc ent thì bỏ qua
+            if (major !== undefined || ent !== undefined) {
+                return res.status(400).json({
+                    error: 'Chỉ Student mới có thể cập nhật major và ent'
+                });
+            }
+        }
+
+        // Lưu thay đổi
+        await user.save();
+
+        // Trả về user đã cập nhật (không trả password)
+        const userResponse = user.toObject();
+        delete userResponse.password;
+
+        res.json({
+            message: '✅ Cập nhật profile thành công!',
+            user: userResponse,
+            role: role
+        });
+    } catch (error) {
+        console.error('Update profile error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// ==========================================
 // ĐĂNG XUẤT (LOGOUT)
 // ==========================================
 /**
@@ -673,5 +814,6 @@ module.exports = {
     verifyOTPAndResetPassword,
     refreshToken,
     getProfile,
+    updateProfile,
     logout
 };

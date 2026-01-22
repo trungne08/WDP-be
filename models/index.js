@@ -14,5 +14,6 @@ module.exports = {
     SprintAssessment: require('./Assessment').SprintAssessment,
     RiskAlert: require('./RiskAlert'),
     OTP: require('./OTP'),
-    RefreshToken: require('./RefreshToken')
+    RefreshToken: require('./RefreshToken'),
+    PendingEnrollment: require('./PendingEnrollment')
 };

@@ -408,6 +408,85 @@ module.exports = (app) => {
 
     /**
      * @swagger
+     * /api/auth/me:
+     *   put:
+     *     summary: Cập nhật thông tin profile của user hiện tại
+     *     tags: [Auth]
+     *     description: Cập nhật thông tin profile (full_name, avatar_url, major, ent). Mỗi role có các trường có thể cập nhật khác nhau.
+     *     security:
+     *       - bearerAuth: []
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               full_name:
+     *                 type: string
+     *                 description: Tên đầy đủ (tất cả roles)
+     *                 example: Nguyễn Văn A
+     *               avatar_url:
+     *                 type: string
+     *                 description: URL avatar (chỉ LECTURER và STUDENT, không áp dụng cho ADMIN)
+     *                 example: https://example.com/avatar.jpg
+     *               major:
+     *                 type: string
+     *                 description: Chuyên ngành (chỉ STUDENT)
+     *                 example: Software Engineering
+     *               ent:
+     *                 type: string
+     *                 description: Khóa học (chỉ STUDENT, ví dụ K18, K19)
+     *                 example: K19
+     *           examples:
+     *             lecturer:
+     *               summary: Cập nhật profile Lecturer
+     *               value:
+     *                 full_name: Trần Thị Giảng Viên
+     *                 avatar_url: https://example.com/avatar.jpg
+     *             student:
+     *               summary: Cập nhật profile Student
+     *               value:
+     *                 full_name: Lê Văn Sinh Viên
+     *                 avatar_url: https://example.com/avatar.jpg
+     *                 major: Software Engineering
+     *                 ent: K19
+     *             admin:
+     *               summary: Cập nhật profile Admin
+     *               value:
+     *                 full_name: Admin User
+     *     responses:
+     *       200:
+     *         description: Cập nhật profile thành công
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                   example: "✅ Cập nhật profile thành công!"
+     *                 user:
+     *                   oneOf:
+     *                     - $ref: '#/components/schemas/Admin'
+     *                     - $ref: '#/components/schemas/Lecturer'
+     *                     - $ref: '#/components/schemas/Student'
+     *                 role:
+     *                   type: string
+     *                   enum: [ADMIN, LECTURER, STUDENT]
+     *       400:
+     *         description: Lỗi validation hoặc không có trường nào để cập nhật
+     *       401:
+     *         description: Token không hợp lệ hoặc đã hết hạn
+     *       403:
+     *         description: Email chưa được xác minh (chỉ áp dụng cho LECTURER và STUDENT)
+     *       500:
+     *         description: Lỗi server
+     */
+    app.put('/api/auth/me', authenticateToken, AuthController.updateProfile);
+
+    /**
+     * @swagger
      * /api/auth/logout:
      *   post:
      *     summary: Đăng xuất

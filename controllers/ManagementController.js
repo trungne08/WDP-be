@@ -5,6 +5,8 @@ const Class = require('../models/Class');
 const Student = require('../models/Student');
 const Team = require('../models/Team');
 const TeamMember = require('../models/TeamMember');
+const PendingEnrollment = require('../models/PendingEnrollment');
+const { sendPendingEnrollmentEmail } = require('../services/EmailService');
 
 // ==========================================
 // QUẢN LÝ HỌC KỲ (SEMESTER MANAGEMENT)
@@ -454,13 +456,50 @@ const importStudents = async (req, res) => {
                 }
 
                 // Nếu vẫn không tìm thấy → sinh viên chưa đăng ký
+                // Lưu vào PendingEnrollment và gửi email thông báo
                 if (!student) {
+                    // Kiểm tra xem đã có pending enrollment chưa (tránh duplicate)
+                    const existingPending = await PendingEnrollment.findOne({
+                        class_id: classId,
+                        roll_number: RollNumber.trim(),
+                        enrolled: false
+                    });
+
+                    if (!existingPending) {
+                        // Lưu pending enrollment
+                        await PendingEnrollment.create({
+                            class_id: classId,
+                            roll_number: RollNumber.trim(),
+                            email: Email ? Email.toLowerCase().trim() : null,
+                            full_name: FullName || '',
+                            group: groupNumber,
+                            is_leader: isLeader,
+                            enrolled: false
+                        });
+
+                        // Gửi email thông báo cho sinh viên chưa đăng ký (nếu có email)
+                        if (Email && Email.trim()) {
+                            try {
+                                await sendPendingEnrollmentEmail(
+                                    Email.trim(),
+                                    FullName || RollNumber,
+                                    classExists.name,
+                                    RollNumber
+                                );
+                                console.log(`✅ Đã gửi email thông báo enrollment đến ${Email}`);
+                            } catch (emailError) {
+                                console.error(`❌ Lỗi gửi email đến ${Email}:`, emailError.message);
+                                // Không throw error, chỉ log
+                            }
+                        }
+                    }
+
                     results.not_found.push({
                         row: rowNumber,
                         rollNumber: RollNumber,
                         email: Email || 'N/A',
                         fullName: FullName || 'N/A',
-                        message: 'Sinh viên chưa đăng ký tài khoản. Vui lòng yêu cầu sinh viên đăng ký trước.'
+                        message: 'Sinh viên chưa đăng ký tài khoản. Đã gửi email thông báo (nếu có email). Sẽ tự động join lớp khi đăng ký.'
                     });
                     continue;
                 }
