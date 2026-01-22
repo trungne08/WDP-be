@@ -107,7 +107,7 @@ const requestRegistrationOTP = async (req, res) => {
 // ==========================================
 const register = async (req, res) => {
     try {
-        const { role, email, password, otp_code, full_name, student_code, avatar_url, major } = req.body;
+        const { role, email, password, otp_code, full_name, student_code, avatar_url, major, ent } = req.body;
 
         // Validate role - KHÔNG CHO PHÉP ĐĂNG KÝ ADMIN
         if (!['LECTURER', 'STUDENT'].includes(role)) {
@@ -179,6 +179,16 @@ const register = async (req, res) => {
             });
         } 
         else if (role === 'STUDENT') {
+            // Xử lý ENT (khóa học): Ưu tiên dùng từ request, nếu không có thì tự động suy ra từ MSSV
+            let studentEnt = ent;
+            if (!studentEnt && student_code && student_code.length >= 4) {
+                // Tự động suy ra ENT từ MSSV, ví dụ CE190585 -> K19
+                const yearPart = student_code.slice(2, 4); // "19" trong CE190585
+                if (!isNaN(Number(yearPart))) {
+                    studentEnt = `K${yearPart}`;
+                }
+            }
+
             newUser = await models.Student.create({
                 email,
                 password: hashedPassword,
@@ -186,6 +196,7 @@ const register = async (req, res) => {
                 full_name: full_name || '',
                 avatar_url: avatar_url || '',
                 major: major || '',
+                ent: studentEnt, // Có thể là từ request hoặc tự động suy ra
                 role: 'STUDENT',
                 is_verified: true // Đã verify OTP rồi
             });
@@ -274,9 +285,13 @@ const login = async (req, res) => {
             });
         }
 
-        // Trả về user info (không trả password)
-        const userResponse = user.toObject();
-        delete userResponse.password;
+        // Trả về thông tin cơ bản (thông tin chi tiết lấy từ API /api/auth/me)
+        const basicUserInfo = {
+            _id: user._id.toString(),
+            email: user.email,
+            role: userRole,
+            full_name: user.full_name || ''
+        };
 
         // Tạo JWT Token
         const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
@@ -293,8 +308,7 @@ const login = async (req, res) => {
         res.json({
             message: `✅ Đăng nhập thành công!`,
             token,
-            user: userResponse,
-            role: userRole
+            user: basicUserInfo
         });
 
     } catch (error) {
@@ -467,10 +481,63 @@ const verifyOTPAndResetPassword = async (req, res) => {
     }
 };
 
+// ==========================================
+// LẤY THÔNG TIN PROFILE (GET PROFILE)
+// ==========================================
+/**
+ * GET /auth/me
+ * Lấy thông tin profile của user hiện tại (từ token)
+ */
+const getProfile = async (req, res) => {
+    try {
+        // req.user và req.role đã được set bởi authenticateToken middleware
+        const user = req.user;
+        const role = req.role;
+
+        // Trả về user info (không trả password)
+        const userResponse = user.toObject();
+        delete userResponse.password;
+
+        res.json({
+            user: userResponse,
+            role: role
+        });
+    } catch (error) {
+        console.error('Get profile error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// ==========================================
+// ĐĂNG XUẤT (LOGOUT)
+// ==========================================
+/**
+ * POST /auth/logout
+ * Đăng xuất (client sẽ xóa token)
+ * Với JWT stateless, logout chủ yếu là client-side
+ * API này chỉ để confirm và có thể log activity nếu cần
+ */
+const logout = async (req, res) => {
+    try {
+        // Với JWT stateless, logout chủ yếu là client-side
+        // Client sẽ xóa token khỏi localStorage/sessionStorage
+        // Nếu cần blacklist token, có thể implement thêm token blacklist ở đây
+        
+        res.json({
+            message: '✅ Đăng xuất thành công! Vui lòng xóa token ở client.'
+        });
+    } catch (error) {
+        console.error('Logout error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
     requestRegistrationOTP,
     register,
     login,
     forgotPassword,
-    verifyOTPAndResetPassword
+    verifyOTPAndResetPassword,
+    getProfile,
+    logout
 };

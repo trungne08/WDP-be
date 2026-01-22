@@ -26,7 +26,8 @@ const TeamSchema = new Schema({
     api_token_github: String, // Encrypted
     
     last_sync_at: Date,
-    sync_history: { type: [SyncHistorySchema], default: [] }
+    sync_history: { type: [SyncHistorySchema], default: [] },
+    created_at: { type: Date, default: Date.now }
 });
 
 module.exports = mongoose.model('Team', TeamSchema);

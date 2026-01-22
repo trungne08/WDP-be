@@ -4,6 +4,8 @@ const TeamController = require('./controllers/TeamController');
 const SyncController = require('./controllers/SyncController');
 const AuthController = require('./controllers/AuthController');
 const TeamApiController = require('./controllers/TeamApiController');
+const ManagementController = require('./controllers/ManagementController');
+const { authenticateToken } = require('./middleware/auth');
 
 // Export function để setup routes
 module.exports = (app) => {
@@ -91,6 +93,10 @@ module.exports = (app) => {
      *               major:
      *                 type: string
      *                 description: Cho STUDENT
+     *               ent:
+     *                 type: string
+     *                 description: Khóa học (VD: K18, K19). Nếu không nhập sẽ tự động suy ra từ student_code
+     *                 example: K19
      *           examples:
      *             lecturer:
      *               summary: Đăng ký Lecturer
@@ -111,6 +117,7 @@ module.exports = (app) => {
      *                 student_code: SE150000
      *                 full_name: Lê Văn Sinh Viên
      *                 major: Software Engineering
+     *                 ent: K15
      *     responses:
      *       201:
      *         description: Đăng ký thành công
@@ -260,13 +267,18 @@ module.exports = (app) => {
      *                   type: string
      *                   description: JWT Token để dùng cho các API cần authentication (hết hạn sau 7 ngày)
      *                 user:
-     *                   oneOf:
-     *                     - $ref: '#/components/schemas/Admin'
-     *                     - $ref: '#/components/schemas/Lecturer'
-     *                     - $ref: '#/components/schemas/Student'
-     *                 role:
-     *                   type: string
-     *                   enum: [ADMIN, LECTURER, STUDENT]
+     *                   type: object
+     *                   description: Thông tin cơ bản của user (thông tin chi tiết lấy từ API /api/auth/me)
+     *                   properties:
+     *                     _id:
+     *                       type: string
+     *                     email:
+     *                       type: string
+     *                     role:
+     *                       type: string
+     *                       enum: [ADMIN, LECTURER, STUDENT]
+     *                     full_name:
+     *                       type: string
      *       401:
      *         description: Email hoặc password không đúng
      *         content:
@@ -289,20 +301,52 @@ module.exports = (app) => {
      */
     app.post('/api/auth/login', AuthController.login);
 
-    // ==========================================
-    // TEAM MANAGEMENT APIs
-    // ==========================================
-
-    // 1) POST /api/teams (Tạo team mới)
     /**
      * @swagger
-     * /api/teams:
-     *   post:
-     *     summary: Tạo nhóm mới để lấy Team ID
-     *     tags: [Team Management]
+     * /api/auth/me:
+     *   get:
+     *     summary: Lấy thông tin profile của user hiện tại
+     *     tags: [Auth]
+     *     description: Lấy thông tin đầy đủ của user từ token (dùng cho trang profile)
+     *     security:
+     *       - bearerAuth: []
      *     responses:
      *       200:
-     *         description: Tạo team thành công
+     *         description: Thông tin profile
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 user:
+     *                   oneOf:
+     *                     - $ref: '#/components/schemas/Admin'
+     *                     - $ref: '#/components/schemas/Lecturer'
+     *                     - $ref: '#/components/schemas/Student'
+     *                 role:
+     *                   type: string
+     *                   enum: [ADMIN, LECTURER, STUDENT]
+     *       401:
+     *         description: Token không hợp lệ hoặc đã hết hạn
+     *       403:
+     *         description: Email chưa được xác minh (chỉ áp dụng cho LECTURER và STUDENT)
+     *       500:
+     *         description: Lỗi server
+     */
+    app.get('/api/auth/me', authenticateToken, AuthController.getProfile);
+
+    /**
+     * @swagger
+     * /api/auth/logout:
+     *   post:
+     *     summary: Đăng xuất
+     *     tags: [Auth]
+     *     description: Đăng xuất khỏi hệ thống. Client cần xóa token khỏi localStorage/sessionStorage.
+     *     security:
+     *       - bearerAuth: []
+     *     responses:
+     *       200:
+     *         description: Đăng xuất thành công
      *         content:
      *           application/json:
      *             schema:
@@ -310,14 +354,406 @@ module.exports = (app) => {
      *               properties:
      *                 message:
      *                   type: string
-     *                 team_id:
-     *                   type: string
-     *                 data:
-     *                   type: object
+     *       401:
+     *         description: Token không hợp lệ
      *       500:
      *         description: Lỗi server
      */
-    app.post('/api/teams', TeamApiController.seedTeam);
+    app.post('/api/auth/logout', authenticateToken, AuthController.logout);
+
+    // ==========================================
+    // TEAM MANAGEMENT APIs
+    // ==========================================
+
+    // ==========================================
+    // MANAGEMENT APIs (Quản trị hệ thống)
+    // ==========================================
+
+    /**
+     * @swagger
+     * /api/management/semesters:
+     *   post:
+     *     summary: Tạo học kỳ mới (VD: Spring 2026)
+     *     tags: [Management]
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - name
+     *               - code
+     *               - start_date
+     *               - end_date
+     *             properties:
+     *               name:
+     *                 type: string
+     *                 example: Spring 2026
+     *               code:
+     *                 type: string
+     *                 example: SP2026
+     *               start_date:
+     *                 type: string
+     *                 format: date
+     *                 example: 2026-01-15
+     *               end_date:
+     *                 type: string
+     *                 format: date
+     *                 example: 2026-05-15
+     *     responses:
+     *       201:
+     *         description: Tạo học kỳ thành công
+     *       400:
+     *         description: Lỗi validation
+     *       500:
+     *         description: Lỗi server
+     */
+    app.post('/api/management/semesters', ManagementController.createSemester);
+
+    /**
+     * @swagger
+     * /api/management/semesters:
+     *   get:
+     *     summary: Lấy danh sách học kỳ (Để hiển thị dropdown chọn kỳ)
+     *     tags: [Management]
+     *     responses:
+     *       200:
+     *         description: Danh sách học kỳ
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 semesters:
+     *                   type: array
+     */
+    app.get('/api/management/semesters', ManagementController.getSemesters);
+
+    /**
+     * @swagger
+     * /api/management/users:
+     *   post:
+     *     summary: Tạo User (Admin, Giảng viên, Mentor)
+     *     tags: [Management]
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - full_name
+     *               - email
+     *               - role
+     *             properties:
+     *               full_name:
+     *                 type: string
+     *                 example: Nguyễn Văn A
+     *               email:
+     *                 type: string
+     *                 format: email
+     *                 example: lecturer@fpt.edu.vn
+     *               role:
+     *                 type: string
+     *                 enum: [ADMIN, LECTURER, MENTOR]
+     *                 example: LECTURER
+     *     responses:
+     *       201:
+     *         description: Tạo user thành công
+     *       400:
+     *         description: Lỗi validation
+     *       500:
+     *         description: Lỗi server
+     */
+    app.post('/api/management/users', ManagementController.createUser);
+
+    /**
+     * @swagger
+     * /api/management/users:
+     *   get:
+     *     summary: Lấy danh sách User (Lọc ra giảng viên để gán vào lớp)
+     *     tags: [Management]
+     *     parameters:
+     *       - in: query
+     *         name: role
+     *         schema:
+     *           type: string
+     *           enum: [lecturer, mentor, admin]
+     *         description: Lọc theo role
+     *         example: lecturer
+     *     responses:
+     *       200:
+     *         description: Danh sách user
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 users:
+     *                   type: array
+     */
+    app.get('/api/management/users', ManagementController.getUsers);
+
+    /**
+     * @swagger
+     * /api/management/classes:
+     *   post:
+     *     summary: Tạo Lớp học (Gắn lớp vào học kỳ & giảng viên)
+     *     tags: [Management]
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - name
+     *               - semester_id
+     *               - lecturer_id
+     *             properties:
+     *               name:
+     *                 type: string
+     *                 example: Software Engineering Project
+     *               semester_id:
+     *                 type: string
+     *                 example: 507f1f77bcf86cd799439011
+     *               lecturer_id:
+     *                 type: string
+     *                 example: 507f1f77bcf86cd799439012
+     *     responses:
+     *       201:
+     *         description: Tạo lớp học thành công
+     *       400:
+     *         description: Lỗi validation
+     *       404:
+     *         description: Không tìm thấy học kỳ hoặc giảng viên
+     *       500:
+     *         description: Lỗi server
+     */
+    app.post('/api/management/classes', ManagementController.createClass);
+
+    /**
+     * @swagger
+     * /api/management/classes:
+     *   get:
+     *     summary: Lấy danh sách Lớp (Theo học kỳ)
+     *     tags: [Management]
+     *     parameters:
+     *       - in: query
+     *         name: semester_id
+     *         schema:
+     *           type: string
+     *         description: Lọc theo học kỳ
+     *         example: 507f1f77bcf86cd799439011
+     *     responses:
+     *       200:
+     *         description: Danh sách lớp
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 classes:
+     *                   type: array
+     */
+    app.get('/api/management/classes', ManagementController.getClasses);
+
+    /**
+     * @swagger
+     * /api/management/classes/{classId}/import-students:
+     *   post:
+     *     summary: Import danh sách sinh viên vào lớp từ template
+     *     tags: [Management]
+     *     description: |
+     *       Giảng viên có thể import nhiều sinh viên cùng lúc để enroll vào lớp.
+     *       **Lưu ý:** Sinh viên phải tự đăng ký tài khoản trước khi import.
+     *       - K18 trở về trước: Tìm sinh viên dựa vào Email (có email trường cung cấp)
+     *       - K19 trở về sau: Tìm sinh viên dựa vào RollNumber (student_code)
+     *       Sinh viên có đánh dấu 'x' trong cột Leader sẽ tự động được set làm Leader của nhóm.
+     *     parameters:
+     *       - in: path
+     *         name: classId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của lớp học
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - students
+     *             properties:
+     *               students:
+     *                 type: array
+     *                 items:
+     *                   type: object
+     *                   required:
+     *                     - RollNumber
+     *                     - Email
+     *                     - FullName
+     *                     - Group
+     *                   properties:
+     *                     Class:
+     *                       type: string
+     *                       example: SE1943
+     *                     RollNumber:
+     *                       type: string
+     *                       example: CE190585
+     *                       description: Mã sinh viên (student_code)
+     *                     Email:
+     *                       type: string
+     *                       format: email
+     *                       example: minhlq.ce190585@gmail.com
+     *                     MemberCode:
+     *                       type: string
+     *                       example: MinhLQCE190585
+     *                     FullName:
+     *                       type: string
+     *                       example: Lâm Quốc Minh
+     *                     Group:
+     *                       type: number
+     *                       example: 1
+     *                       description: Số nhóm (sẽ tự động tạo Team nếu chưa có)
+     *                     Leader:
+     *                       type: string
+     *                       example: x
+     *                       description: Đánh dấu 'x' hoặc 'X' để set làm Leader
+     *           example:
+     *             students:
+     *               - Class: SE1943
+     *                 RollNumber: CE190585
+     *                 Email: minhlq.ce190585@gmail.com
+     *                 MemberCode: MinhLQCE190585
+     *                 FullName: Lâm Quốc Minh
+     *                 Group: 1
+     *                 Leader: x
+     *               - Class: SE1943
+     *                 RollNumber: DE191059
+     *                 Email: trankhanhduong@gmail.com
+     *                 MemberCode: DuongTKDE191059
+     *                 FullName: Trần Khánh Dương
+     *                 Group: 1
+     *                 Leader: ""
+     *     responses:
+     *       200:
+     *         description: Import thành công
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                 summary:
+     *                   type: object
+     *                   properties:
+     *                     total_rows:
+     *                       type: number
+     *                     success:
+     *                       type: number
+     *                     errors:
+     *                       type: number
+     *                     not_found:
+     *                       type: number
+     *                       description: Số sinh viên chưa đăng ký tài khoản
+     *                     created_teams:
+     *                       type: number
+     *                     created_members:
+     *                       type: number
+     *                 details:
+     *                   type: object
+     *                   properties:
+     *                     success:
+     *                       type: array
+     *                     errors:
+     *                       type: array
+     *                     not_found:
+     *                       type: array
+     *                       description: Danh sách sinh viên chưa đăng ký tài khoản
+     *       400:
+     *         description: Lỗi validation
+     *       404:
+     *         description: Không tìm thấy lớp học
+     *       500:
+     *         description: Lỗi server
+     */
+    app.post('/api/management/classes/:classId/import-students', ManagementController.importStudents);
+
+    // ==========================================
+    // TEAM MANAGEMENT APIs
+    // ==========================================
+
+    /**
+     * @swagger
+     * /api/teams:
+     *   post:
+     *     summary: Tạo nhóm dự án (Thay thế cho API seed-team cũ)
+     *     tags: [Team Management]
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - project_name
+     *               - class_id
+     *             properties:
+     *               project_name:
+     *                 type: string
+     *                 example: E-Commerce Website
+     *               class_id:
+     *                 type: string
+     *                 example: 507f1f77bcf86cd799439013
+     *     responses:
+     *       201:
+     *         description: Tạo nhóm thành công
+     *       400:
+     *         description: Lỗi validation
+     *       404:
+     *         description: Không tìm thấy lớp học
+     *       500:
+     *         description: Lỗi server
+     */
+    app.post('/api/teams', TeamApiController.createTeam);
+
+    /**
+     * @swagger
+     * /api/teams:
+     *   get:
+     *     summary: Lấy danh sách nhóm trong một lớp cụ thể
+     *     tags: [Team Management]
+     *     parameters:
+     *       - in: query
+     *         name: class_id
+     *         schema:
+     *           type: string
+     *         description: Lọc theo lớp học
+     *         example: 507f1f77bcf86cd799439013
+     *     responses:
+     *       200:
+     *         description: Danh sách nhóm
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 teams:
+     *                   type: array
+     */
+    app.get('/api/teams', TeamApiController.getTeams);
 
     // 2) GET /api/teams/:teamId (Xem thông tin team)
     /**

@@ -21,22 +21,82 @@ function genStudentCode() {
     return `SE${num}`;
 }
 
-// 1) POST /seed-team
-exports.seedTeam = async (req, res) => {
+// POST /teams - Tạo nhóm dự án (thay thế seed-team)
+exports.createTeam = async (req, res) => {
     try {
+        const { project_name, class_id } = req.body;
+
+        // Validate required fields
+        if (!project_name || !class_id) {
+            return res.status(400).json({
+                error: 'project_name và class_id là bắt buộc'
+            });
+        }
+
+        // Validate class_id
+        if (!isValidObjectId(class_id)) {
+            return res.status(400).json({
+                error: 'class_id không hợp lệ'
+            });
+        }
+
+        // Kiểm tra class tồn tại
+        const Class = require('../models/Class');
+        const classExists = await Class.findById(class_id);
+        if (!classExists) {
+            return res.status(404).json({
+                error: 'Không tìm thấy lớp học'
+            });
+        }
+
         const newTeam = await Team.create({
-            project_name: 'Nhóm Test API',
-            class_id: new mongoose.Types.ObjectId(),
+            project_name,
+            class_id,
             jira_project_key: '',
             last_sync_at: null
         });
 
-        res.json({
-            message: '✅ Đã tạo nhóm thành công!',
-            team_id: newTeam._id,
-            data: newTeam
+        // Populate để trả về thông tin đầy đủ
+        const teamWithDetails = await Team.findById(newTeam._id)
+            .populate('class_id', 'name class_code')
+            .lean();
+
+        res.status(201).json({
+            message: '✅ Tạo nhóm dự án thành công!',
+            team: teamWithDetails
         });
     } catch (error) {
+        console.error('Create team error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// GET /teams?class_id=... - Lấy danh sách nhóm trong một lớp cụ thể
+exports.getTeams = async (req, res) => {
+    try {
+        const { class_id } = req.query;
+
+        let query = {};
+        if (class_id) {
+            if (!isValidObjectId(class_id)) {
+                return res.status(400).json({
+                    error: 'class_id không hợp lệ'
+                });
+            }
+            query.class_id = class_id;
+        }
+
+        const teams = await Team.find(query)
+            .populate('class_id', 'name class_code')
+            .sort({ created_at: -1 })
+            .lean();
+
+        res.json({
+            total: teams.length,
+            teams
+        });
+    } catch (error) {
+        console.error('Get teams error:', error);
         res.status(500).json({ error: error.message });
     }
 };

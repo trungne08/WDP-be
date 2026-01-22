@@ -22,6 +22,14 @@ const options = {
             }]),
         ],
         components: {
+            securitySchemes: {
+                bearerAuth: {
+                    type: 'http',
+                    scheme: 'bearer',
+                    bearerFormat: 'JWT',
+                    description: 'Nhập JWT token nhận được từ API login'
+                }
+            },
             schemas: {
                 Admin: {
                     type: 'object',
@@ -54,6 +62,7 @@ const options = {
                         full_name: { type: 'string' },
                         avatar_url: { type: 'string' },
                         major: { type: 'string' },
+                        ent: { type: 'string', description: 'Khóa học (VD: K18, K19)' },
                         role: { type: 'string', enum: ['STUDENT'] },
                         is_verified: { type: 'boolean', description: 'Email đã được xác minh chưa' },
                         created_at: { type: 'string', format: 'date-time' },
