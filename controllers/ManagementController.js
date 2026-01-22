@@ -309,10 +309,6 @@ const createClass = async (req, res) => {
     }
 };
 
-/**
- * GET /management/classes?semester_id=...
- * Lấy danh sách lớp (theo học kỳ)
- */
 const getClasses = async (req, res) => {
     try {
         const { semester_id } = req.query;

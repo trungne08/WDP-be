@@ -202,82 +202,82 @@ module.exports = (app) => {
      */
     app.get('/api/management/classes', ManagementController.getClasses);
 
-    /**
+/**
      * @swagger
      * /api/management/classes/{classId}/grading-config:
-     * put:
-     * summary: Cấu hình trọng số điểm (Giảng viên)
-     * tags: [Management]
-     * description: |
-     * Giảng viên cấu hình các cột điểm (Grade Structure) và tỷ lệ tính điểm đóng góp (Contribution).
-     * - Tổng trọng số các cột điểm phải bằng 1 (100%).
-     * - Tổng trọng số đóng góp (Jira + Git + Review) phải bằng 1 (100%).
-     * parameters:
-     * - in: path
-     * name: classId
-     * required: true
-     * schema:
-     * type: string
-     * description: ID của lớp học
-     * requestBody:
-     * required: true
-     * content:
-     * application/json:
-     * schema:
-     * type: object
-     * required:
-     * - gradeStructure
-     * properties:
-     * gradeStructure:
-     * type: array
-     * description: Danh sách các cột điểm của môn học
-     * items:
-     * type: object
-     * required:
-     * - name
-     * - weight
-     * properties:
-     * name:
-     * type: string
-     * example: Assignment 1
-     * weight:
-     * type: number
-     * format: float
-     * example: 0.2
-     * description: Trọng số (VD: 0.2 = 20%)
-     * isGroupGrade:
-     * type: boolean
-     * default: false
-     * description: Đánh dấu nếu đây là cột điểm nhóm (sẽ áp dụng công thức đóng góp)
-     * contributionConfig:
-     * type: object
-     * description: Cấu hình tỷ lệ tính điểm đóng góp (cho các cột điểm nhóm)
-     * properties:
-     * jiraWeight:
-     * type: number
-     * example: 0.4
-     * description: Trọng số Jira (40%)
-     * gitWeight:
-     * type: number
-     * example: 0.4
-     * description: Trọng số Github (40%)
-     * reviewWeight:
-     * type: number
-     * example: 0.2
-     * description: Trọng số Peer Review (20%)
-     * allowOverCeiling:
-     * type: boolean
-     * default: false
-     * description: Cho phép điểm tổng > 10 (Bonus)
-     * responses:
-     * 200:
-     * description: Cấu hình thành công
-     * 400:
-     * description: Lỗi validation (Tổng trọng số không bằng 100%)
-     * 404:
-     * description: Không tìm thấy lớp học
-     * 500:
-     * description: Lỗi server
+     *   put:
+     *     summary: Cấu hình trọng số điểm (Giảng viên)
+     *     tags: [Management]
+     *     description: |
+     *       Giảng viên cấu hình các cột điểm (Grade Structure) và tỷ lệ tính điểm đóng góp (Contribution).
+     *       - Tổng trọng số các cột điểm phải bằng 1 (100%).
+     *       - Tổng trọng số đóng góp (Jira + Git + Review) phải bằng 1 (100%).
+     *     parameters:
+     *       - in: path
+     *         name: classId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của lớp học
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - gradeStructure
+     *             properties:
+     *               gradeStructure:
+     *                 type: array
+     *                 description: Danh sách các cột điểm của môn học
+     *                 items:
+     *                   type: object
+     *                   required:
+     *                     - name
+     *                     - weight
+     *                   properties:
+     *                     name:
+     *                       type: string
+     *                       example: Assignment 1
+     *                     weight:
+     *                       type: number
+     *                       format: float
+     *                       example: 0.2
+     *                       description: Trọng số (ví dụ 0.2 = 20%)
+     *                     isGroupGrade:
+     *                       type: boolean
+     *                       default: false
+     *                       description: Đánh dấu nếu đây là cột điểm nhóm (sẽ áp dụng công thức đóng góp)
+     *               contributionConfig:
+     *                 type: object
+     *                 description: Cấu hình tỷ lệ tính điểm đóng góp (cho các cột điểm nhóm)
+     *                 properties:
+     *                   jiraWeight:
+     *                     type: number
+     *                     example: 0.4
+     *                     description: Trọng số Jira (40%)
+     *                   gitWeight:
+     *                     type: number
+     *                     example: 0.4
+     *                     description: Trọng số Github (40%)
+     *                   reviewWeight:
+     *                     type: number
+     *                     example: 0.2
+     *                     description: Trọng số Peer Review (20%)
+     *                   allowOverCeiling:
+     *                     type: boolean
+     *                     default: false
+     *                     description: Cho phép điểm tổng > 10 (Bonus)
+     *     responses:
+     *       200:
+     *         description: Cấu hình thành công
+     *       400:
+     *         description: Lỗi validation (Tổng trọng số không bằng 100%)
+     *       404:
+     *         description: Không tìm thấy lớp học
+     *       500:
+     *         description: Lỗi server
      */
     app.put('/api/management/classes/:classId/grading-config', ManagementController.configureClassGrading);
     
