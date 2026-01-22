@@ -311,10 +311,6 @@ const createClass = async (req, res) => {
     }
 };
 
-/**
- * GET /management/classes?semester_id=...
- * Lấy danh sách lớp (theo học kỳ)
- */
 const getClasses = async (req, res) => {
     try {
         const { semester_id } = req.query;
@@ -341,6 +337,86 @@ const getClasses = async (req, res) => {
         });
     } catch (error) {
         console.error('Get classes error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+const configureClassGrading = async (req, res) => {
+    try {
+        const { classId } = req.params;
+        const { gradeStructure, contributionConfig } = req.body;
+        
+        // 1. Tìm lớp học
+        // (Chỉ cần thao tác với collection Class để lưu cấu hình)
+        const currentClass = await Class.findById(classId);
+        if (!currentClass) {
+            return res.status(404).json({ error: 'Không tìm thấy lớp học' });
+        }
+
+        // 2. Validate Grade Structure (Cột điểm môn học)
+        // VD: Ass1 (20%) + Ass2 (30%) + Final (50%) = 100%
+        let validatedGradeStructure = [];
+        if (gradeStructure && Array.isArray(gradeStructure)) {
+            const totalGradeWeight = gradeStructure.reduce((sum, col) => sum + (parseFloat(col.weight) || 0), 0);
+            
+            // Validate tổng = 1.0 (100%)
+            // Cho phép sai số nhỏ (epsilon) do tính toán số thực
+            if (Math.abs(totalGradeWeight - 1.0) > 0.01) {
+                return res.status(400).json({ 
+                    error: `Tổng trọng số các cột điểm (Assignments) phải bằng 100%. Hiện tại là: ${(totalGradeWeight * 100).toFixed(1)}%` 
+                });
+            }
+            validatedGradeStructure = gradeStructure;
+        } else {
+            return res.status(400).json({ error: 'Cấu trúc điểm (gradeStructure) là bắt buộc' });
+        }
+
+        // 3. Validate Contribution Config (Quy tắc chia điểm nhóm)
+        // VD: Jira (40%) + Git (40%) + Review (20%) = 100%
+        let validatedContribution = {};
+        if (contributionConfig) {
+            const jW = parseFloat(contributionConfig.jiraWeight || 0);
+            const gW = parseFloat(contributionConfig.gitWeight || 0);
+            const rW = parseFloat(contributionConfig.reviewWeight || 0);
+            
+            const totalContribWeight = jW + gW + rW;
+
+            if (Math.abs(totalContribWeight - 1.0) > 0.01) {
+                return res.status(400).json({ 
+                    error: `Tổng trọng số tính đóng góp (Jira + Git + Review) phải bằng 100%. Hiện tại là: ${(totalContribWeight * 100).toFixed(1)}%` 
+                });
+            }
+
+            validatedContribution = {
+                jiraWeight: jW,
+                gitWeight: gW,
+                reviewWeight: rW,
+                allowOverCeiling: contributionConfig.allowOverCeiling || false
+            };
+        } else {
+            // Nếu không gửi, dùng mặc định
+            validatedContribution = {
+                jiraWeight: 0.4, gitWeight: 0.4, reviewWeight: 0.2, allowOverCeiling: false
+            };
+        }
+
+        // 4. Cập nhật vào Database
+        currentClass.gradeStructure = validatedGradeStructure;
+        currentClass.contributionConfig = validatedContribution;
+        
+        // Lưu lại
+        await currentClass.save();
+
+        res.status(200).json({
+            message: '✅ Cấu hình điểm thành công!',
+            data: {
+                gradeStructure: currentClass.gradeStructure,
+                contributionConfig: currentClass.contributionConfig
+            }
+        });
+
+    } catch (error) {
+        console.error('Configure grading error:', error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -605,5 +681,6 @@ module.exports = {
     getUsers,
     createClass,
     getClasses,
+    configureClassGrading,
     importStudents
 };
