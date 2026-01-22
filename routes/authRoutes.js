@@ -519,5 +519,97 @@ module.exports = (app) => {
      *       500:
      *         description: Lỗi server
      */
+    /**
+     * @swagger
+     * /api/auth/me/classes:
+     *   get:
+     *     summary: Lấy danh sách các lớp mà sinh viên tham gia (với role trong mỗi team)
+     *     tags: [Auth]
+     *     description: |
+     *       API này chỉ dành cho STUDENT. Trả về danh sách các lớp mà sinh viên đang tham gia,
+     *       kèm theo role của sinh viên trong mỗi team (Leader hoặc Member).
+     *       Một sinh viên có thể tham gia nhiều lớp khác nhau và có role khác nhau trong mỗi lớp.
+     *     security:
+     *       - bearerAuth: []
+     *     responses:
+     *       200:
+     *         description: Danh sách lớp của sinh viên
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 classes:
+     *                   type: array
+     *                   items:
+     *                     type: object
+     *                     properties:
+     *                       team_id:
+     *                         type: string
+     *                       team_name:
+     *                         type: string
+     *                       role_in_team:
+     *                         type: string
+     *                         enum: [Leader, Member]
+     *                       is_leader:
+     *                         type: boolean
+     *                       class:
+     *                         type: object
+     *                         properties:
+     *                           _id:
+     *                             type: string
+     *                           name:
+     *                             type: string
+     *                           class_code:
+     *                             type: string
+     *                           semester:
+     *                             type: object
+     *                           lecturer:
+     *                             type: object
+     *       403:
+     *         description: Chỉ sinh viên mới có thể xem danh sách lớp
+     *       401:
+     *         description: Token không hợp lệ
+     *       500:
+     *         description: Lỗi server
+     */
+    app.get('/api/auth/me/classes', authenticateToken, AuthController.getMyClasses);
+
+    /**
+     * @swagger
+     * /api/auth/logout:
+     *   post:
+     *     summary: Đăng xuất
+     *     tags: [Auth]
+     *     description: Đăng xuất khỏi hệ thống. Revoke refresh token và client cần xóa token khỏi localStorage/sessionStorage.
+     *     security:
+     *       - bearerAuth: []
+     *     requestBody:
+     *       required: false
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               refresh_token:
+     *                 type: string
+     *                 description: Refresh token để revoke (optional)
+     *     responses:
+     *       200:
+     *         description: Đăng xuất thành công
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *       401:
+     *         description: Token không hợp lệ
+     *       500:
+     *         description: Lỗi server
+     */
     app.post('/api/auth/logout', authenticateToken, AuthController.logout);
 };

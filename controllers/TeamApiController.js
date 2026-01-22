@@ -532,3 +532,61 @@ exports.getRanking = async (req, res) => {
     }
 };
 
+// ==========================================
+// CHECK ROLE CỦA USER TRONG TEAM
+// ==========================================
+/**
+ * GET /api/teams/:teamId/my-role
+ * Kiểm tra role của user hiện tại trong team (Leader hoặc Member)
+ * Dùng cho FE để check quyền (chức năng chỉ Leader mới có)
+ */
+exports.getMyRoleInTeam = async (req, res) => {
+    try {
+        const { teamId } = req.params;
+        
+        if (!isValidObjectId(teamId)) {
+            return res.status(400).json({ error: 'teamId không hợp lệ' });
+        }
+
+        // req.user và req.role đã được set bởi authenticateToken middleware
+        const user = req.user;
+        const role = req.role;
+
+        // Chỉ cho phép STUDENT
+        if (role !== 'STUDENT') {
+            return res.status(403).json({
+                error: 'Chỉ sinh viên mới có thể check role trong team'
+            });
+        }
+
+        // Kiểm tra team tồn tại
+        const team = await Team.findById(teamId).select('_id').lean();
+        if (!team) {
+            return res.status(404).json({ error: 'Không tìm thấy team' });
+        }
+
+        // Tìm TeamMember
+        const teamMember = await TeamMember.findOne({
+            team_id: teamId,
+            student_id: user._id,
+            is_active: true
+        }).lean();
+
+        if (!teamMember) {
+            return res.status(404).json({
+                error: 'Bạn không phải là thành viên của team này'
+            });
+        }
+
+        res.json({
+            team_id: teamId,
+            role_in_team: teamMember.role_in_team, // 'Leader' hoặc 'Member'
+            is_leader: teamMember.role_in_team === 'Leader',
+            is_member: teamMember.role_in_team === 'Member'
+        });
+    } catch (error) {
+        console.error('getMyRoleInTeam error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+

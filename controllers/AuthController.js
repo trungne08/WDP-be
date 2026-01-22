@@ -6,6 +6,7 @@ const OTP = require('../models/OTP');
 const PendingEnrollment = require('../models/PendingEnrollment');
 const Team = require('../models/Team');
 const TeamMember = require('../models/TeamMember');
+const Class = require('../models/Class');
 const { sendOTPEmail, sendVerificationOTPEmail } = require('../services/EmailService');
 
 // ==========================================
@@ -778,6 +779,77 @@ const updateProfile = async (req, res) => {
 };
 
 // ==========================================
+// LẤY DANH SÁCH LỚP CỦA SINH VIÊN (GET MY CLASSES)
+// ==========================================
+/**
+ * GET /auth/me/classes
+ * Lấy danh sách các lớp mà sinh viên tham gia (với role trong mỗi team)
+ * Chỉ dành cho STUDENT
+ */
+const getMyClasses = async (req, res) => {
+    try {
+        // req.user và req.role đã được set bởi authenticateToken middleware
+        const user = req.user;
+        const role = req.role;
+
+        // Chỉ cho phép STUDENT
+        if (role !== 'STUDENT') {
+            return res.status(403).json({
+                error: 'Chỉ sinh viên mới có thể xem danh sách lớp của mình'
+            });
+        }
+
+        // Lấy tất cả TeamMember của sinh viên này
+        const teamMembers = await TeamMember.find({
+            student_id: user._id,
+            is_active: true
+        })
+        .populate({
+            path: 'team_id',
+            select: '_id project_name class_id',
+            populate: {
+                path: 'class_id',
+                select: '_id name class_code semester_id lecturer_id',
+                populate: [
+                    {
+                        path: 'semester_id',
+                        select: '_id name code start_date end_date'
+                    },
+                    {
+                        path: 'lecturer_id',
+                        select: '_id email full_name'
+                    }
+                ]
+            }
+        })
+        .lean();
+
+        // Format response
+        const classes = teamMembers.map(tm => ({
+            team_id: tm.team_id._id,
+            team_name: tm.team_id.project_name,
+            role_in_team: tm.role_in_team, // 'Leader' hoặc 'Member'
+            is_leader: tm.role_in_team === 'Leader',
+            class: {
+                _id: tm.team_id.class_id._id,
+                name: tm.team_id.class_id.name,
+                class_code: tm.team_id.class_id.class_code,
+                semester: tm.team_id.class_id.semester_id,
+                lecturer: tm.team_id.class_id.lecturer_id
+            }
+        }));
+
+        res.json({
+            total: classes.length,
+            classes: classes
+        });
+    } catch (error) {
+        console.error('Get my classes error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// ==========================================
 // ĐĂNG XUẤT (LOGOUT)
 // ==========================================
 /**
@@ -815,5 +887,6 @@ module.exports = {
     refreshToken,
     getProfile,
     updateProfile,
+    getMyClasses,
     logout
 };

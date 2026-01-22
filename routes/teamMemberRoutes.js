@@ -141,4 +141,52 @@ module.exports = (app) => {
      *         description: Lỗi server
      */
     app.put('/api/members/:memberId/mapping', TeamApiController.updateMemberMapping);
+
+    // 10) GET /api/teams/:teamId/my-role
+    /**
+     * @swagger
+     * /api/teams/{teamId}/my-role:
+     *   get:
+     *     summary: Kiểm tra role của user hiện tại trong team (Leader hoặc Member)
+     *     tags: [Team Members]
+     *     description: |
+     *       API này dùng để check quyền của sinh viên trong một team cụ thể.
+     *       FE có thể dùng API này để hiển thị/ẩn các chức năng chỉ Leader mới có.
+     *       Một sinh viên có thể là Leader ở team này nhưng Member ở team khác.
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: teamId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của team
+     *     responses:
+     *       200:
+     *         description: Role của user trong team
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 team_id:
+     *                   type: string
+     *                 role_in_team:
+     *                   type: string
+     *                   enum: [Leader, Member]
+     *                 is_leader:
+     *                   type: boolean
+     *                 is_member:
+     *                   type: boolean
+     *       403:
+     *         description: Chỉ sinh viên mới có thể check role
+     *       404:
+     *         description: Không tìm thấy team hoặc user không phải thành viên
+     *       401:
+     *         description: Token không hợp lệ
+     *       500:
+     *         description: Lỗi server
+     */
+    app.get('/api/teams/:teamId/my-role', require('../middleware/auth').authenticateToken, TeamApiController.getMyRoleInTeam);
 };
