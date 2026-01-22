@@ -13,5 +13,6 @@ module.exports = {
     PeerReview: require('./Assessment').PeerReview,
     SprintAssessment: require('./Assessment').SprintAssessment,
     RiskAlert: require('./RiskAlert'),
-    OTP: require('./OTP')
+    OTP: require('./OTP'),
+    RefreshToken: require('./RefreshToken')
 };

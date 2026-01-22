@@ -293,21 +293,48 @@ const login = async (req, res) => {
             full_name: user.full_name || ''
         };
 
-        // Tạo JWT Token
         const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
-        const token = jwt.sign(
+        const RefreshToken = require('../models/RefreshToken');
+
+        // Tạo Access Token (ngắn hạn - 15 phút)
+        const accessToken = jwt.sign(
             {
                 userId: user._id.toString(),
                 email: user.email,
-                role: userRole
+                role: userRole,
+                type: 'access'
             },
             jwtSecret,
-            { expiresIn: '7d' } // Token hết hạn sau 7 ngày
+            { expiresIn: '15m' } // Access token hết hạn sau 15 phút
         );
+
+        // Tạo Refresh Token (dài hạn - 30 ngày)
+        const refreshToken = jwt.sign(
+            {
+                userId: user._id.toString(),
+                email: user.email,
+                role: userRole,
+                type: 'refresh'
+            },
+            jwtSecret,
+            { expiresIn: '30d' } // Refresh token hết hạn sau 30 ngày
+        );
+
+        // Lưu refresh token vào database
+        const expiresAt = new Date();
+        expiresAt.setDate(expiresAt.getDate() + 30); // 30 ngày
+
+        await RefreshToken.create({
+            user_id: user._id,
+            role: userRole,
+            token: refreshToken,
+            expires_at: expiresAt
+        });
 
         res.json({
             message: `✅ Đăng nhập thành công!`,
-            token,
+            access_token: accessToken,
+            refresh_token: refreshToken,
             user: basicUserInfo
         });
 
@@ -482,6 +509,107 @@ const verifyOTPAndResetPassword = async (req, res) => {
 };
 
 // ==========================================
+// REFRESH TOKEN
+// ==========================================
+/**
+ * POST /auth/refresh-token
+ * Làm mới access token bằng refresh token
+ */
+const refreshToken = async (req, res) => {
+    try {
+        const { refresh_token } = req.body;
+
+        // Validate input
+        if (!refresh_token) {
+            return res.status(400).json({
+                error: 'refresh_token là bắt buộc'
+            });
+        }
+
+        const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
+        const RefreshToken = require('../models/RefreshToken');
+
+        // Verify refresh token
+        let decoded;
+        try {
+            decoded = jwt.verify(refresh_token, jwtSecret);
+        } catch (error) {
+            if (error.name === 'TokenExpiredError') {
+                return res.status(401).json({
+                    error: 'Refresh token đã hết hạn. Vui lòng đăng nhập lại.'
+                });
+            } else {
+                return res.status(401).json({
+                    error: 'Refresh token không hợp lệ.'
+                });
+            }
+        }
+
+        // Kiểm tra type phải là 'refresh'
+        if (decoded.type !== 'refresh') {
+            return res.status(401).json({
+                error: 'Token không phải là refresh token.'
+            });
+        }
+
+        // Kiểm tra refresh token có trong database và chưa bị revoke
+        const tokenRecord = await RefreshToken.findOne({
+            token: refresh_token,
+            revoked: false,
+            expires_at: { $gt: new Date() }
+        });
+
+        if (!tokenRecord) {
+            return res.status(401).json({
+                error: 'Refresh token không hợp lệ hoặc đã bị thu hồi.'
+            });
+        }
+
+        // Kiểm tra user còn tồn tại không
+        let user = null;
+        if (decoded.role === 'ADMIN') {
+            user = await models.Admin.findById(decoded.userId);
+        } else if (decoded.role === 'LECTURER') {
+            user = await models.Lecturer.findById(decoded.userId);
+        } else if (decoded.role === 'STUDENT') {
+            user = await models.Student.findById(decoded.userId);
+        }
+
+        if (!user) {
+            // Revoke token nếu user không tồn tại
+            await RefreshToken.updateOne(
+                { token: refresh_token },
+                { revoked: true }
+            );
+            return res.status(401).json({
+                error: 'User không tồn tại.'
+            });
+        }
+
+        // Tạo access token mới
+        const newAccessToken = jwt.sign(
+            {
+                userId: user._id.toString(),
+                email: user.email,
+                role: decoded.role,
+                type: 'access'
+            },
+            jwtSecret,
+            { expiresIn: '15m' } // Access token hết hạn sau 15 phút
+        );
+
+        res.json({
+            message: '✅ Làm mới token thành công!',
+            access_token: newAccessToken
+        });
+
+    } catch (error) {
+        console.error('Refresh token error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// ==========================================
 // LẤY THÔNG TIN PROFILE (GET PROFILE)
 // ==========================================
 /**
@@ -513,16 +641,21 @@ const getProfile = async (req, res) => {
 // ==========================================
 /**
  * POST /auth/logout
- * Đăng xuất (client sẽ xóa token)
- * Với JWT stateless, logout chủ yếu là client-side
- * API này chỉ để confirm và có thể log activity nếu cần
+ * Đăng xuất (revoke refresh token)
  */
 const logout = async (req, res) => {
     try {
-        // Với JWT stateless, logout chủ yếu là client-side
-        // Client sẽ xóa token khỏi localStorage/sessionStorage
-        // Nếu cần blacklist token, có thể implement thêm token blacklist ở đây
-        
+        const { refresh_token } = req.body;
+
+        if (refresh_token) {
+            // Revoke refresh token trong database
+            const RefreshToken = require('../models/RefreshToken');
+            await RefreshToken.updateOne(
+                { token: refresh_token },
+                { revoked: true }
+            );
+        }
+
         res.json({
             message: '✅ Đăng xuất thành công! Vui lòng xóa token ở client.'
         });
@@ -538,6 +671,7 @@ module.exports = {
     login,
     forgotPassword,
     verifyOTPAndResetPassword,
+    refreshToken,
     getProfile,
     logout
 };

@@ -95,7 +95,7 @@ module.exports = (app) => {
      *                 description: Cho STUDENT
      *               ent:
      *                 type: string
-     *                 description: Khóa học (VD: K18, K19). Nếu không nhập sẽ tự động suy ra từ student_code
+     *                 description: "Khóa học (VD: K18, K19). Nếu không nhập sẽ tự động suy ra từ student_code"
      *                 example: K19
      *           examples:
      *             lecturer:
@@ -263,9 +263,12 @@ module.exports = (app) => {
      *               properties:
      *                 message:
      *                   type: string
-     *                 token:
+     *                 access_token:
      *                   type: string
-     *                   description: JWT Token để dùng cho các API cần authentication (hết hạn sau 7 ngày)
+     *                   description: Access token để dùng cho các API cần authentication (hết hạn sau 15 phút)
+     *                 refresh_token:
+     *                   type: string
+     *                   description: Refresh token để làm mới access token (hết hạn sau 30 ngày)
      *                 user:
      *                   type: object
      *                   description: Thông tin cơ bản của user (thông tin chi tiết lấy từ API /api/auth/me)
@@ -333,6 +336,80 @@ module.exports = (app) => {
      *       500:
      *         description: Lỗi server
      */
+    /**
+     * @swagger
+     * /api/auth/refresh-token:
+     *   post:
+     *     summary: Làm mới access token bằng refresh token
+     *     tags: [Auth]
+     *     description: Khi access token hết hạn, dùng refresh token để lấy access token mới
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - refresh_token
+     *             properties:
+     *               refresh_token:
+     *                 type: string
+     *                 description: Refresh token nhận được từ API login
+     *                 example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+     *     responses:
+     *       200:
+     *         description: Làm mới token thành công
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                 access_token:
+     *                   type: string
+     *                   description: Access token mới (hết hạn sau 15 phút)
+     *       400:
+     *         description: Thiếu refresh_token
+     *       401:
+     *         description: Refresh token không hợp lệ hoặc đã hết hạn
+     *       500:
+     *         description: Lỗi server
+     */
+    app.post('/api/auth/refresh-token', AuthController.refreshToken);
+
+    /**
+     * @swagger
+     * /api/auth/me:
+     *   get:
+     *     summary: Lấy thông tin profile của user hiện tại
+     *     tags: [Auth]
+     *     description: Lấy thông tin đầy đủ của user từ token (dùng cho trang profile)
+     *     security:
+     *       - bearerAuth: []
+     *     responses:
+     *       200:
+     *         description: Thông tin profile
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 user:
+     *                   oneOf:
+     *                     - $ref: '#/components/schemas/Admin'
+     *                     - $ref: '#/components/schemas/Lecturer'
+     *                     - $ref: '#/components/schemas/Student'
+     *                 role:
+     *                   type: string
+     *                   enum: [ADMIN, LECTURER, STUDENT]
+     *       401:
+     *         description: Token không hợp lệ hoặc đã hết hạn
+     *       403:
+     *         description: Email chưa được xác minh (chỉ áp dụng cho LECTURER và STUDENT)
+     *       500:
+     *         description: Lỗi server
+     */
     app.get('/api/auth/me', authenticateToken, AuthController.getProfile);
 
     /**
@@ -341,9 +418,19 @@ module.exports = (app) => {
      *   post:
      *     summary: Đăng xuất
      *     tags: [Auth]
-     *     description: Đăng xuất khỏi hệ thống. Client cần xóa token khỏi localStorage/sessionStorage.
+     *     description: Đăng xuất khỏi hệ thống. Revoke refresh token và client cần xóa token khỏi localStorage/sessionStorage.
      *     security:
      *       - bearerAuth: []
+     *     requestBody:
+     *       required: false
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               refresh_token:
+     *                 type: string
+     *                 description: Refresh token để revoke (optional)
      *     responses:
      *       200:
      *         description: Đăng xuất thành công
@@ -373,7 +460,7 @@ module.exports = (app) => {
      * @swagger
      * /api/management/semesters:
      *   post:
-     *     summary: Tạo học kỳ mới (VD: Spring 2026)
+     *     summary: "Tạo học kỳ mới (VD: Spring 2026)"
      *     tags: [Management]
      *     requestBody:
      *       required: true

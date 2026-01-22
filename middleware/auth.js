@@ -21,6 +21,13 @@ const authenticateToken = async (req, res, next) => {
         const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
         const decoded = jwt.verify(token, jwtSecret);
 
+        // Kiểm tra type phải là 'access'
+        if (decoded.type && decoded.type !== 'access') {
+            return res.status(401).json({
+                error: 'Token không phải là access token. Vui lòng dùng access token để truy cập API.'
+            });
+        }
+
         // Lấy thông tin user từ database dựa vào userId và role trong token
         let user = null;
         if (decoded.role === 'ADMIN') {
