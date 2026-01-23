@@ -5,6 +5,9 @@ const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
 require('dotenv').config(); // Cái này để đọc file .env
 
+// Initialize Passport (cần import để load Google OAuth strategy)
+require('./config/passport');
+
 const app = express();
 
 // Cho phép các web khác gọi vào API của mình (CORS) - Full CORS enabled

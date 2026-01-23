@@ -878,6 +878,69 @@ const logout = async (req, res) => {
     }
 };
 
+// ==========================================
+// GOOGLE OAUTH CALLBACK
+// ==========================================
+const googleCallback = async (req, res) => {
+    try {
+        // Passport strategy callback trả về user object với role đã được thêm vào
+        // req.user được populate bởi passport.authenticate middleware
+        if (!req.user || !req.user._id || !req.user.role) {
+            return res.status(401).json({ error: 'Google authentication failed' });
+        }
+
+        const user = req.user;
+        const role = user.role;
+
+        // Tạo JWT tokens (giống như login thông thường)
+        const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
+        const RefreshToken = require('../models/RefreshToken');
+
+        // Tạo Access Token
+        const accessToken = jwt.sign(
+            {
+                userId: user._id.toString(),
+                email: user.email,
+                role: role,
+                type: 'access'
+            },
+            jwtSecret,
+            { expiresIn: '15m' }
+        );
+
+        // Tạo Refresh Token
+        const refreshToken = jwt.sign(
+            {
+                userId: user._id.toString(),
+                email: user.email,
+                role: role,
+                type: 'refresh'
+            },
+            jwtSecret,
+            { expiresIn: '30d' }
+        );
+
+        // Lưu refresh token vào database
+        await RefreshToken.create({
+            token: refreshToken,
+            user_id: user._id.toString(),
+            role: role,
+            expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 ngày
+        });
+
+        // Redirect về frontend với tokens
+        const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+        const redirectUrl = `${clientUrl}/auth/callback/google?token=${accessToken}&refreshToken=${refreshToken}&role=${role}`;
+        
+        return res.redirect(redirectUrl);
+
+    } catch (error) {
+        console.error('Google OAuth Callback Error:', error);
+        const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
+        return res.redirect(`${clientUrl}/auth/callback/google?error=${encodeURIComponent(error.message)}`);
+    }
+};
+
 module.exports = {
     requestRegistrationOTP,
     register,
@@ -888,5 +951,6 @@ module.exports = {
     getProfile,
     updateProfile,
     getMyClasses,
-    logout
+    logout,
+    googleCallback
 };

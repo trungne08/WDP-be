@@ -1,5 +1,6 @@
 const AuthController = require('../controllers/AuthController');
 const { authenticateToken } = require('../middleware/auth');
+const passport = require('passport');
 
 // Export function để setup routes
 module.exports = (app) => {
@@ -612,4 +613,54 @@ module.exports = (app) => {
      *         description: Lỗi server
      */
     app.post('/api/auth/logout', authenticateToken, AuthController.logout);
+
+    // ==========================================
+    // GOOGLE OAUTH ROUTES
+    // ==========================================
+    /**
+     * @swagger
+     * /auth/google:
+     *   get:
+     *     summary: Đăng nhập bằng Google OAuth2
+     *     tags: [Auth]
+     *     description: Redirect user đến Google OAuth consent screen để đăng nhập
+     *     responses:
+     *       302:
+     *         description: Redirect đến Google OAuth
+     */
+    app.get('/auth/google', 
+        passport.authenticate('google', { 
+            scope: ['profile', 'email'] 
+        })
+    );
+
+    /**
+     * @swagger
+     * /auth/google/callback:
+     *   get:
+     *     summary: Google OAuth callback
+     *     tags: [Auth]
+     *     description: Callback từ Google sau khi user xác thực. Tự động tạo JWT và redirect về frontend
+     *     parameters:
+     *       - in: query
+     *         name: code
+     *         schema:
+     *           type: string
+     *         description: Authorization code từ Google
+     *       - in: query
+     *         name: error
+     *         schema:
+     *           type: string
+     *         description: Error từ Google (nếu có)
+     *     responses:
+     *       302:
+     *         description: Redirect về frontend với token hoặc error
+     */
+    app.get('/auth/google/callback',
+        passport.authenticate('google', { 
+            session: false, // Không dùng session, dùng JWT
+            failureRedirect: process.env.CLIENT_URL ? `${process.env.CLIENT_URL}/auth/callback/google?error=authentication_failed` : '/auth/google/error'
+        }),
+        AuthController.googleCallback
+    );
 };

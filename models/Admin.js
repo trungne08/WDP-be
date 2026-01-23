@@ -25,7 +25,9 @@ const AdminSchema = new Schema({
         }
     },
     
-    password: { type: String, required: true }, 
+    password: { type: String, required: true },
+    // Google OAuth
+    googleId: { type: String, sparse: true, unique: true },
     
     role: { type: String, default: 'ADMIN', immutable: true },
     created_at: { type: Date, default: Date.now }

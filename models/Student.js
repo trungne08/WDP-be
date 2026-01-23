@@ -29,6 +29,8 @@ const StudentSchema = new Schema({
         }
     },
     password: { type: String, required: true },
+    // Google OAuth
+    googleId: { type: String, sparse: true, unique: true },
     // Thêm role cố định
     role: { type: String, default: 'STUDENT', immutable: true },
     is_verified: { type: Boolean, default: false }, // Email đã được xác minh chưa
