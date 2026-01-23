@@ -301,38 +301,6 @@ module.exports = (app) => {
 
     /**
      * @swagger
-     * /api/auth/me:
-     *   get:
-     *     summary: Lấy thông tin profile của user hiện tại
-     *     tags: [Auth]
-     *     description: Lấy thông tin đầy đủ của user từ token (dùng cho trang profile)
-     *     security:
-     *       - bearerAuth: []
-     *     responses:
-     *       200:
-     *         description: Thông tin profile
-     *         content:
-     *           application/json:
-     *             schema:
-     *               type: object
-     *               properties:
-     *                 user:
-     *                   oneOf:
-     *                     - $ref: '#/components/schemas/Admin'
-     *                     - $ref: '#/components/schemas/Lecturer'
-     *                     - $ref: '#/components/schemas/Student'
-     *                 role:
-     *                   type: string
-     *                   enum: [ADMIN, LECTURER, STUDENT]
-     *       401:
-     *         description: Token không hợp lệ hoặc đã hết hạn
-     *       403:
-     *         description: Email chưa được xác minh (chỉ áp dụng cho LECTURER và STUDENT)
-     *       500:
-     *         description: Lỗi server
-     */
-    /**
-     * @swagger
      * /api/auth/refresh-token:
      *   post:
      *     summary: Làm mới access token bằng refresh token
@@ -623,13 +591,18 @@ module.exports = (app) => {
      *   get:
      *     summary: Đăng nhập bằng Google OAuth2
      *     tags: [Auth]
-     *     description: Redirect user đến Google OAuth consent screen để đăng nhập. Frontend có thể truyền `redirect_uri` query param để chỉ định URL redirect về sau khi đăng nhập thành công (hữu ích khi FE chạy local).
+     *     description: |
+     *       Redirect user đến Google OAuth consent screen để đăng nhập.
+     *       Frontend có thể truyền `redirect_uri` query param để chỉ định URL redirect về sau khi đăng nhập thành công (hữu ích khi FE chạy local).
      *     parameters:
      *       - in: query
      *         name: redirect_uri
      *         schema:
      *           type: string
-     *         description: URL frontend để redirect về sau khi đăng nhập (ví dụ: http://localhost:3000). Nếu không truyền, sẽ dùng CLIENT_URL từ env.
+     *         description: |
+     *           URL frontend để redirect về sau khi đăng nhập.
+     *           Ví dụ: http://localhost:3000
+     *           Nếu không truyền, sẽ dùng CLIENT_URL từ env.
      *     responses:
      *       302:
      *         description: Redirect đến Google OAuth
