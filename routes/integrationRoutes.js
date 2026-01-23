@@ -16,11 +16,20 @@ module.exports = (app) => {
      *     security:
      *       - bearerAuth: []
      *     description: |
-     *       User đã đăng nhập gọi API này để redirect sang GitHub authorize.
+     *       User đã đăng nhập gọi API này để lấy URL GitHub authorize.
+     *       Frontend sẽ nhận được `redirectUrl` và tự redirect bằng `window.location.href = redirectUrl`.
      *       Scope: `repo`, `user`.
      *     responses:
-     *       302:
-     *         description: Redirect sang GitHub
+     *       200:
+     *         description: Trả về URL để redirect đến GitHub
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 redirectUrl:
+     *                   type: string
+     *                   example: https://github.com/login/oauth/authorize?client_id=...
      */
     app.get('/api/integrations/github/connect', authenticateToken, IntegrationController.githubConnect);
 
@@ -57,11 +66,20 @@ module.exports = (app) => {
      *     security:
      *       - bearerAuth: []
      *     description: |
-     *       User đã đăng nhập gọi API này để redirect sang Atlassian authorize.
+     *       User đã đăng nhập gọi API này để lấy URL Atlassian authorize.
+     *       Frontend sẽ nhận được `redirectUrl` và tự redirect bằng `window.location.href = redirectUrl`.
      *       Scope: `read:jira-user`, `read:jira-work`, `offline_access`.
      *     responses:
-     *       302:
-     *         description: Redirect sang Atlassian
+     *       200:
+     *         description: Trả về URL để redirect đến Atlassian
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 redirectUrl:
+     *                   type: string
+     *                   example: https://auth.atlassian.com/authorize?client_id=...
      */
     app.get('/api/integrations/jira/connect', authenticateToken, IntegrationController.jiraConnect);
 

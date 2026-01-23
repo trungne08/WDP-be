@@ -72,7 +72,9 @@ exports.githubConnect = async (req, res) => {
 
     const scope = 'repo user';
     const url = IntegrationService.buildGithubAuthUrl({ clientId, redirectUri, scope, state });
-    return res.redirect(url);
+    
+    // Trả về JSON với URL thay vì redirect để frontend tự redirect (tránh lỗi CORS khi dùng XHR)
+    return res.json({ redirectUrl: url });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -140,7 +142,9 @@ exports.jiraConnect = async (req, res) => {
     // Scope bắt buộc theo yêu cầu
     const scope = 'read:jira-user read:jira-work offline_access';
     const url = IntegrationService.buildAtlassianAuthUrl({ clientId, redirectUri, scope, state });
-    return res.redirect(url);
+    
+    // Trả về JSON với URL thay vì redirect để frontend tự redirect (tránh lỗi CORS khi dùng XHR)
+    return res.json({ redirectUrl: url });
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
