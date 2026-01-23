@@ -174,5 +174,67 @@ module.exports = (app) => {
      *         description: Chưa link Jira
      */
     app.get('/api/integrations/jira/projects', authenticateToken, IntegrationController.getJiraProjects);
+
+    /**
+     * @swagger
+     * /api/integrations/github/disconnect:
+     *   delete:
+     *     summary: Ngắt kết nối tài khoản GitHub
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       User đã đăng nhập có thể ngắt kết nối tài khoản GitHub đã liên kết.
+     *       Sau khi ngắt kết nối, user có thể kết nối với tài khoản GitHub khác.
+     *     responses:
+     *       200:
+     *         description: Ngắt kết nối GitHub thành công
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                   example: "✅ Đã ngắt kết nối GitHub thành công!"
+     *                 github:
+     *                   type: null
+     *       400:
+     *         description: Chưa kết nối GitHub
+     *       404:
+     *         description: Không tìm thấy user
+     */
+    app.delete('/api/integrations/github/disconnect', authenticateToken, IntegrationController.disconnectGithub);
+
+    /**
+     * @swagger
+     * /api/integrations/jira/disconnect:
+     *   delete:
+     *     summary: Ngắt kết nối tài khoản Jira (Atlassian)
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       User đã đăng nhập có thể ngắt kết nối tài khoản Jira đã liên kết.
+     *       Sau khi ngắt kết nối, user có thể kết nối với tài khoản Jira khác.
+     *     responses:
+     *       200:
+     *         description: Ngắt kết nối Jira thành công
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                   example: "✅ Đã ngắt kết nối Jira thành công!"
+     *                 jira:
+     *                   type: null
+     *       400:
+     *         description: Chưa kết nối Jira
+     *       404:
+     *         description: Không tìm thấy user
+     */
+    app.delete('/api/integrations/jira/disconnect', authenticateToken, IntegrationController.disconnectJira);
 };
 

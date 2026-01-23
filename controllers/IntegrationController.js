@@ -277,3 +277,58 @@ exports.getJiraProjects = async (req, res) => {
   }
 };
 
+// =========================
+// DISCONNECT APIs
+// =========================
+exports.disconnectGithub = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    // Kiểm tra xem đã kết nối GitHub chưa
+    if (!user.integrations?.github?.githubId) {
+      return res.status(400).json({ error: 'Chưa kết nối GitHub. Không có gì để ngắt kết nối.' });
+    }
+
+    // Xóa thông tin GitHub integration
+    user.integrations = user.integrations || {};
+    user.integrations.github = null;
+    await user.save();
+
+    return res.json({ 
+      message: '✅ Đã ngắt kết nối GitHub thành công!',
+      github: null
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+exports.disconnectJira = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    // Kiểm tra xem đã kết nối Jira chưa
+    if (!user.integrations?.jira?.jiraAccountId) {
+      return res.status(400).json({ error: 'Chưa kết nối Jira. Không có gì để ngắt kết nối.' });
+    }
+
+    // Xóa thông tin Jira integration
+    user.integrations = user.integrations || {};
+    user.integrations.jira = null;
+    await user.save();
+
+    return res.json({ 
+      message: '✅ Đã ngắt kết nối Jira thành công!',
+      jira: null
+    });
+  } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
