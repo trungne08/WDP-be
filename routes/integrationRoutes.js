@@ -134,8 +134,9 @@ module.exports = (app) => {
      */
     app.get('/api/integrations/jira/callback', IntegrationController.jiraCallback);
 
-    // Route tương thích với cấu hình Jira OAuth app cũ (/auth/jira/callback)
+    // Route tương thích với cấu hình Jira OAuth app (cả /auth/jira/callback và /auth/atlassian/callback)
     app.get('/auth/jira/callback', IntegrationController.jiraCallback);
+    app.get('/auth/atlassian/callback', IntegrationController.jiraCallback);
 
     /**
      * @swagger
