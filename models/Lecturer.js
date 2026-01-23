@@ -5,6 +5,25 @@ const LecturerSchema = new Schema({
     email: { type: String, required: true, unique: true },
     full_name: String,
     avatar_url: String,
+    // ==================================================
+    // TÍCH HỢP TÀI KHOẢN (Account Integration)
+    // ==================================================
+    integrations: {
+        github: {
+            githubId: { type: String },
+            username: { type: String },
+            accessToken: { type: String },
+            linkedAt: { type: Date }
+        },
+        jira: {
+            jiraAccountId: { type: String }, // Quan trọng: dùng để map assignee trong Jira
+            cloudId: { type: String },       // ID site Jira (accessible-resources)
+            email: { type: String },
+            accessToken: { type: String },
+            refreshToken: { type: String },  // offline_access để refresh token
+            linkedAt: { type: Date }
+        }
+    },
     password: { type: String, required: true },
     // Thêm role cố định
     role: { type: String, default: 'LECTURER', immutable: true },

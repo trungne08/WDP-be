@@ -15,5 +15,6 @@ module.exports = {
     RiskAlert: require('./RiskAlert'),
     OTP: require('./OTP'),
     RefreshToken: require('./RefreshToken'),
-    PendingEnrollment: require('./PendingEnrollment')
+    PendingEnrollment: require('./PendingEnrollment'),
+    Project: require('./Project')
 };

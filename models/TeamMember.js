@@ -44,6 +44,13 @@ const TeamMemberSchema = new Schema({
         commit_score: { type: Number, default: 0 },
         review_score: { type: Number, default: 0 },
         total_score: { type: Number, default: 0 }
+    },
+
+    // 6. Liên kết với Project (mỗi team member thuộc 0 hoặc 1 project)
+    project_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Project',
+        default: null
     }
 
 }, { 

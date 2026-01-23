@@ -9,6 +9,25 @@ const StudentSchema = new Schema({
     major: String,
     // ENT / Khóa (VD: K18, K19) - tiện cho filter theo khóa
     ent: { type: String }, 
+    // ==================================================
+    // TÍCH HỢP TÀI KHOẢN (Account Integration)
+    // ==================================================
+    integrations: {
+        github: {
+            githubId: { type: String },
+            username: { type: String },
+            accessToken: { type: String },
+            linkedAt: { type: Date }
+        },
+        jira: {
+            jiraAccountId: { type: String }, // Quan trọng: dùng để map assignee trong Jira
+            cloudId: { type: String },       // ID site Jira (accessible-resources)
+            email: { type: String },
+            accessToken: { type: String },
+            refreshToken: { type: String },  // offline_access để refresh token
+            linkedAt: { type: Date }
+        }
+    },
     password: { type: String, required: true },
     // Thêm role cố định
     role: { type: String, default: 'STUDENT', immutable: true },
