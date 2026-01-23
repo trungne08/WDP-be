@@ -7,8 +7,21 @@ require('dotenv').config(); // Cái này để đọc file .env
 
 const app = express();
 
-// Cho phép các web khác gọi vào API của mình (CORS)
-app.use(cors());
+// Cho phép các web khác gọi vào API của mình (CORS) - Full CORS enabled
+app.use(cors({
+    origin: function (origin, callback) {
+        // Cho phép tất cả origins (bao gồm cả null cho same-origin requests)
+        callback(null, true);
+    },
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'], // Cho phép tất cả methods
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Access-Control-Request-Method', 'Access-Control-Request-Headers'], // Cho phép tất cả headers
+    exposedHeaders: ['Content-Type', 'Authorization'], // Headers mà client có thể đọc được
+    credentials: false, // Không cần credentials cho OAuth callbacks
+    preflightContinue: false,
+    optionsSuccessStatus: 204,
+    maxAge: 86400 // Cache preflight requests trong 24 giờ
+}));
+
 app.use(express.json());
 
 // Nếu MONGO_URI không chỉ rõ database name, Mongo sẽ mặc định dùng "test".
