@@ -62,12 +62,17 @@ async function ensureJiraUnique(jiraAccountId, cloudId, currentRole, currentId) 
 exports.githubConnect = async (req, res) => {
   try {
     const { clientId, redirectUri } = getGithubConfig(req);
+    
+    // Frontend có thể truyền redirect_uri để redirect về sau khi callback (cho dev local)
+    // Nếu không có thì dùng CLIENT_URL từ env
+    const frontendRedirectUri = req.query.redirect_uri || process.env.CLIENT_URL || 'http://localhost:3000';
 
-    // State JWT: chứa userId + role để callback biết lưu vào ai (stateless, không cần session)
+    // State JWT: chứa userId + role và frontendRedirectUri để callback biết redirect về đâu
     const state = IntegrationService.signOAuthState({
       provider: 'github',
       userId: req.userId,
-      role: req.role
+      role: req.role,
+      frontendRedirectUri // Lưu URL frontend để redirect về sau
     });
 
     const scope = 'repo user';
@@ -116,11 +121,10 @@ exports.githubCallback = async (req, res) => {
     };
     await user.save();
 
-    // Có thể redirect về FE nếu muốn
-    return res.json({
-      message: '✅ Kết nối GitHub thành công!',
-      github: { githubId: ghUser.githubId, username: ghUser.username }
-    });
+    // Redirect về frontend sau khi thành công
+    // Dùng frontendRedirectUri từ state (đã được frontend truyền khi connect) hoặc fallback về CLIENT_URL
+    const frontendUrl = decoded.frontendRedirectUri || process.env.CLIENT_URL || 'http://localhost:3000';
+    return res.redirect(`${frontendUrl}/callback/github?success=true&username=${encodeURIComponent(ghUser.username)}`);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }
@@ -132,11 +136,16 @@ exports.githubCallback = async (req, res) => {
 exports.jiraConnect = async (req, res) => {
   try {
     const { clientId, redirectUri } = getAtlassianConfig(req);
+    
+    // Frontend có thể truyền redirect_uri để redirect về sau khi callback (cho dev local)
+    // Nếu không có thì dùng CLIENT_URL từ env
+    const frontendRedirectUri = req.query.redirect_uri || process.env.CLIENT_URL || 'http://localhost:3000';
 
     const state = IntegrationService.signOAuthState({
       provider: 'jira',
       userId: req.userId,
-      role: req.role
+      role: req.role,
+      frontendRedirectUri // Lưu URL frontend để redirect về sau
     });
 
     // Scope bắt buộc theo yêu cầu
@@ -199,10 +208,10 @@ exports.jiraCallback = async (req, res) => {
     };
     await user.save();
 
-    return res.json({
-      message: '✅ Kết nối Jira (Atlassian) thành công!',
-      jira: { jiraAccountId: me.jiraAccountId, cloudId }
-    });
+    // Redirect về frontend sau khi thành công
+    // Dùng frontendRedirectUri từ state (đã được frontend truyền khi connect) hoặc fallback về CLIENT_URL
+    const frontendUrl = decoded.frontendRedirectUri || process.env.CLIENT_URL || 'http://localhost:3000';
+    return res.redirect(`${frontendUrl}/callback/jira?success=true&accountId=${encodeURIComponent(me.jiraAccountId)}`);
   } catch (error) {
     return res.status(500).json({ error: error.message });
   }

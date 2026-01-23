@@ -19,6 +19,16 @@ module.exports = (app) => {
      *       User đã đăng nhập gọi API này để lấy URL GitHub authorize.
      *       Frontend sẽ nhận được `redirectUrl` và tự redirect bằng `window.location.href = redirectUrl`.
      *       Scope: `repo`, `user`.
+     *     parameters:
+     *       - in: query
+     *         name: redirect_uri
+     *         required: false
+     *         schema:
+     *           type: string
+     *         description: |
+     *           URL frontend để redirect về sau khi callback thành công.
+     *           Ví dụ: `http://localhost:3000` (dev local) hoặc `https://your-fe-domain.com` (production).
+     *           Nếu không truyền, sẽ dùng CLIENT_URL từ env hoặc mặc định `http://localhost:3000`.
      *     responses:
      *       200:
      *         description: Trả về URL để redirect đến GitHub
@@ -57,6 +67,9 @@ module.exports = (app) => {
      */
     app.get('/api/integrations/github/callback', IntegrationController.githubCallback);
 
+    // Route tương thích với cấu hình GitHub OAuth app cũ (/auth/github/callback)
+    app.get('/auth/github/callback', IntegrationController.githubCallback);
+
     /**
      * @swagger
      * /api/integrations/jira/connect:
@@ -69,6 +82,16 @@ module.exports = (app) => {
      *       User đã đăng nhập gọi API này để lấy URL Atlassian authorize.
      *       Frontend sẽ nhận được `redirectUrl` và tự redirect bằng `window.location.href = redirectUrl`.
      *       Scope: `read:jira-user`, `read:jira-work`, `offline_access`.
+     *     parameters:
+     *       - in: query
+     *         name: redirect_uri
+     *         required: false
+     *         schema:
+     *           type: string
+     *         description: |
+     *           URL frontend để redirect về sau khi callback thành công.
+     *           Ví dụ: `http://localhost:3000` (dev local) hoặc `https://your-fe-domain.com` (production).
+     *           Nếu không truyền, sẽ dùng CLIENT_URL từ env hoặc mặc định `http://localhost:3000`.
      *     responses:
      *       200:
      *         description: Trả về URL để redirect đến Atlassian
@@ -110,6 +133,9 @@ module.exports = (app) => {
      *         description: Kết nối Jira thành công
      */
     app.get('/api/integrations/jira/callback', IntegrationController.jiraCallback);
+
+    // Route tương thích với cấu hình Jira OAuth app cũ (/auth/jira/callback)
+    app.get('/auth/jira/callback', IntegrationController.jiraCallback);
 
     /**
      * @swagger
