@@ -623,16 +623,43 @@ module.exports = (app) => {
      *   get:
      *     summary: Đăng nhập bằng Google OAuth2
      *     tags: [Auth]
-     *     description: Redirect user đến Google OAuth consent screen để đăng nhập
+     *     description: Redirect user đến Google OAuth consent screen để đăng nhập. Frontend có thể truyền `redirect_uri` query param để chỉ định URL redirect về sau khi đăng nhập thành công (hữu ích khi FE chạy local).
+     *     parameters:
+     *       - in: query
+     *         name: redirect_uri
+     *         schema:
+     *           type: string
+     *         description: URL frontend để redirect về sau khi đăng nhập (ví dụ: http://localhost:3000). Nếu không truyền, sẽ dùng CLIENT_URL từ env.
      *     responses:
      *       302:
      *         description: Redirect đến Google OAuth
      */
-    app.get('/auth/google', 
+    app.get('/auth/google', (req, res, next) => {
+        // Lưu redirect_uri vào state parameter (JWT) để callback có thể dùng
+        // Tương tự như cách GitHub/Jira integration làm
+        const jwt = require('jsonwebtoken');
+        const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
+        
+        const frontendRedirectUri = req.query.redirect_uri || process.env.CLIENT_URL || 'http://localhost:3000';
+        
+        // Tạo state JWT chứa redirect_uri
+        const state = jwt.sign(
+            { 
+                provider: 'google',
+                redirect_uri: frontendRedirectUri,
+                timestamp: Date.now()
+            },
+            jwtSecret,
+            { expiresIn: '10m' } // State chỉ sống 10 phút
+        );
+        
+        // Passport Google Strategy hỗ trợ custom state
+        // State sẽ được truyền đến Google và Google sẽ trả lại trong callback
         passport.authenticate('google', { 
-            scope: ['profile', 'email'] 
-        })
-    );
+            scope: ['profile', 'email'],
+            state: state // Truyền custom state (phải là string)
+        })(req, res, next);
+    });
 
     /**
      * @swagger

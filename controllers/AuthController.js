@@ -929,15 +929,47 @@ const googleCallback = async (req, res) => {
         });
 
         // Redirect về frontend với tokens
-        const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
-        const redirectUrl = `${clientUrl}/auth/callback/google?token=${accessToken}&refreshToken=${refreshToken}&role=${role}`;
+        // Lấy redirect_uri từ state parameter (JWT) nếu có, nếu không thì dùng CLIENT_URL
+        let frontendRedirectUri = process.env.CLIENT_URL || 'http://localhost:3000';
+        
+        // Google trả lại state trong req.query.state
+        if (req.query.state) {
+            try {
+                const jwt = require('jsonwebtoken');
+                const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
+                const decoded = jwt.verify(req.query.state, jwtSecret);
+                
+                if (decoded.provider === 'google' && decoded.redirect_uri) {
+                    frontendRedirectUri = decoded.redirect_uri;
+                }
+            } catch (err) {
+                console.warn('⚠️ Không thể decode state từ Google callback, dùng CLIENT_URL mặc định:', err.message);
+            }
+        }
+        
+        const redirectUrl = `${frontendRedirectUri}/auth/callback/google?token=${accessToken}&refreshToken=${refreshToken}&role=${role}`;
         
         return res.redirect(redirectUrl);
 
     } catch (error) {
         console.error('Google OAuth Callback Error:', error);
-        const clientUrl = process.env.CLIENT_URL || 'http://localhost:3000';
-        return res.redirect(`${clientUrl}/auth/callback/google?error=${encodeURIComponent(error.message)}`);
+        let frontendRedirectUri = process.env.CLIENT_URL || 'http://localhost:3000';
+        
+        // Cố gắng lấy từ state nếu có
+        if (req.query.state) {
+            try {
+                const jwt = require('jsonwebtoken');
+                const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
+                const decoded = jwt.verify(req.query.state, jwtSecret);
+                if (decoded.provider === 'google' && decoded.redirect_uri) {
+                    frontendRedirectUri = decoded.redirect_uri;
+                }
+            } catch (err) {
+                // Ignore error, dùng CLIENT_URL mặc định
+            }
+        }
+        
+        return res.redirect(`${frontendRedirectUri}/auth/callback/google?error=${encodeURIComponent(error.message)}`);
     }
 };
 
