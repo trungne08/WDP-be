@@ -236,5 +236,268 @@ module.exports = (app) => {
      *         description: Không tìm thấy user
      */
     app.delete('/api/integrations/jira/disconnect', authenticateToken, IntegrationController.disconnectJira);
+
+    /**
+     * @swagger
+     * /api/integrations/projects/{projectId}/sync:
+     *   post:
+     *     summary: User tự đồng bộ dữ liệu GitHub và Jira cho project của mình
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       User (leader hoặc member) có thể tự sync dữ liệu GitHub commits và Jira tasks cho project của họ.
+     *       Sử dụng accessToken từ integrations của chính user (không cần token từ team config).
+     *       Yêu cầu:
+     *       - User phải là leader hoặc member của project
+     *       - User phải đã kết nối GitHub (nếu muốn sync GitHub)
+     *       - User phải đã kết nối Jira (nếu muốn sync Jira)
+     *       - Project phải có githubRepoUrl (nếu muốn sync GitHub)
+     *       - Project phải có jiraProjectKey (nếu muốn sync Jira)
+     *     parameters:
+     *       - in: path
+     *         name: projectId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của project cần sync
+     *     responses:
+     *       200:
+     *         description: Sync thành công
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                   example: "✅ Đồng bộ dữ liệu hoàn tất!"
+     *                 stats:
+     *                   type: object
+     *                   properties:
+     *                     github:
+     *                       type: number
+     *                       description: Số commits đã sync
+     *                     jira:
+     *                       type: number
+     *                       description: Số tasks đã sync
+     *                     errors:
+     *                       type: array
+     *                       items:
+     *                         type: string
+     *       403:
+     *         description: Không có quyền sync project này
+     *       404:
+     *         description: Không tìm thấy project
+     */
+    app.post('/api/integrations/projects/:projectId/sync', authenticateToken, IntegrationController.syncMyProjectData);
+
+    /**
+     * @swagger
+     * /api/integrations/my-commits:
+     *   get:
+     *     summary: Member xem commits GitHub của chính mình
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Member có thể xem commits GitHub của chính họ.
+     *       Dữ liệu được lấy từ project mà user đang tham gia.
+     *     parameters:
+     *       - in: query
+     *         name: limit
+     *         required: false
+     *         schema:
+     *           type: number
+     *         description: Số lượng commits tối đa (mặc định 50, tối đa 100)
+     *     responses:
+     *       200:
+     *         description: Danh sách commits của user
+     */
+    app.get('/api/integrations/my-commits', authenticateToken, IntegrationController.getMyCommits);
+
+    /**
+     * @swagger
+     * /api/integrations/my-tasks:
+     *   get:
+     *     summary: Member xem tasks Jira của chính mình
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Member có thể xem tasks Jira của chính họ.
+     *       Dữ liệu được lấy từ project mà user đang tham gia.
+     *     parameters:
+     *       - in: query
+     *         name: limit
+     *         required: false
+     *         schema:
+     *           type: number
+     *         description: Số lượng tasks tối đa (mặc định 50, tối đa 100)
+     *       - in: query
+     *         name: status
+     *         required: false
+     *         schema:
+     *           type: string
+     *         description: Lọc theo status (ví dụ Done, In Progress)
+     *     responses:
+     *       200:
+     *         description: Danh sách tasks của user
+     */
+    app.get('/api/integrations/my-tasks', authenticateToken, IntegrationController.getMyTasks);
+
+    /**
+     * @swagger
+     * /api/integrations/team/{teamId}/commits:
+     *   get:
+     *     summary: Leader xem commits GitHub của cả team (tất cả members)
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Chỉ Leader mới có quyền xem commits của cả team.
+     *       Trả về commits của tất cả members trong team, phân loại theo từng member.
+     *     parameters:
+     *       - in: path
+     *         name: teamId
+     *         required: true
+     *         schema:
+     *           type: string
+     *       - in: query
+     *         name: limit
+     *         required: false
+     *         schema:
+     *           type: number
+     *         description: Số lượng commits tối đa (mặc định 100, tối đa 500)
+     *     responses:
+     *       200:
+     *         description: Commits của cả team
+     *       403:
+     *         description: Chỉ Leader mới có quyền
+     *       404:
+     *         description: Không tìm thấy team
+     */
+    app.get('/api/integrations/team/:teamId/commits', authenticateToken, IntegrationController.getTeamCommits);
+
+    /**
+     * @swagger
+     * /api/integrations/team/{teamId}/tasks:
+     *   get:
+     *     summary: Leader xem tasks Jira của cả team (tất cả members)
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Chỉ Leader mới có quyền xem tasks của cả team.
+     *       Trả về tasks của tất cả members trong team, phân loại theo từng member.
+     *     parameters:
+     *       - in: path
+     *         name: teamId
+     *         required: true
+     *         schema:
+     *           type: string
+     *       - in: query
+     *         name: limit
+     *         required: false
+     *         schema:
+     *           type: number
+     *         description: Số lượng tasks tối đa (mặc định 100, tối đa 500)
+     *       - in: query
+     *         name: status
+     *         required: false
+     *         schema:
+     *           type: string
+     *         description: Lọc theo status (ví dụ Done, In Progress)
+     *     responses:
+     *       200:
+     *         description: Tasks của cả team
+     *       403:
+     *         description: Chỉ Leader mới có quyền
+     *       404:
+     *         description: Không tìm thấy team
+     */
+    app.get('/api/integrations/team/:teamId/tasks', authenticateToken, IntegrationController.getTeamTasks);
+
+    /**
+     * @swagger
+     * /api/integrations/team/{teamId}/member/{memberId}/commits:
+     *   get:
+     *     summary: Leader xem commits GitHub của một member cụ thể
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Chỉ Leader mới có quyền xem commits của member khác.
+     *       Trả về commits GitHub của member được chỉ định.
+     *     parameters:
+     *       - in: path
+     *         name: teamId
+     *         required: true
+     *         schema:
+     *           type: string
+     *       - in: path
+     *         name: memberId
+     *         required: true
+     *         schema:
+     *           type: string
+     *       - in: query
+     *         name: limit
+     *         required: false
+     *         schema:
+     *           type: number
+     *         description: Số lượng commits tối đa (mặc định 50, tối đa 100)
+     *     responses:
+     *       200:
+     *         description: Commits của member
+     *       403:
+     *         description: Chỉ Leader mới có quyền
+     *       404:
+     *         description: Không tìm thấy team hoặc member
+     */
+    app.get('/api/integrations/team/:teamId/member/:memberId/commits', authenticateToken, IntegrationController.getMemberCommits);
+
+    /**
+     * @swagger
+     * /api/integrations/team/{teamId}/member/{memberId}/tasks:
+     *   get:
+     *     summary: Leader xem tasks Jira của một member cụ thể
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Chỉ Leader mới có quyền xem tasks của member khác.
+     *       Trả về tasks Jira của member được chỉ định.
+     *     parameters:
+     *       - in: path
+     *         name: teamId
+     *         required: true
+     *         schema:
+     *           type: string
+     *       - in: path
+     *         name: memberId
+     *         required: true
+     *         schema:
+     *           type: string
+     *       - in: query
+     *         name: limit
+     *         required: false
+     *         schema:
+     *           type: number
+     *         description: Số lượng tasks tối đa (mặc định 50, tối đa 100)
+     *       - in: query
+     *         name: status
+     *         required: false
+     *         schema:
+     *           type: string
+     *         description: Lọc theo status (ví dụ Done, In Progress)
+     *     responses:
+     *       200:
+     *         description: Tasks của member
+     *       403:
+     *         description: Chỉ Leader mới có quyền
+     *       404:
+     *         description: Không tìm thấy team hoặc member
+     */
+    app.get('/api/integrations/team/:teamId/member/:memberId/tasks', authenticateToken, IntegrationController.getMemberTasks);
 };
 

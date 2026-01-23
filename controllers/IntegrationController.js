@@ -1,5 +1,8 @@
 const models = require('../models');
 const IntegrationService = require('../services/IntegrationService');
+const GithubService = require('../services/GithubService');
+const JiraService = require('../services/JiraService');
+const mongoose = require('mongoose');
 
 function getClientBaseUrl(req) {
   // FE có thể truyền redirect riêng; nếu không có thì dùng env
@@ -328,6 +331,743 @@ exports.disconnectJira = async (req, res) => {
       jira: null
     });
   } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// =========================
+// SYNC APIs (User tự sync data)
+// =========================
+exports.syncMyProjectData = async (req, res) => {
+  try {
+    const user = req.user;
+    const { projectId } = req.params;
+    
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    // Lấy project
+    const Project = models.Project;
+    const project = await Project.findById(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'Không tìm thấy project' });
+    }
+
+    // Kiểm tra user có quyền sync không (phải là leader hoặc member)
+    const isLeader = project.leader_id.toString() === user._id.toString();
+    const isMember = project.members.some(m => m.toString() === user._id.toString());
+    
+    if (!isLeader && !isMember) {
+      return res.status(403).json({ error: 'Bạn không có quyền sync project này' });
+    }
+
+    // Tìm team từ project (thông qua TeamMember có project_id) để check role
+    let userRoleInTeam = null;
+    let teamId = null;
+    const TeamMember = models.TeamMember;
+    const teamMember = await TeamMember.findOne({
+      project_id: project._id,
+      student_id: user._id
+    });
+    if (teamMember) {
+      teamId = teamMember.team_id;
+      userRoleInTeam = teamMember.role_in_team || null;
+    }
+
+    const results = { github: 0, jira: 0, errors: [] };
+    const GithubCommit = models.GithubCommit;
+    const { Sprint, JiraTask } = require('../models/JiraData');
+    const Team = models.Team;
+    const axios = require('axios');
+
+    // ==========================================
+    // SYNC GITHUB (nếu có token và repo URL)
+    // ==========================================
+    if (user.integrations?.github?.accessToken && project.githubRepoUrl) {
+      try {
+        const commits = await GithubService.fetchCommits(
+          project.githubRepoUrl, 
+          user.integrations.github.accessToken
+        );
+        
+        // teamId đã được tìm ở trên (trong phần check quyền)
+
+        let syncedCommits = 0;
+        for (const commit of commits) {
+          // Nếu có teamId thì dùng logic processCommit
+          if (teamId) {
+            // Nếu là member, chỉ sync commits của chính mình
+            if (userRoleInTeam === 'Member' && commit.author_email?.toLowerCase() !== user.email?.toLowerCase()) {
+              continue; // Bỏ qua commit không phải của user
+            }
+
+            const checkResult = await GithubCommit.processCommit(commit, teamId);
+            await GithubCommit.findOneAndUpdate(
+              { hash: commit.hash },
+              {
+                team_id: teamId,
+                author_email: commit.author_email,
+                message: commit.message,
+                commit_date: commit.commit_date,
+                is_counted: checkResult.is_counted,
+                rejection_reason: checkResult.reason
+              },
+              { upsert: true, new: true }
+            );
+            syncedCommits++;
+          } else {
+            // Nếu không có team, bỏ qua commit này (vì schema yêu cầu team_id)
+            console.log('⚠️ Bỏ qua commit vì không tìm thấy team cho project');
+          }
+        }
+        results.github = syncedCommits;
+      } catch (err) {
+        console.error('Lỗi Sync GitHub:', err.message);
+        results.errors.push(`GitHub Error: ${err.message}`);
+      }
+    } else {
+      if (!user.integrations?.github?.accessToken) {
+        results.errors.push('Chưa kết nối GitHub. Vui lòng link GitHub trước.');
+      }
+      if (!project.githubRepoUrl) {
+        results.errors.push('Project chưa có GitHub repo URL.');
+      }
+    }
+
+    // ==========================================
+    // SYNC JIRA (nếu có token và project key)
+    // ==========================================
+    if (user.integrations?.jira?.accessToken && user.integrations?.jira?.cloudId && project.jiraProjectKey) {
+      try {
+        // Lấy Jira URL từ project hoặc từ user's Jira integration
+        // Cần tìm Jira URL từ accessible resources hoặc lưu trong project
+        // Tạm thời dùng cloudId để gọi API Atlassian
+        const cloudId = user.integrations.jira.cloudId;
+        const accessToken = user.integrations.jira.accessToken;
+
+        // Fetch sprints từ Jira project
+        // Note: Cần boardId để fetch sprints, nhưng có thể fetch tasks trực tiếp từ project
+        // Tạm thời sync tasks trực tiếp từ project key
+        
+        // Fetch issues từ Jira project
+        const jiraApiUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search`;
+        
+        const jiraResponse = await axios.get(jiraApiUrl, {
+          headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Accept': 'application/json'
+          },
+          params: {
+            jql: `project = ${project.jiraProjectKey}`,
+            maxResults: 100,
+            fields: 'summary,status,assignee,created,updated,issuetype,storyPoints'
+          }
+        });
+
+        const issues = jiraResponse.data.issues || [];
+        
+        // teamId đã được tìm ở trên
+
+        // Tạo hoặc lấy sprint mặc định cho project (nếu có team)
+        let defaultSprintId = null;
+        if (teamId) {
+          const defaultSprint = await Sprint.findOneAndUpdate(
+            { team_id: teamId, name: 'Default Sprint' },
+            {
+              team_id: teamId,
+              jira_sprint_id: 0,
+              name: 'Default Sprint',
+              state: 'active',
+              start_date: new Date(),
+              end_date: null
+            },
+            { upsert: true, new: true }
+          );
+          defaultSprintId = defaultSprint._id;
+        }
+
+        // Nếu là member, chỉ lấy tasks của chính mình
+        let userJiraAccountId = null;
+        if (userRoleInTeam === 'Member' && teamId) {
+          const userTeamMember = await TeamMember.findOne({
+            team_id: teamId,
+            student_id: user._id
+          });
+          userJiraAccountId = userTeamMember?.jira_account_id;
+        }
+
+        for (const issue of issues) {
+          // Nếu không có sprint, bỏ qua task này (vì schema yêu cầu sprint_id)
+          if (!defaultSprintId) {
+            console.log('⚠️ Bỏ qua Jira task vì không có sprint cho project');
+            continue;
+          }
+
+          // Nếu là member, chỉ sync tasks của chính mình
+          if (userRoleInTeam === 'Member' && issue.fields.assignee?.accountId !== userJiraAccountId) {
+            continue; // Bỏ qua task không phải của user
+          }
+
+          let assigneeMemberId = null;
+          if (issue.fields.assignee?.accountId && teamId) {
+            const member = await TeamMember.findOne({
+              team_id: teamId,
+              jira_account_id: issue.fields.assignee.accountId
+            }).select('_id');
+            assigneeMemberId = member ? member._id : null;
+          }
+
+          await JiraTask.findOneAndUpdate(
+            { issue_id: issue.id },
+            {
+              sprint_id: defaultSprintId,
+              assignee_id: assigneeMemberId,
+              issue_key: issue.key,
+              issue_id: issue.id,
+              summary: issue.fields.summary || '',
+              status_name: issue.fields.status?.name || '',
+              status_category: issue.fields.status?.statusCategory?.key || '',
+              assignee_account_id: issue.fields.assignee?.accountId || null,
+              assignee_name: issue.fields.assignee?.displayName || null,
+              story_point: issue.fields.storyPoints || null,
+              created_at: issue.fields.created ? new Date(issue.fields.created) : undefined,
+              updated_at: issue.fields.updated ? new Date(issue.fields.updated) : new Date()
+            },
+            { upsert: true, new: true }
+          );
+          syncedTasks++;
+        }
+        results.jira = syncedTasks;
+      } catch (err) {
+        console.error('Lỗi Sync Jira:', err.message);
+        results.errors.push(`Jira Error: ${err.message}`);
+      }
+    } else {
+      if (!user.integrations?.jira?.accessToken) {
+        results.errors.push('Chưa kết nối Jira. Vui lòng link Jira trước.');
+      }
+      if (!project.jiraProjectKey) {
+        results.errors.push('Project chưa có Jira project key.');
+      }
+    }
+
+    return res.json({
+      message: '✅ Đồng bộ dữ liệu hoàn tất!',
+      stats: results
+    });
+
+  } catch (error) {
+    console.error('Sync Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// =========================
+// GET DATA APIs (Phân quyền Leader/Member)
+// =========================
+
+/**
+ * GET /api/integrations/my-commits
+ * Member: Lấy commits GitHub của chính mình
+ */
+exports.getMyCommits = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    // Lấy project của user
+    const Project = models.Project;
+    const project = await Project.findOne({
+      $or: [
+        { leader_id: user._id },
+        { members: user._id }
+      ]
+    });
+
+    if (!project) {
+      return res.json({ 
+        total: 0,
+        commits: [],
+        message: 'Bạn chưa tham gia project nào'
+      });
+    }
+
+    // Tìm team từ project (thông qua TeamMember có project_id)
+    let teamId = null;
+    const TeamMember = models.TeamMember;
+    const teamMember = await TeamMember.findOne({
+      project_id: project._id,
+      student_id: user._id
+    });
+    if (teamMember) {
+      teamId = teamMember.team_id;
+    }
+
+    const GithubCommit = models.GithubCommit;
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
+
+    // Lấy commits của user (theo email)
+    let commits = [];
+    if (teamId && user.email) {
+      commits = await GithubCommit.find({
+        team_id: teamId,
+        author_email: user.email.toLowerCase()
+      })
+      .sort({ commit_date: -1 })
+      .limit(limit)
+      .lean();
+    }
+
+    return res.json({
+      project: {
+        _id: project._id,
+        name: project.name
+      },
+      total: commits.length,
+      commits: commits
+    });
+
+  } catch (error) {
+    console.error('Get My Commits Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /api/integrations/my-tasks
+ * Member: Lấy tasks Jira của chính mình
+ */
+exports.getMyTasks = async (req, res) => {
+  try {
+    const user = req.user;
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    // Lấy project của user
+    const Project = models.Project;
+    const project = await Project.findOne({
+      $or: [
+        { leader_id: user._id },
+        { members: user._id }
+      ]
+    });
+
+    if (!project) {
+      return res.json({ 
+        total: 0,
+        tasks: [],
+        message: 'Bạn chưa tham gia project nào'
+      });
+    }
+
+    // Tìm team từ project (thông qua TeamMember có project_id)
+    let teamId = null;
+    const TeamMember = models.TeamMember;
+    const teamMember = await TeamMember.findOne({
+      project_id: project._id,
+      student_id: user._id
+    });
+    if (teamMember) {
+      teamId = teamMember.team_id;
+    }
+
+    const { Sprint, JiraTask } = require('../models/JiraData');
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
+
+    // Lấy tasks của user (theo jira_account_id)
+    let tasks = [];
+    if (teamId) {
+      // Tìm team member của user
+      const teamMember = await TeamMember.findOne({
+        team_id: teamId,
+        student_id: user._id
+      });
+
+      if (teamMember?.jira_account_id) {
+        const sprints = await Sprint.find({ team_id: teamId }).select('_id').lean();
+        const sprintIds = sprints.map(s => s._id);
+
+        // Filter theo status nếu có
+        const statusFilter = req.query.status;
+        let query = {
+          sprint_id: { $in: sprintIds },
+          assignee_account_id: teamMember.jira_account_id
+        };
+        
+        if (statusFilter) {
+          query.$or = [
+            { status_category: statusFilter },
+            { status_name: statusFilter }
+          ];
+        }
+
+        tasks = await JiraTask.find(query)
+        .populate({
+          path: 'sprint_id',
+          select: 'name state'
+        })
+        .sort({ updated_at: -1 })
+        .limit(limit)
+        .lean();
+      }
+    }
+
+    return res.json({
+      project: {
+        _id: project._id,
+        name: project.name
+      },
+      total: tasks.length,
+      tasks: tasks
+    });
+
+  } catch (error) {
+    console.error('Get My Tasks Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /api/integrations/team/:teamId/commits
+ * Leader: Lấy commits GitHub của cả team
+ */
+exports.getTeamCommits = async (req, res) => {
+  try {
+    const user = req.user;
+    const { teamId } = req.params;
+    
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    const Team = models.Team;
+    const TeamMember = models.TeamMember;
+    const GithubCommit = models.GithubCommit;
+
+    // Kiểm tra team tồn tại
+    const team = await Team.findById(teamId);
+    if (!team) {
+      return res.status(404).json({ error: 'Không tìm thấy team' });
+    }
+
+    // Kiểm tra user có phải leader không
+    const teamMember = await TeamMember.findOne({
+      team_id: teamId,
+      student_id: user._id
+    });
+
+    if (!teamMember || teamMember.role_in_team !== 'Leader') {
+      return res.status(403).json({ error: 'Chỉ Leader mới có quyền xem commits của cả team' });
+    }
+
+    // Lấy tất cả members
+    const members = await TeamMember.find({ team_id: teamId })
+      .populate('student_id', 'student_code email full_name')
+      .lean();
+
+    const limit = Math.min(500, Math.max(1, Number(req.query?.limit || 100)));
+
+    // Lấy tất cả commits của team
+    const allCommits = await GithubCommit.find({ team_id: teamId })
+      .sort({ commit_date: -1 })
+      .limit(limit)
+      .lean();
+
+    // Phân loại commits theo member
+    const commitsByMember = members.map(member => {
+      const email = (member.student_id?.email || '').toLowerCase();
+      const memberCommits = allCommits.filter(c => 
+        c.author_email?.toLowerCase() === email
+      );
+
+      return {
+        member: {
+          _id: member._id,
+          student: member.student_id,
+          role_in_team: member.role_in_team,
+          github_username: member.github_username
+        },
+        total: memberCommits.length,
+        commits: memberCommits
+      };
+    });
+
+    return res.json({
+      team: {
+        _id: team._id,
+        project_name: team.project_name
+      },
+      summary: {
+        total_members: members.length,
+        total_commits: allCommits.length
+      },
+      members_commits: commitsByMember
+    });
+
+  } catch (error) {
+    console.error('Get Team Commits Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /api/integrations/team/:teamId/tasks
+ * Leader: Lấy tasks Jira của cả team
+ */
+exports.getTeamTasks = async (req, res) => {
+  try {
+    const user = req.user;
+    const { teamId } = req.params;
+    
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    const Team = models.Team;
+    const TeamMember = models.TeamMember;
+    const { Sprint, JiraTask } = require('../models/JiraData');
+
+    // Kiểm tra team tồn tại
+    const team = await Team.findById(teamId);
+    if (!team) {
+      return res.status(404).json({ error: 'Không tìm thấy team' });
+    }
+
+    // Kiểm tra user có phải leader không
+    const teamMember = await TeamMember.findOne({
+      team_id: teamId,
+      student_id: user._id
+    });
+
+    if (!teamMember || teamMember.role_in_team !== 'Leader') {
+      return res.status(403).json({ error: 'Chỉ Leader mới có quyền xem tasks của cả team' });
+    }
+
+    // Lấy tất cả members
+    const members = await TeamMember.find({ team_id: teamId })
+      .populate('student_id', 'student_code email full_name')
+      .lean();
+
+    const limit = Math.min(500, Math.max(1, Number(req.query?.limit || 100)));
+    const statusFilter = req.query.status;
+
+    // Lấy tất cả tasks của team
+    const sprints = await Sprint.find({ team_id: teamId }).select('_id').lean();
+    const sprintIds = sprints.map(s => s._id);
+    
+    let query = { sprint_id: { $in: sprintIds } };
+    if (statusFilter) {
+      query.$or = [
+        { status_category: statusFilter },
+        { status_name: statusFilter }
+      ];
+    }
+
+    const allTasks = await JiraTask.find(query)
+      .populate({
+        path: 'sprint_id',
+        select: 'name state'
+      })
+      .sort({ updated_at: -1 })
+      .limit(limit)
+      .lean();
+
+    // Phân loại tasks theo member
+    const tasksByMember = members.map(member => {
+      const jiraAccountId = member.jira_account_id;
+      const memberTasks = allTasks.filter(t => 
+        t.assignee_account_id === jiraAccountId
+      );
+
+      return {
+        member: {
+          _id: member._id,
+          student: member.student_id,
+          role_in_team: member.role_in_team,
+          jira_account_id: member.jira_account_id
+        },
+        total: memberTasks.length,
+        tasks: memberTasks
+      };
+    });
+
+    return res.json({
+      team: {
+        _id: team._id,
+        project_name: team.project_name
+      },
+      summary: {
+        total_members: members.length,
+        total_tasks: allTasks.length
+      },
+      members_tasks: tasksByMember
+    });
+
+  } catch (error) {
+    console.error('Get Team Tasks Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /api/integrations/team/:teamId/member/:memberId/commits
+ * Leader: Lấy commits GitHub của một member cụ thể
+ */
+exports.getMemberCommits = async (req, res) => {
+  try {
+    const user = req.user;
+    const { teamId, memberId } = req.params;
+    
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    const Team = models.Team;
+    const TeamMember = models.TeamMember;
+    const GithubCommit = models.GithubCommit;
+
+    // Kiểm tra team tồn tại
+    const team = await Team.findById(teamId);
+    if (!team) {
+      return res.status(404).json({ error: 'Không tìm thấy team' });
+    }
+
+    // Kiểm tra user có phải leader không
+    const currentUserMember = await TeamMember.findOne({
+      team_id: teamId,
+      student_id: user._id
+    });
+
+    if (!currentUserMember || currentUserMember.role_in_team !== 'Leader') {
+      return res.status(403).json({ error: 'Chỉ Leader mới có quyền xem commits của member khác' });
+    }
+
+    // Lấy member cần xem
+    const member = await TeamMember.findById(memberId)
+      .populate('student_id', 'student_code email full_name')
+      .lean();
+
+    if (!member || member.team_id.toString() !== teamId) {
+      return res.status(404).json({ error: 'Không tìm thấy member trong team này' });
+    }
+
+    const email = (member.student_id?.email || '').toLowerCase();
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
+
+    // Lấy commits của member
+    const commits = await GithubCommit.find({
+      team_id: teamId,
+      author_email: email
+    })
+    .sort({ commit_date: -1 })
+    .limit(limit)
+    .lean();
+
+    return res.json({
+      member: {
+        _id: member._id,
+        student: member.student_id,
+        role_in_team: member.role_in_team,
+        github_username: member.github_username
+      },
+      total: commits.length,
+      commits: commits
+    });
+
+  } catch (error) {
+    console.error('Get Member Commits Error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /api/integrations/team/:teamId/member/:memberId/tasks
+ * Leader: Lấy tasks Jira của một member cụ thể
+ */
+exports.getMemberTasks = async (req, res) => {
+  try {
+    const user = req.user;
+    const { teamId, memberId } = req.params;
+    
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    const Team = models.Team;
+    const TeamMember = models.TeamMember;
+    const { Sprint, JiraTask } = require('../models/JiraData');
+
+    // Kiểm tra team tồn tại
+    const team = await Team.findById(teamId);
+    if (!team) {
+      return res.status(404).json({ error: 'Không tìm thấy team' });
+    }
+
+    // Kiểm tra user có phải leader không
+    const currentUserMember = await TeamMember.findOne({
+      team_id: teamId,
+      student_id: user._id
+    });
+
+    if (!currentUserMember || currentUserMember.role_in_team !== 'Leader') {
+      return res.status(403).json({ error: 'Chỉ Leader mới có quyền xem tasks của member khác' });
+    }
+
+    // Lấy member cần xem
+    const member = await TeamMember.findById(memberId)
+      .populate('student_id', 'student_code email full_name')
+      .lean();
+
+    if (!member || member.team_id.toString() !== teamId) {
+      return res.status(404).json({ error: 'Không tìm thấy member trong team này' });
+    }
+
+    const jiraAccountId = member.jira_account_id;
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
+    const statusFilter = req.query.status;
+
+    // Lấy tasks của member
+    const sprints = await Sprint.find({ team_id: teamId }).select('_id').lean();
+    const sprintIds = sprints.map(s => s._id);
+    
+    let query = {
+      sprint_id: { $in: sprintIds },
+      assignee_account_id: jiraAccountId
+    };
+    
+    if (statusFilter) {
+      query.$or = [
+        { status_category: statusFilter },
+        { status_name: statusFilter }
+      ];
+    }
+
+    const tasks = await JiraTask.find(query)
+    .populate({
+      path: 'sprint_id',
+      select: 'name state'
+    })
+    .sort({ updated_at: -1 })
+    .limit(limit)
+    .lean();
+
+    return res.json({
+      member: {
+        _id: member._id,
+        student: member.student_id,
+        role_in_team: member.role_in_team,
+        jira_account_id: member.jira_account_id
+      },
+      total: tasks.length,
+      tasks: tasks
+    });
+
+  } catch (error) {
+    console.error('Get Member Tasks Error:', error);
     return res.status(500).json({ error: error.message });
   }
 };
