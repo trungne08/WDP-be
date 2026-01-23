@@ -208,35 +208,84 @@ const register = async (req, res) => {
             // ==========================================
             // TỰ ĐỘNG ENROLL VÀO LỚP NẾU CÓ TRONG PENDING ENROLLMENT
             // ==========================================
+            // Logic: 
+            // 1. Tìm tất cả PendingEnrollment chưa enroll theo roll_number hoặc email
+            // 2. Với mỗi pending enrollment:
+            //    - Validate class vẫn tồn tại và đang Active
+            //    - Validate semester vẫn còn hiệu lực (nếu cần)
+            //    - Tìm hoặc tạo Team theo Group
+            //    - Tạo TeamMember (enroll vào lớp)
+            //    - Đánh dấu enrolled = true
+            // 3. Một sinh viên có thể enroll vào nhiều lớp (nhiều môn, nhiều lớp khác nhau)
             try {
+                const Class = require('../models/Class');
+                
                 // Tìm pending enrollment theo student_code hoặc email
+                // Match theo roll_number hoặc email để tìm tất cả các lớp mà sinh viên được import
                 const pendingEnrollments = await PendingEnrollment.find({
                     enrolled: false,
                     $or: [
                         { roll_number: student_code.trim() },
                         { email: email.toLowerCase().trim() }
                     ]
-                });
+                }).populate('class_id', 'name subjectName semester_id lecturer_id status')
+                  .populate('semester_id', 'name code start_date end_date status');
 
                 const enrolledClasses = [];
+                const skippedClasses = [];
 
                 for (const pending of pendingEnrollments) {
                     try {
+                        // Validate 1: Class phải tồn tại
+                        if (!pending.class_id || !pending.class_id._id) {
+                            console.warn(`⚠️ Class không tồn tại cho pending enrollment ${pending._id}, bỏ qua`);
+                            skippedClasses.push({
+                                reason: 'Class không tồn tại',
+                                pending_id: pending._id
+                            });
+                            continue;
+                        }
+
+                        // Validate 2: Class phải đang Active (không phải Archived)
+                        if (pending.class_id.status === 'Archived') {
+                            console.warn(`⚠️ Class ${pending.class_id.name} đã bị Archived, bỏ qua enrollment`);
+                            skippedClasses.push({
+                                class_name: pending.class_id.name,
+                                reason: 'Class đã bị Archived'
+                            });
+                            continue;
+                        }
+
+                        // Validate 3: Semester phải tồn tại và đang Open (nếu cần)
+                        if (pending.semester_id && pending.semester_id.status === 'Closed') {
+                            console.warn(`⚠️ Semester ${pending.semester_id.name} đã Closed, bỏ qua enrollment`);
+                            skippedClasses.push({
+                                class_name: pending.class_id.name,
+                                reason: 'Semester đã Closed'
+                            });
+                            continue;
+                        }
+
+                        // Log để debug
+                        console.log(`📚 Enrolling student ${student_code} vào lớp: ${pending.class_id.name} (Môn: ${pending.class_id.subjectName}, Group: ${pending.group})`);
+
                         // Tìm hoặc tạo Team theo Group
                         let team = await Team.findOne({
-                            class_id: pending.class_id,
+                            class_id: pending.class_id._id,
                             project_name: `Group ${pending.group}`
                         });
 
                         if (!team) {
                             // Tạo team mới nếu chưa có
                             team = await Team.create({
-                                class_id: pending.class_id,
+                                class_id: pending.class_id._id,
                                 project_name: `Group ${pending.group}`
                             });
+                            console.log(`✅ Tạo team mới: Group ${pending.group} cho lớp ${pending.class_id.name}`);
                         }
 
-                        // Kiểm tra TeamMember đã tồn tại chưa
+                        // Kiểm tra TeamMember đã tồn tại chưa (tránh duplicate)
+                        // Một sinh viên chỉ có thể ở 1 team trong 1 class
                         const existingMember = await TeamMember.findOne({
                             team_id: team._id,
                             student_id: newUser._id
@@ -257,24 +306,48 @@ const register = async (req, res) => {
                             await pending.save();
 
                             enrolledClasses.push({
-                                class_id: pending.class_id.toString(),
+                                class_id: pending.class_id._id.toString(),
+                                class_name: pending.class_id.name,
+                                subject_name: pending.class_id.subjectName,
                                 group: pending.group,
-                                role: pending.is_leader ? 'Leader' : 'Member'
+                                role: pending.is_leader ? 'Leader' : 'Member',
+                                semester: pending.semester_id?.name || 'N/A'
                             });
+                            
+                            console.log(`✅ Đã enroll student ${student_code} vào lớp ${pending.class_id.name}, Group ${pending.group}, Role: ${pending.is_leader ? 'Leader' : 'Member'}`);
+                        } else {
+                            // Đã tồn tại TeamMember (có thể do enroll thủ công trước đó)
+                            // Nhưng chưa đánh dấu pending.enrolled → đánh dấu lại
+                            if (!pending.enrolled) {
+                                pending.enrolled = true;
+                                pending.enrolled_at = new Date();
+                                await pending.save();
+                                console.log(`ℹ️ Student ${student_code} đã có trong team, đánh dấu pending enrollment là enrolled`);
+                            }
                         }
                     } catch (enrollError) {
-                        console.error(`Lỗi enroll vào lớp ${pending.class_id}:`, enrollError);
+                        console.error(`❌ Lỗi enroll vào lớp ${pending.class_id?._id || pending.class_id || 'unknown'}:`, enrollError.message);
+                        skippedClasses.push({
+                            class_name: pending.class_id?.name || 'Unknown',
+                            reason: `Lỗi: ${enrollError.message}`
+                        });
                         // Tiếp tục với lớp khác, không dừng lại
                     }
                 }
 
-                // Thêm thông tin enrolled classes vào response nếu có
+                // Log kết quả
                 if (enrolledClasses.length > 0) {
-                    console.log(`✅ Tự động enroll ${enrolledClasses.length} lớp cho sinh viên ${student_code}`);
+                    console.log(`✅ Tự động enroll ${enrolledClasses.length} lớp cho sinh viên ${student_code}:`, 
+                        enrolledClasses.map(c => `${c.subject_name} - ${c.class_name} (Group ${c.group})`).join(', '));
+                }
+                
+                if (skippedClasses.length > 0) {
+                    console.warn(`⚠️ Bỏ qua ${skippedClasses.length} lớp (class không tồn tại/archived hoặc lỗi):`, 
+                        skippedClasses.map(s => s.class_name || s.reason).join(', '));
                 }
             } catch (autoEnrollError) {
                 // Không throw error, chỉ log để không ảnh hưởng đến quá trình đăng ký
-                console.error('Lỗi tự động enroll:', autoEnrollError);
+                console.error('❌ Lỗi tự động enroll:', autoEnrollError);
             }
         }
 

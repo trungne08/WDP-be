@@ -4,6 +4,7 @@ module.exports = {
     Lecturer: require('./Lecturer'),
     Student: require('./Student'),
     Semester: require('./Semester'),
+    Subject: require('./Subject'),
     Class: require('./Class'),
     Team: require('./Team'),
     TeamMember: require('./TeamMember'),

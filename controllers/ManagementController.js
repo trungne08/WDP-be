@@ -1,6 +1,7 @@
 const bcrypt = require('bcryptjs');
 const models = require('../models');
 const Semester = require('../models/Semester');
+const Subject = require('../models/Subject');
 const Class = require('../models/Class');
 const Student = require('../models/Student');
 const Team = require('../models/Team');
@@ -103,6 +104,101 @@ const getSemesters = async (req, res) => {
         });
     } catch (error) {
         console.error('Get semesters error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+// ==========================================
+// QUẢN LÝ MÔN HỌC (SUBJECT MANAGEMENT)
+// ==========================================
+
+/**
+ * POST /management/subjects
+ * Tạo môn học mới
+ */
+const createSubject = async (req, res) => {
+    try {
+        const { name, code, description, credits } = req.body;
+
+        // Validate required fields
+        if (!name || !code) {
+            return res.status(400).json({
+                error: 'name và code là bắt buộc'
+            });
+        }
+
+        // Kiểm tra code đã tồn tại chưa
+        const existingSubject = await Subject.findOne({ 
+            $or: [
+                { code: code.trim() },
+                { name: name.trim() }
+            ]
+        });
+        if (existingSubject) {
+            return res.status(400).json({
+                error: `Môn học với code "${code}" hoặc name "${name}" đã tồn tại`
+            });
+        }
+
+        // Lấy admin_id từ token (giả sử có middleware auth)
+        // Tạm thời dùng admin đầu tiên hoặc từ req.user nếu có
+        const admin = await models.Admin.findOne();
+        if (!admin) {
+            return res.status(404).json({
+                error: 'Không tìm thấy admin để tạo môn học'
+            });
+        }
+
+        const subject = await Subject.create({
+            name: name.trim(),
+            code: code.trim().toUpperCase(), // Mã môn học viết hoa
+            description: description || '',
+            credits: credits || 0,
+            created_by_admin: admin._id,
+            status: 'Active'
+        });
+
+        res.status(201).json({
+            message: '✅ Tạo môn học thành công!',
+            subject: {
+                _id: subject._id,
+                name: subject.name,
+                code: subject.code,
+                description: subject.description,
+                credits: subject.credits,
+                status: subject.status
+            }
+        });
+    } catch (error) {
+        console.error('Create subject error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * GET /management/subjects
+ * Lấy danh sách môn học (để hiển thị dropdown)
+ */
+const getSubjects = async (req, res) => {
+    try {
+        const { status } = req.query;
+        
+        let query = {};
+        if (status) {
+            query.status = status; // 'Active' hoặc 'Archived'
+        }
+
+        const subjects = await Subject.find(query)
+            .select('_id name code description credits status')
+            .sort({ name: 1 }) // Sắp xếp theo tên
+            .lean();
+
+        res.json({
+            total: subjects.length,
+            subjects
+        });
+    } catch (error) {
+        console.error('Get subjects error:', error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -246,13 +342,41 @@ const getUsers = async (req, res) => {
  */
 const createClass = async (req, res) => {
     try {
-        const { name, semester_id, lecturer_id } = req.body;
+        const { name, semester_id, lecturer_id, subjectName, subject_id } = req.body;
 
         // Validate required fields
+        // Có thể dùng subject_id (link đến Subject model) hoặc subjectName (text)
         if (!name || !semester_id || !lecturer_id) {
             return res.status(400).json({
                 error: 'name, semester_id và lecturer_id là bắt buộc'
             });
+        }
+
+        // Phải có ít nhất một trong hai: subject_id hoặc subjectName
+        if (!subject_id && !subjectName) {
+            return res.status(400).json({
+                error: 'subject_id hoặc subjectName là bắt buộc'
+            });
+        }
+
+        // Nếu có subject_id, validate và lấy subjectName từ Subject model
+        let finalSubjectName = subjectName;
+        if (subject_id) {
+            if (!require('mongoose').Types.ObjectId.isValid(subject_id)) {
+                return res.status(400).json({
+                    error: 'subject_id không hợp lệ'
+                });
+            }
+            
+            const subject = await Subject.findById(subject_id);
+            if (!subject) {
+                return res.status(404).json({
+                    error: 'Không tìm thấy môn học với subject_id này'
+                });
+            }
+            
+            // Dùng name từ Subject model
+            finalSubjectName = subject.name;
         }
 
         // Validate ObjectId
@@ -292,6 +416,8 @@ const createClass = async (req, res) => {
             name,
             semester_id,
             lecturer_id,
+            subjectName: finalSubjectName, // Tên môn học (từ subject_id hoặc từ input)
+            subject_id: subject_id || null, // Link đến Subject model (optional, để backward compatible)
             class_code: classCode
         });
 
@@ -542,7 +668,7 @@ const importStudents = async (req, res) => {
                     });
 
                     if (!existingPending) {
-                        // Lưu pending enrollment
+                        // Lưu pending enrollment với đầy đủ thông tin để match chính xác
                         await PendingEnrollment.create({
                             class_id: classId,
                             roll_number: RollNumber.trim(),
@@ -550,6 +676,10 @@ const importStudents = async (req, res) => {
                             full_name: FullName || '',
                             group: groupNumber,
                             is_leader: isLeader,
+                            // Thông tin để match chính xác lớp học (quan trọng!)
+                            subjectName: classExists.subjectName,
+                            semester_id: classExists.semester_id,
+                            lecturer_id: classExists.lecturer_id,
                             enrolled: false
                         });
 
@@ -677,6 +807,8 @@ const importStudents = async (req, res) => {
 module.exports = {
     createSemester,
     getSemesters,
+    createSubject,
+    getSubjects,
     createUser,
     getUsers,
     createClass,

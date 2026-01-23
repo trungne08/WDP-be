@@ -15,7 +15,7 @@ const RefreshTokenSchema = new Schema({
 });
 
 // Index để tìm token nhanh
-RefreshTokenSchema.index({ token: 1 });
+// Lưu ý: token đã có unique: true nên không cần index() thêm
 RefreshTokenSchema.index({ user_id: 1, role: 1 });
 
 // Tự động xóa token đã hết hạn

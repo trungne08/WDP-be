@@ -607,31 +607,50 @@ module.exports = (app) => {
      *       302:
      *         description: Redirect đến Google OAuth
      */
-    app.get('/auth/google', (req, res, next) => {
-        // Lưu redirect_uri vào state parameter (JWT) để callback có thể dùng
+    app.get('/auth/google', (req, res) => {
+        // Trả về JSON với redirectUrl thay vì redirect trực tiếp (tránh lỗi CORS khi frontend dùng XHR/fetch)
         // Tương tự như cách GitHub/Jira integration làm
-        const jwt = require('jsonwebtoken');
-        const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
-        
-        const frontendRedirectUri = req.query.redirect_uri || process.env.CLIENT_URL || 'http://localhost:3000';
-        
-        // Tạo state JWT chứa redirect_uri
-        const state = jwt.sign(
-            { 
-                provider: 'google',
-                redirect_uri: frontendRedirectUri,
-                timestamp: Date.now()
-            },
-            jwtSecret,
-            { expiresIn: '10m' } // State chỉ sống 10 phút
-        );
-        
-        // Passport Google Strategy hỗ trợ custom state
-        // State sẽ được truyền đến Google và Google sẽ trả lại trong callback
-        passport.authenticate('google', { 
-            scope: ['profile', 'email'],
-            state: state // Truyền custom state (phải là string)
-        })(req, res, next);
+        try {
+            const jwt = require('jsonwebtoken');
+            const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
+            
+            const frontendRedirectUri = req.query.redirect_uri || process.env.CLIENT_URL || 'http://localhost:3000';
+            
+            // Tạo state JWT chứa redirect_uri
+            const state = jwt.sign(
+                { 
+                    provider: 'google',
+                    redirect_uri: frontendRedirectUri,
+                    timestamp: Date.now()
+                },
+                jwtSecret,
+                { expiresIn: '10m' } // State chỉ sống 10 phút
+            );
+            
+            // Build Google OAuth URL thủ công (giống GitHub/Jira)
+            const clientId = process.env.GOOGLE_CLIENT_ID;
+            const callbackUrl = process.env.GOOGLE_CALLBACK_URL || `${req.protocol}://${req.get('host')}/auth/google/callback`;
+            
+            if (!clientId) {
+                return res.status(500).json({ error: 'GOOGLE_CLIENT_ID chưa được cấu hình' });
+            }
+            
+            // Google OAuth URL
+            const googleAuthUrl = new URL('https://accounts.google.com/o/oauth2/v2/auth');
+            googleAuthUrl.searchParams.set('client_id', clientId);
+            googleAuthUrl.searchParams.set('redirect_uri', callbackUrl);
+            googleAuthUrl.searchParams.set('response_type', 'code');
+            googleAuthUrl.searchParams.set('scope', 'profile email');
+            googleAuthUrl.searchParams.set('state', state);
+            googleAuthUrl.searchParams.set('access_type', 'offline'); // Để lấy refresh token nếu cần
+            googleAuthUrl.searchParams.set('prompt', 'consent'); // Luôn hiển thị consent screen
+            
+            // Trả về JSON với redirectUrl để frontend tự redirect (tránh lỗi CORS)
+            return res.json({ redirectUrl: googleAuthUrl.toString() });
+        } catch (error) {
+            console.error('Google OAuth connect error:', error);
+            return res.status(500).json({ error: error.message });
+        }
     });
 
     /**

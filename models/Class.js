@@ -16,6 +16,13 @@ const ClassSchema = new Schema({
         type: String,
         required: true
     },
+    // Link đến Subject model (optional, để backward compatible)
+    // Nếu có subject_id thì dùng, nếu không thì dùng subjectName
+    subject_id: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Subject',
+        default: null
+    },
     status: {
         type: String,
         enum: ['Active', 'Archived'],

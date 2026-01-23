@@ -71,6 +71,91 @@ module.exports = (app) => {
 
     /**
      * @swagger
+     * /api/management/subjects:
+     *   post:
+     *     summary: "Tạo môn học mới (VD: Software Engineering Project)"
+     *     tags: [Management]
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - name
+     *               - code
+     *             properties:
+     *               name:
+     *                 type: string
+     *                 example: Software Engineering Project
+     *                 description: Tên môn học (phải unique)
+     *               code:
+     *                 type: string
+     *                 example: SWP301
+     *                 description: Mã môn học (phải unique, sẽ tự động viết hoa)
+     *               description:
+     *                 type: string
+     *                 example: Môn học về quản lý dự án phần mềm
+     *               credits:
+     *                 type: number
+     *                 example: 3
+     *                 description: Số tín chỉ (mặc định 0)
+     *     responses:
+     *       201:
+     *         description: Tạo môn học thành công
+     *       400:
+     *         description: Lỗi validation (code hoặc name đã tồn tại)
+     *       500:
+     *         description: Lỗi server
+     */
+    app.post('/api/management/subjects', ManagementController.createSubject);
+
+    /**
+     * @swagger
+     * /api/management/subjects:
+     *   get:
+     *     summary: Lấy danh sách môn học (Để hiển thị dropdown chọn môn)
+     *     tags: [Management]
+     *     parameters:
+     *       - in: query
+     *         name: status
+     *         schema:
+     *           type: string
+     *           enum: [Active, Archived]
+     *         description: Lọc theo trạng thái (mặc định lấy tất cả)
+     *         example: Active
+     *     responses:
+     *       200:
+     *         description: Danh sách môn học
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 subjects:
+     *                   type: array
+     *                   items:
+     *                     type: object
+     *                     properties:
+     *                       _id:
+     *                         type: string
+     *                       name:
+     *                         type: string
+     *                       code:
+     *                         type: string
+     *                       description:
+     *                         type: string
+     *                       credits:
+     *                         type: number
+     *                       status:
+     *                         type: string
+     */
+    app.get('/api/management/subjects', ManagementController.getSubjects);
+
+    /**
+     * @swagger
      * /api/management/users:
      *   post:
      *     summary: Tạo User (Admin, Giảng viên, Mentor)
@@ -155,7 +240,21 @@ module.exports = (app) => {
      *             properties:
      *               name:
      *                 type: string
+     *                 example: Software Engineering Project - Class 1
+     *                 description: Tên lớp học (có thể có nhiều lớp cho cùng một môn)
+     *               subject_id:
+     *                 type: string
+     *                 example: 507f1f77bcf86cd799439013
+     *                 description: |
+     *                   ID của môn học (từ Subject model). 
+     *                   Nếu có subject_id thì sẽ tự động lấy subjectName từ Subject model.
+     *                   Nếu không có thì phải truyền subjectName.
+     *               subjectName:
+     *                 type: string
      *                 example: Software Engineering Project
+     *                 description: |
+     *                   Tên môn học (chỉ cần nếu không có subject_id).
+     *                   Một môn có thể có nhiều lớp và nhiều giảng viên.
      *               semester_id:
      *                 type: string
      *                 example: 507f1f77bcf86cd799439011
@@ -202,7 +301,7 @@ module.exports = (app) => {
      */
     app.get('/api/management/classes', ManagementController.getClasses);
 
-/**
+    /**
      * @swagger
      * /api/management/classes/{classId}/grading-config:
      *   put:
