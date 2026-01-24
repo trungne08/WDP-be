@@ -747,8 +747,29 @@ const importStudents = async (req, res) => {
                             }
                         }
                     } else {
-                         // Nếu đã tồn tại pending nhưng chưa enroll, có thể xem xét gửi lại email?
-                         // Tạm thời bỏ qua để tránh spam
+                         // =========================================================================
+                         // FIX: Gửi email cả khi đã tồn tại pending enrollment (chưa enroll)
+                         // =========================================================================
+                         // Lý do: Khi import lại (logic xóa cũ thay mới), record pending cũ đã bị xóa,
+                         // nên code sẽ luôn chạy vào nhánh if (!existingPending) ở trên.
+                         // Tuy nhiên, để an toàn, nếu có trường hợp nào lọt vào else này mà chưa enroll,
+                         // cũng nên gửi mail lại nhắc nhở.
+                         if (!existingPending.enrolled && normalizedEmail) {
+                            try {
+                                const emailResult = await sendPendingEnrollmentEmail(
+                                    normalizedEmail,
+                                    FullName || normalizedRollNumber,
+                                    classExists.name,
+                                    normalizedRollNumber
+                                );
+                                if (emailResult && emailResult.success) {
+                                    emailSent = true;
+                                    console.log(`✅ Đã gửi lại email thông báo enrollment đến ${normalizedEmail}`);
+                                }
+                            } catch (e) {
+                                console.error(`❌ Lỗi gửi lại email: ${e.message}`);
+                            }
+                         }
                     }
 
                     let message = 'Sinh viên chưa đăng ký tài khoản.';
