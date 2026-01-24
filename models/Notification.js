@@ -16,7 +16,13 @@ const NotificationSchema = new Schema({
     user_role_ref: {
         type: String,
         required: true,
-        enum: ['Student', 'Lecturer']
+        enum: ['Student', 'Lecturer'],
+        // Tự động gán giá trị mặc định dựa trên user_role ngay khi khởi tạo
+        default: function() {
+            if (this.user_role === 'STUDENT') return 'Student';
+            if (this.user_role === 'LECTURER') return 'Lecturer';
+            return null;
+        }
     },
     title: { type: String, required: true },
     message: { type: String, required: true },
@@ -30,13 +36,14 @@ const NotificationSchema = new Schema({
     created_at: { type: Date, default: Date.now }
 });
 
-// Middleware to set refPath automatically
-// Sử dụng pre('save') thay vì pre('validate') để ổn định hơn
+// Middleware cập nhật lại nếu user_role thay đổi sau khi khởi tạo
 NotificationSchema.pre('save', function(next) {
-    if (this.user_role === 'STUDENT') {
-        this.user_role_ref = 'Student';
-    } else if (this.user_role === 'LECTURER') {
-        this.user_role_ref = 'Lecturer';
+    if (this.isModified('user_role')) {
+        if (this.user_role === 'STUDENT') {
+            this.user_role_ref = 'Student';
+        } else if (this.user_role === 'LECTURER') {
+            this.user_role_ref = 'Lecturer';
+        }
     }
     next();
 });
