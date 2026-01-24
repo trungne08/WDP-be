@@ -550,6 +550,9 @@ module.exports = (app) => {
      *                       _id:
      *                         type: string
      *                         description: ID của student (null nếu là pending)
+     *                       pending_id:
+     *                         type: string
+     *                         description: ID của pending item (để dùng cho Update/Delete)
      *                       student_code:
      *                         type: string
      *                       full_name:
@@ -573,4 +576,125 @@ module.exports = (app) => {
      *         description: Lỗi server
      */
     app.get('/api/management/classes/:classId/students', ManagementController.getStudentsInClass);
+
+    /**
+     * @swagger
+     * /api/management/classes/{classId}/students/add:
+     *   post:
+     *     summary: Thêm thủ công 1 sinh viên vào lớp
+     *     tags: [Management]
+     *     description: |
+     *       - Nếu SV đã có tài khoản -> Tự động Enroll vào lớp ngay.
+     *       - Nếu SV chưa có tài khoản -> Lưu vào danh sách chờ (Pending).
+     *     parameters:
+     *       - in: path
+     *         name: classId
+     *         required: true
+     *         schema:
+     *           type: string
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - student_code
+     *               - group
+     *             properties:
+     *               student_code:
+     *                 type: string
+     *                 example: CE123456
+     *               full_name:
+     *                 type: string
+     *                 example: Nguyen Van A
+     *               email:
+     *                 type: string
+     *                 example: anv@fpt.edu.vn
+     *               group:
+     *                 type: number
+     *                 example: 1
+     *               is_leader:
+     *                 type: boolean
+     *                 default: false
+     *     responses:
+     *       201:
+     *         description: Thêm thành công (Enrolled hoặc Pending)
+     *       400:
+     *         description: Lỗi validation hoặc SV đã tồn tại
+     */
+    app.post('/api/management/classes/:classId/students/add', ManagementController.addStudentToClass);
+
+    /**
+     * @swagger
+     * /api/management/classes/{classId}/students/update:
+     *   put:
+     *     summary: Cập nhật thông tin sinh viên (Đổi nhóm, Đổi Role)
+     *     tags: [Management]
+     *     description: |
+     *       Cập nhật cho cả sinh viên đã Enroll và Pending.
+     *       - Nếu set là Leader, hệ thống tự động hạ Leader cũ của nhóm đó xuống Member.
+     *       - Nếu đổi Group, hệ thống tự động chuyển sang Team mới (tạo Team mới nếu chưa có).
+     *     parameters:
+     *       - in: path
+     *         name: classId
+     *         required: true
+     *         schema:
+     *           type: string
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               student_id: 
+     *                 type: string
+     *                 description: ID của student (nếu là Enrolled)
+     *               pending_id:
+     *                 type: string
+     *                 description: ID của pending item (nếu là Pending)
+     *               group:
+     *                 type: number
+     *                 example: 2
+     *               is_leader:
+     *                 type: boolean
+     *     responses:
+     *       200:
+     *         description: Cập nhật thành công
+     *       400:
+     *         description: Thiếu group hoặc ID
+     */
+    app.put('/api/management/classes/:classId/students/update', ManagementController.updateStudentInClass);
+
+    /**
+     * @swagger
+     * /api/management/classes/{classId}/students:
+     *   delete:
+     *     summary: Xóa sinh viên khỏi lớp
+     *     tags: [Management]
+     *     parameters:
+     *       - in: path
+     *         name: classId
+     *         required: true
+     *         schema:
+     *           type: string
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             properties:
+     *               student_id:
+     *                 type: string
+     *               pending_id:
+     *                 type: string
+     *     responses:
+     *       200:
+     *         description: Xóa thành công
+     *       400:
+     *         description: Thiếu ID
+     */
+    app.delete('/api/management/classes/:classId/students', ManagementController.removeStudentFromClass);
 };

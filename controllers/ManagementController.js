@@ -865,6 +865,7 @@ const getStudentsInClass = async (req, res) => {
 
         const pendingList = pendingStudents.map(p => ({
             _id: null, // Chưa có account ID
+            pending_id: p._id, // <--- THÊM ID của Pending để thao tác Sửa/Xóa
             student_code: p.roll_number,
             full_name: p.full_name,
             email: p.email,
@@ -898,6 +899,235 @@ const getStudentsInClass = async (req, res) => {
     }
 };
 
+// Helper function để tìm hoặc tạo Team
+const findOrCreateTeam = async (classId, groupNumber) => {
+    let team = await models.Team.findOne({
+        class_id: classId,
+        project_name: `Group ${groupNumber}`
+    });
+    if (!team) {
+        team = await models.Team.create({
+            class_id: classId,
+            project_name: `Group ${groupNumber}`
+        });
+    }
+    return team;
+};
+
+/**
+ * POST /management/classes/:classId/students/add
+ * Thêm 1 sinh viên vào lớp thủ công
+ */
+const addStudentToClass = async (req, res) => {
+    try {
+        const { classId } = req.params;
+        const { student_code, full_name, email, group, is_leader } = req.body;
+
+        // Validation
+        if (!classId || !student_code || !group) {
+            return res.status(400).json({ error: 'classId, student_code và group là bắt buộc' });
+        }
+
+        const classExists = await models.Class.findById(classId);
+        if (!classExists) return res.status(404).json({ error: 'Không tìm thấy lớp học' });
+
+        // Tìm Student
+        let student = null;
+        if (email) student = await models.Student.findOne({ email: email.toLowerCase().trim() });
+        if (!student) student = await models.Student.findOne({ student_code: student_code.trim() });
+
+        if (student) {
+            // -- ĐÃ CÓ TÀI KHOẢN --
+            // 1. Tìm/Tạo Team
+            const team = await findOrCreateTeam(classId, group);
+
+            // 2. Check xem đã vào lớp chưa (thông qua bất kỳ team nào của lớp đó)
+            // Tìm tất cả team của lớp
+            const classTeams = await models.Team.find({ class_id: classId }).select('_id');
+            const classTeamIds = classTeams.map(t => t._id);
+            
+            // Check member
+            const existingMember = await models.TeamMember.findOne({
+                team_id: { $in: classTeamIds },
+                student_id: student._id
+            });
+
+            if (existingMember) {
+                return res.status(400).json({ error: 'Sinh viên này đã có trong lớp rồi!' });
+            }
+
+            // 3. Nếu set Leader, check xem team có Leader chưa
+            let role = 'Member';
+            if (is_leader) {
+                // Hạ bệ Leader cũ nếu có
+                await models.TeamMember.updateMany(
+                    { team_id: team._id, role_in_team: 'Leader' },
+                    { role_in_team: 'Member' }
+                );
+                role = 'Leader';
+            }
+
+            // 4. Enroll
+            await models.TeamMember.create({
+                team_id: team._id,
+                student_id: student._id,
+                role_in_team: role,
+                is_active: true
+            });
+
+            return res.status(201).json({ message: '✅ Đã thêm sinh viên vào lớp thành công (Enrolled)!' });
+        } else {
+            // -- CHƯA CÓ TÀI KHOẢN (PENDING) --
+            // Check duplicate pending
+            const existingPending = await PendingEnrollment.findOne({
+                class_id: classId,
+                roll_number: student_code.trim(),
+                enrolled: false
+            });
+
+            if (existingPending) {
+                return res.status(400).json({ error: 'Sinh viên này đang nằm trong danh sách chờ (Pending) rồi!' });
+            }
+
+            await PendingEnrollment.create({
+                class_id: classId,
+                roll_number: student_code.trim(),
+                email: email ? email.toLowerCase().trim() : null,
+                full_name: full_name || '',
+                group: parseInt(group),
+                is_leader: is_leader || false,
+                subjectName: classExists.subjectName,
+                semester_id: classExists.semester_id,
+                lecturer_id: classExists.lecturer_id,
+                enrolled: false
+            });
+
+            // Gửi email mời (nếu có email)
+            if (email) {
+                try {
+                    await sendPendingEnrollmentEmail(email, full_name, classExists.name, student_code);
+                } catch (e) { console.error('Error sending email:', e.message); }
+            }
+
+            return res.status(201).json({ message: '✅ Đã thêm vào danh sách chờ (Pending)!' });
+        }
+
+    } catch (error) {
+        console.error('Add student error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * PUT /management/classes/:classId/students/update
+ * Cập nhật thông tin sinh viên (Nhóm, Role)
+ */
+const updateStudentInClass = async (req, res) => {
+    try {
+        const { classId } = req.params;
+        const { student_id, pending_id, group, is_leader } = req.body;
+
+        if (!group) return res.status(400).json({ error: 'Group là bắt buộc' });
+        if (!student_id && !pending_id) return res.status(400).json({ error: 'Cần student_id hoặc pending_id' });
+
+        const classExists = await models.Class.findById(classId);
+        if (!classExists) return res.status(404).json({ error: 'Lớp không tồn tại' });
+
+        if (student_id) {
+            // -- ENROLLED STUDENT --
+            // Tìm tất cả team của lớp
+            const classTeams = await models.Team.find({ class_id: classId }).select('_id');
+            const classTeamIds = classTeams.map(t => t._id);
+
+            const member = await models.TeamMember.findOne({
+                team_id: { $in: classTeamIds },
+                student_id: student_id
+            }).populate('team_id');
+
+            if (!member) return res.status(404).json({ error: 'Không tìm thấy sinh viên trong lớp' });
+
+            // Check xem có đổi nhóm không
+            const currentGroup = parseInt(member.team_id.project_name.replace('Group ', ''));
+            const newGroup = parseInt(group);
+            
+            let targetTeamId = member.team_id._id;
+
+            if (currentGroup !== newGroup) {
+                // Chuyển nhóm -> Tìm/Tạo team mới
+                const newTeam = await findOrCreateTeam(classId, newGroup);
+                targetTeamId = newTeam._id;
+                member.team_id = newTeam._id; // Update reference
+            }
+
+            // Update Role
+            if (is_leader !== undefined) {
+                const newRole = is_leader ? 'Leader' : 'Member';
+                
+                // Nếu set lên Leader -> Hạ Leader cũ của targetTeam
+                if (newRole === 'Leader') {
+                    await models.TeamMember.updateMany(
+                        { team_id: targetTeamId, role_in_team: 'Leader', _id: { $ne: member._id } },
+                        { role_in_team: 'Member' }
+                    );
+                }
+                member.role_in_team = newRole;
+            }
+
+            await member.save();
+            return res.json({ message: '✅ Cập nhật sinh viên thành công!' });
+
+        } else if (pending_id) {
+            // -- PENDING STUDENT --
+            const pending = await PendingEnrollment.findById(pending_id);
+            if (!pending) return res.status(404).json({ error: 'Không tìm thấy pending enrollment' });
+
+            if (group) pending.group = parseInt(group);
+            if (is_leader !== undefined) pending.is_leader = is_leader;
+
+            await pending.save();
+            return res.json({ message: '✅ Cập nhật pending student thành công!' });
+        }
+
+    } catch (error) {
+        console.error('Update student error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * DELETE /management/classes/:classId/students
+ * Xóa sinh viên khỏi lớp
+ */
+const removeStudentFromClass = async (req, res) => {
+    try {
+        const { classId } = req.params;
+        const { student_id, pending_id } = req.body;
+
+        if (!student_id && !pending_id) return res.status(400).json({ error: 'Cần student_id hoặc pending_id' });
+
+        if (student_id) {
+            // -- ENROLLED --
+            const classTeams = await models.Team.find({ class_id: classId }).select('_id');
+            const classTeamIds = classTeams.map(t => t._id);
+
+            await models.TeamMember.deleteOne({
+                team_id: { $in: classTeamIds },
+                student_id: student_id
+            });
+            return res.json({ message: '✅ Đã xóa sinh viên khỏi lớp!' });
+
+        } else if (pending_id) {
+            // -- PENDING --
+            await PendingEnrollment.findByIdAndDelete(pending_id);
+            return res.json({ message: '✅ Đã xóa sinh viên khỏi danh sách chờ!' });
+        }
+
+    } catch (error) {
+        console.error('Remove student error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
     createSemester,
     getSemesters,
@@ -909,5 +1139,8 @@ module.exports = {
     getClasses,
     configureClassGrading,
     importStudents,
-    getStudentsInClass
+    getStudentsInClass,
+    addStudentToClass,
+    updateStudentInClass,
+    removeStudentFromClass
 };
