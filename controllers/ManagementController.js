@@ -635,10 +635,14 @@ const importStudents = async (req, res) => {
         // Map để lưu team theo Group number
         const teamMap = new Map(); // groupNumber -> teamId
 
+        console.log(`📥 Bắt đầu xử lý import ${students.length} sinh viên cho lớp ${classExists.name}...`);
+
         // Xử lý từng student
         for (let i = 0; i < students.length; i++) {
             const studentData = students[i];
             const rowNumber = i + 1;
+            
+            console.log(`🔍 Đang xử lý dòng ${rowNumber}:`, JSON.stringify(studentData));
 
             try {
                 const {
@@ -652,6 +656,7 @@ const importStudents = async (req, res) => {
 
                 // Validate required fields
                 if (!RollNumber) {
+                    console.log(`❌ Dòng ${rowNumber}: Thiếu RollNumber`);
                     results.errors.push({
                         row: rowNumber,
                         error: 'Thiếu RollNumber (mã số sinh viên)'
@@ -666,6 +671,7 @@ const importStudents = async (req, res) => {
                 // Validate Group
                 const groupNumber = Group ? parseInt(Group) : null;
                 if (!groupNumber || isNaN(groupNumber)) {
+                    console.log(`❌ Dòng ${rowNumber} (${normalizedRollNumber}): Group không hợp lệ: ${Group}`);
                     results.errors.push({
                         row: rowNumber,
                         student: FullName || normalizedRollNumber,
@@ -682,22 +688,18 @@ const importStudents = async (req, res) => {
                 let student = null;
                 
                 if (normalizedEmail) {
-                    // K18 trở về trước: Tìm theo email
-                    student = await Student.findOne({
-                        email: normalizedEmail
-                    });
+                    student = await Student.findOne({ email: normalizedEmail });
                 }
                 
-                // Nếu không tìm thấy theo email, tìm theo student_code (K19+)
                 if (!student) {
-                    student = await Student.findOne({
-                        student_code: normalizedRollNumber
-                    });
+                    student = await Student.findOne({ student_code: normalizedRollNumber });
                 }
 
                 // Nếu vẫn không tìm thấy → sinh viên chưa đăng ký
                 // Lưu vào PendingEnrollment và gửi email thông báo
                 if (!student) {
+                    console.log(`⚠️ Dòng ${rowNumber} (${normalizedRollNumber}): Chưa có tài khoản -> Tạo Pending Enrollment`);
+                    
                     // Kiểm tra xem đã có pending enrollment chưa (tránh duplicate)
                     const existingPending = await PendingEnrollment.findOne({
                         class_id: classId,
@@ -709,20 +711,28 @@ const importStudents = async (req, res) => {
                     let emailErrorMsg = '';
 
                     if (!existingPending) {
-                        // Lưu pending enrollment với đầy đủ thông tin để match chính xác
-                        await PendingEnrollment.create({
-                            class_id: classId,
-                            roll_number: normalizedRollNumber,
-                            email: normalizedEmail,
-                            full_name: FullName || '',
-                            group: groupNumber,
-                            is_leader: isLeader,
-                            // Thông tin để match chính xác lớp học (quan trọng!)
-                            subjectName: classExists.subjectName,
-                            semester_id: classExists.semester_id,
-                            lecturer_id: classExists.lecturer_id,
-                            enrolled: false
-                        });
+                        try {
+                            const newPending = await PendingEnrollment.create({
+                                class_id: classId,
+                                roll_number: normalizedRollNumber,
+                                email: normalizedEmail,
+                                full_name: FullName || '',
+                                group: groupNumber,
+                                is_leader: isLeader,
+                                subjectName: classExists.subjectName,
+                                semester_id: classExists.semester_id,
+                                lecturer_id: classExists.lecturer_id,
+                                enrolled: false
+                            });
+                            console.log(`✅ Đã tạo Pending Enrollment: ${newPending._id}`);
+                        } catch (dbError) {
+                            console.error(`❌ Lỗi tạo PendingEnrollment dòng ${rowNumber}:`, dbError);
+                            results.errors.push({
+                                row: rowNumber,
+                                error: 'Lỗi database khi tạo danh sách chờ: ' + dbError.message
+                            });
+                            continue;
+                        }
 
                         // Gửi email thông báo cho sinh viên chưa đăng ký (nếu có email)
                         if (normalizedEmail) {
@@ -736,24 +746,20 @@ const importStudents = async (req, res) => {
                                 
                                 if (emailResult && emailResult.success) {
                                     emailSent = true;
-                                    console.log(`✅ Đã gửi email thông báo enrollment đến ${normalizedEmail}`);
+                                    console.log(`📧 Đã gửi email đến ${normalizedEmail}`);
                                 } else {
                                     emailErrorMsg = emailResult?.error || 'Lỗi gửi email';
                                     console.error(`❌ Lỗi gửi email đến ${normalizedEmail}:`, emailErrorMsg);
                                 }
                             } catch (emailError) {
                                 emailErrorMsg = emailError.message;
-                                console.error(`❌ Lỗi gửi email đến ${normalizedEmail}:`, emailError.message);
+                                console.error(`❌ Exception gửi email dòng ${rowNumber}:`, emailError.message);
                             }
+                        } else {
+                            console.log(`ℹ️ Dòng ${rowNumber}: Không có email để gửi thông báo`);
                         }
                     } else {
-                         // =========================================================================
-                         // FIX: Gửi email cả khi đã tồn tại pending enrollment (chưa enroll)
-                         // =========================================================================
-                         // Lý do: Khi import lại (logic xóa cũ thay mới), record pending cũ đã bị xóa,
-                         // nên code sẽ luôn chạy vào nhánh if (!existingPending) ở trên.
-                         // Tuy nhiên, để an toàn, nếu có trường hợp nào lọt vào else này mà chưa enroll,
-                         // cũng nên gửi mail lại nhắc nhở.
+                         // Logic gửi lại email như cũ...
                          if (!existingPending.enrolled && normalizedEmail) {
                             try {
                                 const emailResult = await sendPendingEnrollmentEmail(
@@ -764,7 +770,7 @@ const importStudents = async (req, res) => {
                                 );
                                 if (emailResult && emailResult.success) {
                                     emailSent = true;
-                                    console.log(`✅ Đã gửi lại email thông báo enrollment đến ${normalizedEmail}`);
+                                    console.log(`📧 Đã gửi LẠI email đến ${normalizedEmail}`);
                                 }
                             } catch (e) {
                                 console.error(`❌ Lỗi gửi lại email: ${e.message}`);
@@ -792,6 +798,8 @@ const importStudents = async (req, res) => {
                         message: message
                     });
                     continue;
+                } else {
+                    console.log(`✅ Dòng ${rowNumber} (${normalizedRollNumber}): Đã có tài khoản -> Enroll vào lớp`);
                 }
 
                 // Tìm hoặc tạo Team theo Group
