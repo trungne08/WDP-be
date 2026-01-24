@@ -1,11 +1,41 @@
 const SyncController = require('../controllers/SyncController');
 const TeamApiController = require('../controllers/TeamApiController');
+const TeamSyncController = require('../controllers/TeamSyncController'); // Import controller mới
 
 // Export function để setup routes
 module.exports = (app) => {
     // ==========================================
     // TEAM SYNC APIs
     // ==========================================
+
+    /**
+     * @swagger
+     * /api/teams/{teamId}/sync-leader:
+     *   post:
+     *     summary: Đồng bộ Leader từ Jira Project về WDP
+     *     tags: [Team Sync]
+     *     description: |
+     *       Lấy thông tin Project Lead từ Jira và cập nhật role Leader cho thành viên tương ứng trong nhóm.
+     *       Yêu cầu:
+     *       - Leader trên Jira phải đã link tài khoản vào WDP.
+     *       - Người gọi API phải đã link tài khoản Jira (để lấy token gọi API).
+     *     parameters:
+     *       - in: path
+     *         name: teamId
+     *         required: true
+     *         schema:
+     *           type: string
+     *     responses:
+     *       200:
+     *         description: Đồng bộ thành công
+     *       400:
+     *         description: Lỗi logic (chưa link acc, user không trong team...)
+     *       404:
+     *         description: Không tìm thấy team hoặc user
+     *       500:
+     *         description: Lỗi server
+     */
+    app.post('/api/teams/:teamId/sync-leader', TeamSyncController.syncJiraLeader);
 
     // 4) POST /api/teams/:teamId/sync
     /**

@@ -149,6 +149,13 @@ async function fetchJiraProjects({ accessToken, cloudId }) {
   }));
 }
 
+async function fetchJiraProjectInfo({ accessToken, cloudId, projectKey }) {
+  const res = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/project/${projectKey}`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }
+  });
+  return res.data;
+}
+
 module.exports = {
   signOAuthState,
   verifyOAuthState,
@@ -161,6 +168,7 @@ module.exports = {
   refreshAtlassianAccessToken,
   fetchAtlassianAccessibleResources,
   fetchJiraMyself,
-  fetchJiraProjects
+  fetchJiraProjects,
+  fetchJiraProjectInfo
 };
 
