@@ -812,6 +812,92 @@ const importStudents = async (req, res) => {
     }
 };
 
+// ==========================================
+// LẤY DANH SÁCH SINH VIÊN TRONG LỚP
+// ==========================================
+
+/**
+ * GET /management/classes/:classId/students
+ * Lấy danh sách sinh viên trong lớp (bao gồm cả enrolled và pending)
+ */
+const getStudentsInClass = async (req, res) => {
+    try {
+        const { classId } = req.params;
+
+        // Validate classId
+        if (!require('mongoose').Types.ObjectId.isValid(classId)) {
+            return res.status(400).json({ error: 'classId không hợp lệ' });
+        }
+
+        // 1. Lấy danh sách sinh viên đã vào lớp (thông qua TeamMember -> Team -> Class)
+        // Tìm tất cả Team thuộc Class này
+        const teams = await models.Team.find({ class_id: classId }).select('_id project_name');
+        const teamIds = teams.map(t => t._id);
+
+        // Tìm tất cả thành viên trong các Team đó
+        const members = await models.TeamMember.find({ team_id: { $in: teamIds } })
+            .populate('student_id', 'student_code full_name email avatar_url')
+            .populate('team_id', 'project_name')
+            .lean();
+
+        // Format lại data cho đẹp
+        const enrolledStudents = members.map(m => {
+            // Kiểm tra null safety cho student_id (trường hợp data cũ bị lỗi)
+            if (!m.student_id) return null;
+            
+            return {
+                _id: m.student_id._id,
+                student_code: m.student_id.student_code,
+                full_name: m.student_id.full_name,
+                email: m.student_id.email,
+                avatar_url: m.student_id.avatar_url,
+                team: m.team_id ? m.team_id.project_name : 'Unknown Team', // Group 1, Group 2...
+                role: m.role_in_team,         // Leader / Member
+                status: 'Enrolled'
+            };
+        }).filter(item => item !== null); // Lọc bỏ null
+
+        // 2. Lấy danh sách sinh viên chưa có tài khoản (PendingEnrollment)
+        const pendingStudents = await PendingEnrollment.find({ 
+            class_id: classId,
+            enrolled: false // Chỉ lấy những người chưa enroll
+        }).lean();
+
+        const pendingList = pendingStudents.map(p => ({
+            _id: null, // Chưa có account ID
+            student_code: p.roll_number,
+            full_name: p.full_name,
+            email: p.email,
+            avatar_url: null,
+            team: `Group ${p.group}`,
+            role: p.is_leader ? 'Leader' : 'Member',
+            status: 'Pending' // Chưa đăng ký tài khoản
+        }));
+
+        // 3. Gộp lại
+        const allStudents = [...enrolledStudents, ...pendingList];
+
+        // Sắp xếp theo Group rồi đến MSSV
+        allStudents.sort((a, b) => {
+            if (a.team === b.team) {
+                return (a.student_code || '').localeCompare(b.student_code || '');
+            }
+            return (a.team || '').localeCompare(b.team || '');
+        });
+
+        res.json({
+            total: allStudents.length,
+            enrolled_count: enrolledStudents.length,
+            pending_count: pendingList.length,
+            students: allStudents
+        });
+
+    } catch (error) {
+        console.error('Get students in class error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
     createSemester,
     getSemesters,
@@ -822,5 +908,6 @@ module.exports = {
     createClass,
     getClasses,
     configureClassGrading,
-    importStudents
+    importStudents,
+    getStudentsInClass
 };

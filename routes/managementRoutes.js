@@ -509,4 +509,68 @@ module.exports = (app) => {
      *         description: Lỗi server
      */
     app.post('/api/management/classes/:classId/import-students', ManagementController.importStudents);
+
+    /**
+     * @swagger
+     * /api/management/classes/{classId}/students:
+     *   get:
+     *     summary: Lấy danh sách sinh viên trong lớp (Enrolled + Pending)
+     *     tags: [Management]
+     *     description: |
+     *       Trả về danh sách tất cả sinh viên trong lớp, bao gồm:
+     *       - **Enrolled**: Sinh viên đã có tài khoản và đã được xếp nhóm.
+     *       - **Pending**: Sinh viên được import từ danh sách nhưng chưa đăng ký tài khoản.
+     *     parameters:
+     *       - in: path
+     *         name: classId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của lớp học
+     *     responses:
+     *       200:
+     *         description: Danh sách sinh viên
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                   description: Tổng số sinh viên (Enrolled + Pending)
+     *                 enrolled_count:
+     *                   type: number
+     *                 pending_count:
+     *                   type: number
+     *                 students:
+     *                   type: array
+     *                   items:
+     *                     type: object
+     *                     properties:
+     *                       _id:
+     *                         type: string
+     *                         description: ID của student (null nếu là pending)
+     *                       student_code:
+     *                         type: string
+     *                       full_name:
+     *                         type: string
+     *                       email:
+     *                         type: string
+     *                       avatar_url:
+     *                         type: string
+     *                       team:
+     *                         type: string
+     *                         description: Tên nhóm (Group 1, Group 2...)
+     *                       role:
+     *                         type: string
+     *                         enum: [Leader, Member]
+     *                       status:
+     *                         type: string
+     *                         enum: [Enrolled, Pending]
+     *       400:
+     *         description: Lỗi validation
+     *       500:
+     *         description: Lỗi server
+     */
+    app.get('/api/management/classes/:classId/students', ManagementController.getStudentsInClass);
 };
