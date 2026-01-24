@@ -19,15 +19,18 @@ const sendEmailViaBrevoAPI = async (toEmail, subject, htmlContent, textContent) 
             fetch = globalThis.fetch;
         } else {
             const axios = require('axios');
+            
+            // Payload đơn giản
+            const payload = {
+                sender: { name: senderName, email: senderEmail },
+                to: [{ email: toEmail }],
+                subject: subject,
+                htmlContent: htmlContent
+            };
+
             const response = await axios.post(
                 'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: { name: senderName, email: senderEmail },
-                    to: [{ email: toEmail }],
-                    subject: subject,
-                    htmlContent: htmlContent,
-                    textContent: textContent
-                },
+                payload,
                 {
                     headers: {
                         'accept': 'application/json',
@@ -36,22 +39,23 @@ const sendEmailViaBrevoAPI = async (toEmail, subject, htmlContent, textContent) 
                     }
                 }
             );
-            console.log('✅ Email đã được gửi qua Brevo API:', response.data.messageId);
+            console.log('✅ Email đã được gửi qua Brevo API (axios):', response.data.messageId);
             return { success: true, messageId: response.data.messageId };
         }
     } catch (error) {
         // Nếu fetch không có, dùng axios
         const axios = require('axios');
         try {
+            const payload = {
+                sender: { name: senderName, email: senderEmail },
+                to: [{ email: toEmail }],
+                subject: subject,
+                htmlContent: htmlContent
+            };
+
             const response = await axios.post(
                 'https://api.brevo.com/v3/smtp/email',
-                {
-                    sender: { name: senderName, email: senderEmail },
-                    to: [{ email: toEmail }],
-                    subject: subject,
-                    htmlContent: htmlContent,
-                    textContent: textContent
-                },
+                payload,
                 {
                     headers: {
                         'accept': 'application/json',
@@ -60,17 +64,29 @@ const sendEmailViaBrevoAPI = async (toEmail, subject, htmlContent, textContent) 
                     }
                 }
             );
-            console.log('✅ Email đã được gửi qua Brevo API:', response.data.messageId);
+            console.log('✅ Email đã được gửi qua Brevo API (fallback axios):', response.data.messageId);
             return { success: true, messageId: response.data.messageId };
         } catch (apiError) {
-            console.error('❌ Lỗi Brevo API:', apiError.response?.data || apiError.message);
-            throw new Error(`Brevo API Error: ${apiError.response?.data?.message || apiError.message}`);
+            console.error('❌ Lỗi Brevo API (axios):', apiError.response?.data || apiError.message);
+            throw new Error(`Brevo API Error: ${JSON.stringify(apiError.response?.data) || apiError.message}`);
         }
     }
 
     // Nếu dùng fetch native
     try {
         console.log(`📡 Đang gửi email qua Brevo API đến ${toEmail}...`);
+        
+        // Tạo payload đơn giản hơn để giảm thiểu lỗi format
+        const payload = {
+            sender: { name: senderName, email: senderEmail },
+            to: [{ email: toEmail }],
+            subject: subject,
+            htmlContent: htmlContent
+        };
+        
+        // Debug: Log payload (ẩn content dài)
+        // console.log('Payload:', JSON.stringify({ ...payload, htmlContent: '...' }));
+
         const response = await fetch('https://api.brevo.com/v3/smtp/email', {
             method: 'POST',
             headers: {
@@ -78,18 +94,13 @@ const sendEmailViaBrevoAPI = async (toEmail, subject, htmlContent, textContent) 
                 'api-key': apiKey,
                 'content-type': 'application/json'
             },
-            body: JSON.stringify({
-                sender: { name: senderName, email: senderEmail },
-                to: [{ email: toEmail }],
-                subject: subject,
-                htmlContent: htmlContent,
-                textContent: textContent
-            })
+            body: JSON.stringify(payload)
         });
 
         if (!response.ok) {
-            const errorData = await response.json();
-            throw new Error(`Brevo API Error: ${JSON.stringify(errorData)}`);
+            const errorText = await response.text();
+            console.error('❌ Brevo API Response Error:', response.status, errorText);
+            throw new Error(`Brevo API Error (${response.status}): ${errorText}`);
         }
 
         const data = await response.json();

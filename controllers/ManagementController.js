@@ -813,6 +813,7 @@ const importStudents = async (req, res) => {
                         student: student.full_name || FullName,
                         student_code: student.student_code,
                         action: 'updated',
+                        status: 'Enrolled', // Thêm status explicit
                         group: groupNumber,
                         role: isLeader ? 'Leader' : 'Member'
                     });
@@ -830,6 +831,7 @@ const importStudents = async (req, res) => {
                         student: student.full_name || FullName,
                         student_code: student.student_code,
                         action: 'enrolled',
+                        status: 'Enrolled', // Thêm status explicit
                         group: groupNumber,
                         role: isLeader ? 'Leader' : 'Member'
                     });
@@ -857,7 +859,7 @@ const importStudents = async (req, res) => {
             details: {
                 success: results.success,
                 errors: results.errors,
-                not_found: results.not_found // Danh sách sinh viên chưa đăng ký
+                not_found: results.not_found.map(nf => ({ ...nf, status: 'Pending' })) // Thêm status cho not_found
             }
         });
 
