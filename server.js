@@ -20,4 +20,5 @@ module.exports = (app) => {
     teamMemberRoutes(app);
     teamDataRoutes(app);
     require('./routes/notificationRoutes')(app); // <--- Đã thêm route thông báo
+    require('./routes/academicRoutes')(app); // <--- Đã thêm route học thuật (Schedule, Assignment, Lab)
 };
