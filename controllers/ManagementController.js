@@ -911,6 +911,16 @@ const importStudents = async (req, res) => {
             }
         }
 
+        // Bắn Socket refresh nếu có sinh viên mới (cả Enrolled và Pending)
+        if (global._io && (results.created_members > 0 || results.not_found.length > 0)) {
+            global._io.to(classId.toString()).emit('refresh_class', {
+                message: `Đã import ${results.created_members + results.not_found.length} sinh viên vào lớp (${results.created_members} đã tham gia, ${results.not_found.length} đang chờ đăng ký).`,
+                created_count: results.created_members,
+                pending_count: results.not_found.length
+            });
+            console.log(`📡 Đã bắn Socket refresh: Import ${results.created_members} enrolled + ${results.not_found.length} pending vào lớp ${classId}`);
+        }
+
         res.status(200).json({
             message: `✅ Import hoàn tất!`,
             summary: {
@@ -1213,6 +1223,21 @@ const updateStudentInClass = async (req, res) => {
             }
 
             await member.save();
+
+            // Bắn Socket event để FE cập nhật realtime
+            if (global._io) {
+                const updatedMember = await models.TeamMember.findById(member._id)
+                    .populate('student_id', 'full_name student_code avatar_url email')
+                    .populate('team_id', 'project_name')
+                    .lean();
+
+                global._io.to(classId.toString()).emit('team_member_changed', {
+                    action: 'update',
+                    data: updatedMember
+                });
+                console.log(`📡 Đã bắn Socket: Cập nhật sinh viên ${updatedMember.student_id?.full_name || student_id} trong lớp ${classId}`);
+            }
+
             return res.json({ message: '✅ Cập nhật sinh viên thành công!' });
 
         } else if (pending_id) {

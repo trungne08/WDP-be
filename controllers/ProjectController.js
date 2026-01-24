@@ -20,10 +20,22 @@ exports.createProject = async (req, res) => {
       });
     }
 
-    // Gom tất cả studentIds: leader + members, loại trùng
-    const allStudentIds = Array.from(
+    // Validate và filter các ID hợp lệ
+    const allStudentIdStrings = Array.from(
       new Set([userId.toString(), ...members.map(String)])
-    ).map(id => new mongoose.Types.ObjectId(id));
+    ).filter(id => id && id.trim() !== ''); // Loại bỏ null, undefined, rỗng
+
+    // Kiểm tra tất cả ID có phải ObjectId hợp lệ không
+    const invalidIds = allStudentIdStrings.filter(id => !mongoose.Types.ObjectId.isValid(id));
+    if (invalidIds.length > 0) {
+      return res.status(400).json({
+        error: 'Một số member ID không hợp lệ (phải là ObjectId 24 ký tự hex).',
+        invalid_ids: invalidIds
+      });
+    }
+
+    // Convert sang ObjectId (đã validate rồi nên an toàn)
+    const allStudentIds = allStudentIdStrings.map(id => new mongoose.Types.ObjectId(id));
 
     // 1) Lấy TeamMember cho tất cả sinh viên trong danh sách
     const teamMembers = await models.TeamMember.find({

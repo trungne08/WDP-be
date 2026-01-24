@@ -6,44 +6,15 @@ const watchTeamMembers = () => {
   console.log("👀 Đang bật chế độ theo dõi DB Toàn Diện (Members, Teams, Projects)...");
 
   // ============================================================
-  // 1. THEO DÕI TEAM MEMBER (Thêm người, Đổi role, Đổi điểm...)
+  // 1. THEO DÕI TEAM MEMBER (ĐÃ TẮT - Dùng bắn thủ công trong Controller)
   // ============================================================
-  const memberStream = TeamMember.watch([], { fullDocument: 'updateLookup' });
-
-  memberStream.on('change', async (change) => {
-    try {
-      // Chỉ xử lý INSERT (Thêm mới) và UPDATE (Cập nhật thông tin)
-      if (change.operationType === 'insert' || change.operationType === 'update') {
-        const doc = change.fullDocument;
-        if (!doc) return;
-
-        // Logic: Từ TeamMember -> Tìm ra Team -> Tìm ra Class ID
-        const team = await Team.findById(doc.team_id);
-        
-        if (team) {
-          const classId = team.class_id.toString();
-
-          // Lấy full info để trả về FE hiển thị cho đẹp
-          const fullData = await TeamMember.findById(doc._id)
-            .populate('student_id', 'full_name student_code avatar_url email')
-            .lean();
-
-          // Sự kiện chung: 'team_member_changed'
-          // FE chỉ cần check type: 'insert' hay 'update' để xử lý
-          if (global._io) {
-            global._io.to(classId).emit('team_member_changed', {
-              action: change.operationType, // 'insert' | 'update'
-              data: fullData
-            });
-            console.log(`📡 Member ${change.operationType} (ID: ${doc._id}) -> Room ${classId}`);
-          }
-        }
-      }
-      // Lưu ý: DELETE không hỗ trợ tự động vì mất data tham chiếu (team_id)
-    } catch (err) {
-      console.error("❌ Error watching members:", err);
-    }
-  });
+  // TẮT Change Stream cho TeamMember vì Controller đã bắn Socket thủ công
+  // Lý do: Controller có thể populate đầy đủ data và kiểm soát tốt hơn
+  // 
+  // const memberStream = TeamMember.watch([], { fullDocument: 'updateLookup' });
+  // ... (code cũ đã comment)
+  
+  console.log("ℹ️ TeamMember Change Stream đã tắt - Dùng Socket thủ công trong Controller");
 
   // ============================================================
   // 2. THEO DÕI TEAM (Đổi tên nhóm, Khóa nhóm...)
