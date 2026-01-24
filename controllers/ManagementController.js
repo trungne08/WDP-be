@@ -213,7 +213,9 @@ const getSubjects = async (req, res) => {
  */
 const createUser = async (req, res) => {
     try {
-        const { full_name, email, role } = req.body;
+        const { full_name, role } = req.body;
+        // Normalize email
+        const email = req.body.email ? req.body.email.toLowerCase().trim() : '';
 
         // Validate required fields
         if (!full_name || !email || !role) {
@@ -598,6 +600,30 @@ const importStudents = async (req, res) => {
             });
         }
 
+        // ==================================================================
+        // LOGIC MỚI: XÓA CŨ THAY MỚI (RESET CLASS ROSTER)
+        // Khi import lại, hệ thống sẽ xóa sạch dữ liệu cũ của lớp đó để tránh trùng lặp
+        // ==================================================================
+        
+        // 1. Xóa danh sách chờ (PendingEnrollment) cũ của lớp này
+        await PendingEnrollment.deleteMany({ class_id: classId });
+
+        // 2. Xóa thành viên (TeamMember) và Nhóm (Team) cũ
+        // Tìm các team thuộc lớp này
+        const existingTeams = await models.Team.find({ class_id: classId }).select('_id');
+        const existingTeamIds = existingTeams.map(t => t._id);
+
+        if (existingTeamIds.length > 0) {
+            // Xóa tất cả thành viên trong các team của lớp này
+            await models.TeamMember.deleteMany({ team_id: { $in: existingTeamIds } });
+            
+            // Xóa luôn các team cũ (để tạo lại team theo group mới trong file import)
+            await models.Team.deleteMany({ class_id: classId });
+        }
+
+        console.log(`🧹 Đã dọn dẹp dữ liệu cũ của lớp ${classExists.name} trước khi import mới.`);
+        // ==================================================================
+
         const results = {
             success: [],
             errors: [],
@@ -633,12 +659,16 @@ const importStudents = async (req, res) => {
                     continue;
                 }
 
+                // Normalize data
+                const normalizedRollNumber = RollNumber.toString().trim().toUpperCase();
+                const normalizedEmail = Email ? Email.toString().trim().toLowerCase() : null;
+
                 // Validate Group
                 const groupNumber = Group ? parseInt(Group) : null;
                 if (!groupNumber || isNaN(groupNumber)) {
                     results.errors.push({
                         row: rowNumber,
-                        student: FullName || RollNumber,
+                        student: FullName || normalizedRollNumber,
                         error: 'Group không hợp lệ'
                     });
                     continue;
@@ -651,17 +681,17 @@ const importStudents = async (req, res) => {
                 // Logic: Ưu tiên tìm theo Email (K18 trở về trước), nếu không có thì tìm theo RollNumber (K19+)
                 let student = null;
                 
-                if (Email && Email.trim()) {
+                if (normalizedEmail) {
                     // K18 trở về trước: Tìm theo email
                     student = await Student.findOne({
-                        email: Email.toLowerCase().trim()
+                        email: normalizedEmail
                     });
                 }
                 
                 // Nếu không tìm thấy theo email, tìm theo student_code (K19+)
                 if (!student) {
                     student = await Student.findOne({
-                        student_code: RollNumber.trim()
+                        student_code: normalizedRollNumber
                     });
                 }
 
@@ -671,16 +701,19 @@ const importStudents = async (req, res) => {
                     // Kiểm tra xem đã có pending enrollment chưa (tránh duplicate)
                     const existingPending = await PendingEnrollment.findOne({
                         class_id: classId,
-                        roll_number: RollNumber.trim(),
+                        roll_number: normalizedRollNumber,
                         enrolled: false
                     });
+
+                    let emailSent = false;
+                    let emailErrorMsg = '';
 
                     if (!existingPending) {
                         // Lưu pending enrollment với đầy đủ thông tin để match chính xác
                         await PendingEnrollment.create({
                             class_id: classId,
-                            roll_number: RollNumber.trim(),
-                            email: Email ? Email.toLowerCase().trim() : null,
+                            roll_number: normalizedRollNumber,
+                            email: normalizedEmail,
                             full_name: FullName || '',
                             group: groupNumber,
                             is_leader: isLeader,
@@ -692,28 +725,50 @@ const importStudents = async (req, res) => {
                         });
 
                         // Gửi email thông báo cho sinh viên chưa đăng ký (nếu có email)
-                        if (Email && Email.trim()) {
+                        if (normalizedEmail) {
                             try {
-                                await sendPendingEnrollmentEmail(
-                                    Email.trim(),
-                                    FullName || RollNumber,
+                                const emailResult = await sendPendingEnrollmentEmail(
+                                    normalizedEmail,
+                                    FullName || normalizedRollNumber,
                                     classExists.name,
-                                    RollNumber
+                                    normalizedRollNumber
                                 );
-                                console.log(`✅ Đã gửi email thông báo enrollment đến ${Email}`);
+                                
+                                if (emailResult && emailResult.success) {
+                                    emailSent = true;
+                                    console.log(`✅ Đã gửi email thông báo enrollment đến ${normalizedEmail}`);
+                                } else {
+                                    emailErrorMsg = emailResult?.error || 'Lỗi gửi email';
+                                    console.error(`❌ Lỗi gửi email đến ${normalizedEmail}:`, emailErrorMsg);
+                                }
                             } catch (emailError) {
-                                console.error(`❌ Lỗi gửi email đến ${Email}:`, emailError.message);
-                                // Không throw error, chỉ log
+                                emailErrorMsg = emailError.message;
+                                console.error(`❌ Lỗi gửi email đến ${normalizedEmail}:`, emailError.message);
                             }
                         }
+                    } else {
+                         // Nếu đã tồn tại pending nhưng chưa enroll, có thể xem xét gửi lại email?
+                         // Tạm thời bỏ qua để tránh spam
                     }
+
+                    let message = 'Sinh viên chưa đăng ký tài khoản.';
+                    if (normalizedEmail) {
+                        if (emailSent) {
+                            message += ' Đã gửi email thông báo.';
+                        } else {
+                            message += ` Gửi email thất bại: ${emailErrorMsg || 'Không rõ lỗi'}.`;
+                        }
+                    } else {
+                        message += ' Không có email để gửi thông báo.';
+                    }
+                    message += ' Sẽ tự động join lớp khi đăng ký.';
 
                     results.not_found.push({
                         row: rowNumber,
-                        rollNumber: RollNumber,
-                        email: Email || 'N/A',
+                        rollNumber: normalizedRollNumber,
+                        email: normalizedEmail || 'N/A',
                         fullName: FullName || 'N/A',
-                        message: 'Sinh viên chưa đăng ký tài khoản. Đã gửi email thông báo (nếu có email). Sẽ tự động join lớp khi đăng ký.'
+                        message: message
                     });
                     continue;
                 }
@@ -921,7 +976,10 @@ const findOrCreateTeam = async (classId, groupNumber) => {
 const addStudentToClass = async (req, res) => {
     try {
         const { classId } = req.params;
-        const { student_code, full_name, email, group, is_leader } = req.body;
+        const { full_name, group, is_leader } = req.body;
+        // Normalize email and student_code
+        const email = req.body.email ? req.body.email.toLowerCase().trim() : '';
+        const student_code = req.body.student_code ? req.body.student_code.toString().trim().toUpperCase() : '';
 
         // Validation
         if (!classId || !student_code || !group) {
@@ -933,8 +991,8 @@ const addStudentToClass = async (req, res) => {
 
         // Tìm Student
         let student = null;
-        if (email) student = await models.Student.findOne({ email: email.toLowerCase().trim() });
-        if (!student) student = await models.Student.findOne({ student_code: student_code.trim() });
+        if (email) student = await models.Student.findOne({ email });
+        if (!student) student = await models.Student.findOne({ student_code });
 
         if (student) {
             // -- ĐÃ CÓ TÀI KHOẢN --

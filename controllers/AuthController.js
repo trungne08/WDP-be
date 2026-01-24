@@ -14,7 +14,8 @@ const { sendOTPEmail, sendVerificationOTPEmail } = require('../services/EmailSer
 // ==========================================
 const requestRegistrationOTP = async (req, res) => {
     try {
-        const { email } = req.body;
+        // Normalize email
+        const email = req.body.email ? req.body.email.toLowerCase().trim() : '';
 
         // Validate input
         if (!email) {
@@ -111,7 +112,10 @@ const requestRegistrationOTP = async (req, res) => {
 // ==========================================
 const register = async (req, res) => {
     try {
-        const { role, email, password, otp_code, full_name, student_code, avatar_url, major, ent } = req.body;
+        const { role, password, otp_code, full_name, avatar_url, major, ent } = req.body;
+        // Normalize email and student_code
+        const email = req.body.email ? req.body.email.toLowerCase().trim() : '';
+        const student_code = req.body.student_code ? req.body.student_code.toString().trim().toUpperCase() : '';
 
         // Validate role - KHÔNG CHO PHÉP ĐĂNG KÝ ADMIN
         if (!['LECTURER', 'STUDENT'].includes(role)) {
@@ -374,7 +378,9 @@ const register = async (req, res) => {
 // ==========================================
 const login = async (req, res) => {
     try {
-        const { email, password } = req.body;
+        const { password } = req.body;
+        // Normalize email
+        const email = req.body.email ? req.body.email.toLowerCase().trim() : '';
 
         // Validate input
         if (!email || !password) {
@@ -498,7 +504,9 @@ const login = async (req, res) => {
 // ==========================================
 const forgotPassword = async (req, res) => {
     try {
-        const { email, role } = req.body;
+        const { role } = req.body;
+        // Normalize email
+        const email = req.body.email ? req.body.email.toLowerCase().trim() : '';
 
         // Validate input
         if (!email || !role) {
@@ -581,7 +589,9 @@ const forgotPassword = async (req, res) => {
 // ==========================================
 const verifyOTPAndResetPassword = async (req, res) => {
     try {
-        const { email, otp_code, new_password, confirm_password } = req.body;
+        const { otp_code, new_password, confirm_password } = req.body;
+        // Normalize email
+        const email = req.body.email ? req.body.email.toLowerCase().trim() : '';
 
         // Validate input
         if (!email || !otp_code || !new_password || !confirm_password) {
