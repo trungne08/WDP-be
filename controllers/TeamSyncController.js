@@ -55,9 +55,18 @@ const syncJiraLeader = async (req, res) => {
             });
         } catch (jiraError) {
             console.error('Lỗi gọi Jira API:', jiraError.response?.data || jiraError.message);
+            const status = jiraError.response?.status;
+            
+            // Xử lý lỗi 410: Project không còn tồn tại
+            if (status === 410) {
+                return res.status(410).json({
+                    error: `Jira Project "${team.jira_project_key}" không còn tồn tại hoặc đã bị xóa. Vui lòng kiểm tra lại Jira Project Key.`,
+                    jira_project_key: team.jira_project_key
+                });
+            }
             
             // Xử lý lỗi 401 (Unauthorized) -> Token hết hạn
-            if (jiraError.response?.status === 401) {
+            if (status === 401) {
                  return res.status(401).json({
                     error: 'Token Jira đã hết hạn. Vui lòng kết nối lại tài khoản Jira.'
                  });

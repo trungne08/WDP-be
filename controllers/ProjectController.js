@@ -178,8 +178,17 @@ exports.getMyProject = async (req, res) => {
               projectKey: project.jiraProjectKey
             });
           } catch (jiraError) {
-            // Nếu lỗi 401 (token hết hạn) và có refreshToken -> Thử refresh
+            // Xử lý các lỗi từ Jira API
             const status = jiraError.response?.status;
+            
+            // Lỗi 410: Project không còn tồn tại hoặc đã bị xóa
+            if (status === 410) {
+              console.warn(`⚠️ Lazy Sync: Jira Project "${project.jiraProjectKey}" không còn tồn tại (410 Gone)`);
+              // Không throw, chỉ log để không làm fail API chính
+              return; // Thoát khỏi lazy sync, trả về project cũ
+            }
+            
+            // Nếu lỗi 401 (token hết hạn) và có refreshToken -> Thử refresh
             if ((status === 401 || status === 403) && jiraIntegration.refreshToken) {
               try {
                 const IntegrationService = require('../services/IntegrationService');
