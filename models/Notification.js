@@ -22,7 +22,7 @@ const NotificationSchema = new Schema({
     message: { type: String, required: true },
     type: { 
         type: String, 
-        enum: ['SYSTEM', 'GRADE', 'TASK', 'ASSIGNMENT'], 
+        // enum: ['SYSTEM', 'GRADE', 'TASK', 'ASSIGNMENT'], // Bỏ enum cứng để linh hoạt
         default: 'SYSTEM' 
     },
     is_read: { type: Boolean, default: false },
@@ -31,7 +31,8 @@ const NotificationSchema = new Schema({
 });
 
 // Middleware to set refPath automatically
-NotificationSchema.pre('validate', function(next) {
+// Sử dụng pre('save') thay vì pre('validate') để ổn định hơn
+NotificationSchema.pre('save', function(next) {
     if (this.user_role === 'STUDENT') {
         this.user_role_ref = 'Student';
     } else if (this.user_role === 'LECTURER') {
