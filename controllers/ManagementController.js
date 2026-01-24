@@ -223,9 +223,9 @@ const createUser = async (req, res) => {
         }
 
         // Validate role
-        if (!['ADMIN', 'LECTURER', 'MENTOR'].includes(role.toUpperCase())) {
+        if (!['ADMIN', 'LECTURER'].includes(role.toUpperCase())) {
             return res.status(400).json({
-                error: 'role phải là ADMIN, LECTURER hoặc MENTOR'
+                error: 'role phải là ADMIN hoặc LECTURER'
             });
         }
 
@@ -262,15 +262,6 @@ const createUser = async (req, res) => {
                 password: hashedPassword,
                 is_verified: true // Admin tạo thì auto verify
             });
-        } else if (roleUpper === 'MENTOR') {
-            // Mentor có thể là Lecturer với role đặc biệt hoặc tạo model riêng
-            // Tạm thời tạo như Lecturer
-            newUser = await models.Lecturer.create({
-                email,
-                full_name,
-                password: hashedPassword,
-                is_verified: true
-            });
         }
 
         // Trả về user (không trả password)
@@ -299,7 +290,7 @@ const getUsers = async (req, res) => {
 
         let users = [];
 
-        if (roleUpper === 'LECTURER' || roleUpper === 'MENTOR') {
+        if (roleUpper === 'LECTURER') {
             const lecturers = await models.Lecturer.find()
                 .select('_id email full_name avatar_url')
                 .sort({ full_name: 1 })
@@ -311,15 +302,23 @@ const getUsers = async (req, res) => {
                 .sort({ full_name: 1 })
                 .lean();
             users = admins;
+        } else if (roleUpper === 'STUDENT') {
+            const students = await models.Student.find()
+                .select('_id email full_name student_code avatar_url major ent')
+                .sort({ student_code: 1 })
+                .lean();
+            users = students;
         } else {
-            // Lấy tất cả (Admin + Lecturer)
-            const admins = await models.Admin.find()
-                .select('_id email full_name')
-                .lean();
-            const lecturers = await models.Lecturer.find()
-                .select('_id email full_name avatar_url')
-                .lean();
-            users = [...admins.map(u => ({ ...u, role: 'ADMIN' })), ...lecturers.map(u => ({ ...u, role: 'LECTURER' }))];
+            // Lấy tất cả (Admin + Lecturer + Student)
+            const admins = await models.Admin.find().select('_id email full_name').lean();
+            const lecturers = await models.Lecturer.find().select('_id email full_name avatar_url').lean();
+            const students = await models.Student.find().select('_id email full_name student_code avatar_url').lean();
+            
+            users = [
+                ...admins.map(u => ({ ...u, role: 'ADMIN' })), 
+                ...lecturers.map(u => ({ ...u, role: 'LECTURER' })),
+                ...students.map(u => ({ ...u, role: 'STUDENT' }))
+            ];
         }
 
         res.json({
@@ -439,7 +438,7 @@ const createClass = async (req, res) => {
 
 const getClasses = async (req, res) => {
     try {
-        const { semester_id } = req.query;
+        const { semester_id, lecturer_id } = req.query;
 
         let query = {};
         if (semester_id) {
@@ -449,6 +448,15 @@ const getClasses = async (req, res) => {
                 });
             }
             query.semester_id = semester_id;
+        }
+
+        if (lecturer_id) {
+            if (!require('mongoose').Types.ObjectId.isValid(lecturer_id)) {
+                return res.status(400).json({
+                    error: 'lecturer_id không hợp lệ'
+                });
+            }
+            query.lecturer_id = lecturer_id;
         }
 
         const classes = await Class.find(query)

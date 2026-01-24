@@ -180,7 +180,7 @@ module.exports = (app) => {
      *                 example: lecturer@fpt.edu.vn
      *               role:
      *                 type: string
-     *                 enum: [ADMIN, LECTURER, MENTOR]
+     *                 enum: [ADMIN, LECTURER]
      *                 example: LECTURER
      *     responses:
      *       201:
@@ -203,7 +203,7 @@ module.exports = (app) => {
      *         name: role
      *         schema:
      *           type: string
-     *           enum: [lecturer, mentor, admin]
+     *           enum: [lecturer, admin, student]
      *         description: Lọc theo role
      *         example: lecturer
      *     responses:
@@ -277,7 +277,7 @@ module.exports = (app) => {
      * @swagger
      * /api/management/classes:
      *   get:
-     *     summary: Lấy danh sách Lớp (Theo học kỳ)
+     *     summary: Lấy danh sách Lớp (Theo học kỳ và giảng viên)
      *     tags: [Management]
      *     parameters:
      *       - in: query
@@ -286,6 +286,12 @@ module.exports = (app) => {
      *           type: string
      *         description: Lọc theo học kỳ
      *         example: 507f1f77bcf86cd799439011
+     *       - in: query
+     *         name: lecturer_id
+     *         schema:
+     *           type: string
+     *         description: Lọc theo giảng viên (để lấy danh sách lớp của giảng viên đó)
+     *         example: 507f1f77bcf86cd799439012
      *     responses:
      *       200:
      *         description: Danh sách lớp
