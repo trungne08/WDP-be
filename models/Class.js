@@ -64,13 +64,15 @@ const ClassSchema = new Schema({
     timestamps: true 
 });
 
-// Index phức hợp: Trong cùng 1 kỳ, cùng 1 môn (subjectName), mã lớp (class_code) phải là duy nhất
-// Cho phép: Kỳ SP2026, Môn SWP301 -> Lớp SE1943
-// Cho phép: Kỳ SP2026, Môn PRJ301 -> Lớp SE1943 (Trùng mã lớp nhưng khác môn -> OK)
-ClassSchema.index({ semester_id: 1, subjectName: 1, class_code: 1 }, { unique: true });
+// Index phức hợp: Cùng giảng viên + cùng môn học + cùng mã lớp → Không được trùng
+// Cho phép: SE1837 + Môn A + GV X → OK
+// Cho phép: SE1837 + Môn B + GV X → OK (khác môn)
+// Cho phép: SE1837 + Môn A + GV Y → OK (khác GV)
+// Không cho: SE1837 + Môn A + GV X (trùng cả 3) → Lỗi duplicate
+ClassSchema.index({ lecturer_id: 1, subjectName: 1, class_code: 1 }, { unique: true });
 
 // Nếu dùng subject_id thì cũng đánh index tương tự (partial để tránh lỗi nếu null)
-ClassSchema.index({ semester_id: 1, subject_id: 1, class_code: 1 }, { unique: true, partialFilterExpression: { subject_id: { $type: "objectId" } } });
+ClassSchema.index({ lecturer_id: 1, subject_id: 1, class_code: 1 }, { unique: true, partialFilterExpression: { subject_id: { $type: "objectId" } } });
 
 // Kiểm tra xem model đã tồn tại chưa để tránh lỗi OverwriteModelError
 module.exports = mongoose.models.Class || mongoose.model('Class', ClassSchema);

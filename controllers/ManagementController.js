@@ -414,6 +414,19 @@ const createClass = async (req, res) => {
         // Tạm thời dùng name để generate code
         const classCode = name.toUpperCase().replace(/\s+/g, '').substring(0, 10) || `CLASS${Date.now()}`;
 
+        // Kiểm tra duplicate: Cùng giảng viên + cùng môn học + cùng mã lớp
+        const existingClass = await Class.findOne({
+            lecturer_id: lecturer_id,
+            subjectName: finalSubjectName,
+            class_code: classCode
+        });
+
+        if (existingClass) {
+            return res.status(400).json({
+                error: `Lớp học với mã "${classCode}" đã tồn tại cho môn "${finalSubjectName}" của giảng viên này. Vui lòng chọn mã lớp khác hoặc môn học khác.`
+            });
+        }
+
         const newClass = await Class.create({
             name,
             semester_id,
@@ -1080,12 +1093,26 @@ const addStudentToClass = async (req, res) => {
             }
 
             // 4. Enroll
-            await models.TeamMember.create({
+            const newMember = await models.TeamMember.create({
                 team_id: team._id,
                 student_id: student._id,
                 role_in_team: role,
                 is_active: true
             });
+
+            // Populate để lấy full info cho Socket
+            const fullMemberInfo = await models.TeamMember.findById(newMember._id)
+                .populate('student_id', 'full_name student_code avatar_url email')
+                .lean();
+
+            // Bắn Socket event (RealtimeService cũng sẽ bắt được, nhưng bắn thủ công để chắc chắn)
+            if (global._io) {
+                global._io.to(classId.toString()).emit('team_member_changed', {
+                    action: 'insert',
+                    data: fullMemberInfo
+                });
+                console.log(`📡 Đã bắn Socket: Thêm sinh viên ${student.full_name || student.student_code} vào lớp ${classId}`);
+            }
 
             return res.status(201).json({ message: '✅ Đã thêm sinh viên vào lớp thành công (Enrolled)!' });
         } else {
@@ -1222,10 +1249,29 @@ const removeStudentFromClass = async (req, res) => {
             const classTeams = await models.Team.find({ class_id: classId }).select('_id');
             const classTeamIds = classTeams.map(t => t._id);
 
-            await models.TeamMember.deleteOne({
+            // Lấy thông tin TeamMember trước khi xóa (để bắn Socket)
+            const memberToDelete = await models.TeamMember.findOne({
                 team_id: { $in: classTeamIds },
                 student_id: student_id
-            });
+            }).populate('student_id', 'full_name student_code avatar_url email').lean();
+
+            if (memberToDelete) {
+                // Xóa khỏi DB
+                await models.TeamMember.deleteOne({
+                    team_id: { $in: classTeamIds },
+                    student_id: student_id
+                });
+
+                // Bắn Socket event để FE cập nhật realtime
+                if (global._io) {
+                    global._io.to(classId.toString()).emit('team_member_changed', {
+                        action: 'delete',
+                        data: memberToDelete
+                    });
+                    console.log(`📡 Đã bắn Socket: Xóa sinh viên ${memberToDelete.student_id?.full_name || student_id} khỏi lớp ${classId}`);
+                }
+            }
+
             return res.json({ message: '✅ Đã xóa sinh viên khỏi lớp!' });
 
         } else if (pending_id) {
