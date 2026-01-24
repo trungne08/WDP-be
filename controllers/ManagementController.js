@@ -681,7 +681,9 @@ const importStudents = async (req, res) => {
                 }
 
                 // Kiểm tra Leader (nếu có 'x' hoặc 'X' thì là leader)
-                const isLeader = Leader && (Leader.toString().toLowerCase().trim() === 'x' || Leader.toString().toLowerCase().trim() === 'leader');
+                // Fix: Ép kiểu boolean rõ ràng để tránh lỗi CastError khi lưu vào DB
+                const leaderVal = Leader ? Leader.toString().trim().toLowerCase() : '';
+                const isLeader = (leaderVal === 'x' || leaderVal === 'leader');
 
                 // Tìm Student đã đăng ký
                 // Logic: Ưu tiên tìm theo Email (K18 trở về trước), nếu không có thì tìm theo RollNumber (K19+)
