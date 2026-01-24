@@ -156,11 +156,54 @@ exports.getMyProject = async (req, res) => {
           // Tuy nhiên để đảm bảo data trả về là mới nhất, ta nên await nhưng bọc try-catch
           // để nếu lỗi sync thì vẫn trả về project cũ chứ không crash API.
           
-          const projectInfo = await IntegrationService.fetchJiraProjectInfo({
-            accessToken: jiraIntegration.accessToken,
-            cloudId: jiraIntegration.cloudId,
-            projectKey: project.jiraProjectKey
-          });
+          let projectInfo;
+          let accessToken = jiraIntegration.accessToken;
+          
+          try {
+            projectInfo = await IntegrationService.fetchJiraProjectInfo({
+              accessToken: accessToken,
+              cloudId: jiraIntegration.cloudId,
+              projectKey: project.jiraProjectKey
+            });
+          } catch (jiraError) {
+            // Nếu lỗi 401 (token hết hạn) và có refreshToken -> Thử refresh
+            const status = jiraError.response?.status;
+            if ((status === 401 || status === 403) && jiraIntegration.refreshToken) {
+              try {
+                const IntegrationService = require('../services/IntegrationService');
+                const clientId = process.env.ATLASSIAN_CLIENT_ID;
+                const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
+                
+                const refreshed = await IntegrationService.refreshAtlassianAccessToken({
+                  clientId,
+                  clientSecret,
+                  refreshToken: jiraIntegration.refreshToken
+                });
+                
+                // Cập nhật token mới vào DB
+                requestUser.integrations.jira.accessToken = refreshed.accessToken;
+                if (refreshed.refreshToken) {
+                  requestUser.integrations.jira.refreshToken = refreshed.refreshToken;
+                }
+                await requestUser.save();
+                
+                // Thử lại với token mới
+                accessToken = refreshed.accessToken;
+                projectInfo = await IntegrationService.fetchJiraProjectInfo({
+                  accessToken: accessToken,
+                  cloudId: jiraIntegration.cloudId,
+                  projectKey: project.jiraProjectKey
+                });
+                
+                console.log('🔄 Lazy Sync: Đã refresh token Jira thành công');
+              } catch (refreshError) {
+                console.warn('⚠️ Lazy Sync: Không thể refresh token Jira:', refreshError.message);
+                throw jiraError; // Throw lại lỗi gốc
+              }
+            } else {
+              throw jiraError; // Throw lại nếu không phải lỗi 401 hoặc không có refreshToken
+            }
+          }
 
           if (projectInfo && projectInfo.lead && projectInfo.lead.accountId) {
             const jiraLeadAccountId = projectInfo.lead.accountId;
