@@ -36,16 +36,6 @@ const NotificationSchema = new Schema({
     created_at: { type: Date, default: Date.now }
 });
 
-// Middleware cập nhật lại nếu user_role thay đổi sau khi khởi tạo
-NotificationSchema.pre('save', function(next) {
-    if (this.isModified('user_role')) {
-        if (this.user_role === 'STUDENT') {
-            this.user_role_ref = 'Student';
-        } else if (this.user_role === 'LECTURER') {
-            this.user_role_ref = 'Lecturer';
-        }
-    }
-    next();
-});
+// Không cần pre('save') hook nữa vì đã có default function
 
 module.exports = mongoose.model('Notification', NotificationSchema);

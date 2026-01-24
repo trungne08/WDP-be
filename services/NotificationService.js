@@ -15,9 +15,13 @@ const Lecturer = require('../models/Lecturer');
 const sendNotification = async (userId, role, title, message, data = {}, type = 'SYSTEM') => {
     try {
         // 1. Lưu vào Database
+        // Set user_role_ref dựa trên role (cần thiết cho dynamic refPath)
+        const user_role_ref = role === 'STUDENT' ? 'Student' : 'Lecturer';
+        
         const notification = await Notification.create({
             user_id: userId,
             user_role: role,
+            user_role_ref: user_role_ref, // Set trực tiếp để tránh lỗi validation
             title,
             message,
             type,
