@@ -19,6 +19,7 @@
     "firebase-admin": "^13.6.0",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.1.4",
+    "node-cron": "^4.2.1",
     "nodemailer": "^7.0.12",
     "passport": "^0.7.0",
     "passport-atlassian-oauth2": "^2.1.0",

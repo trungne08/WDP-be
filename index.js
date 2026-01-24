@@ -78,6 +78,10 @@ app.use('/api-docs', swaggerUi.serve, swaggerUi.setup(swaggerSpec, {
 const setupRoutes = require('./server');
 setupRoutes(app);
 
+// Khởi chạy Cron Job (Tác vụ ngầm)
+const { initScheduledJobs } = require('./services/CronService');
+initScheduledJobs();
+
 // API Test thử xem server sống hay chết
 app.get('/', (req, res) => {
   res.send('Backend WDP đang chạy ngon lành cành đào!<br><a href="/api-docs">📚 Xem Swagger Documentation</a>');
