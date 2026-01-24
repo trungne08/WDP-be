@@ -76,6 +76,33 @@ const authenticateToken = async (req, res, next) => {
     }
 };
 
+/**
+ * Middleware phân quyền (Authorization)
+ * @param {string|string[]} roles - Danh sách các role được phép truy cập
+ */
+const authorize = (roles = []) => {
+    // Nếu roles là string, chuyển thành array
+    if (typeof roles === 'string') {
+        roles = [roles];
+    }
+
+    return (req, res, next) => {
+        // req.role đã được set từ middleware authenticateToken
+        if (!req.role) {
+             return res.status(401).json({ error: 'Unauthorized: Không tìm thấy thông tin role' });
+        }
+
+        if (roles.length && !roles.includes(req.role)) {
+            return res.status(403).json({ 
+                error: `Forbidden: Bạn không có quyền truy cập tài nguyên này. Yêu cầu: ${roles.join(', ')}` 
+            });
+        }
+
+        next();
+    };
+};
+
 module.exports = {
-    authenticateToken
+    authenticateToken,
+    authorize
 };

@@ -33,6 +33,8 @@ const StudentSchema = new Schema({
     googleId: { type: String, sparse: true, unique: true },
     // Thêm role cố định
     role: { type: String, default: 'STUDENT', immutable: true },
+    // Firebase Cloud Messaging Token
+    fcm_token: { type: String, default: null },
     is_verified: { type: Boolean, default: false }, // Email đã được xác minh chưa
     created_at: { type: Date, default: Date.now }
 });

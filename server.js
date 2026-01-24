@@ -19,4 +19,5 @@ module.exports = (app) => {
     teamSyncRoutes(app);
     teamMemberRoutes(app);
     teamDataRoutes(app);
+    require('./routes/notificationRoutes')(app); // <--- Đã thêm route thông báo
 };

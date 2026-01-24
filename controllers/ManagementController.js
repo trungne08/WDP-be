@@ -8,6 +8,7 @@ const Team = require('../models/Team');
 const TeamMember = require('../models/TeamMember');
 const PendingEnrollment = require('../models/PendingEnrollment');
 const { sendPendingEnrollmentEmail } = require('../services/EmailService');
+const NotificationService = require('../services/NotificationService');
 
 // ==========================================
 // QUẢN LÝ HỌC KỲ (SEMESTER MANAGEMENT)
@@ -738,6 +739,7 @@ const importStudents = async (req, res) => {
 
                         // Gửi email thông báo cho sinh viên chưa đăng ký (nếu có email)
                         if (normalizedEmail) {
+                            console.log(`📧 Đang thử gửi email đến: ${normalizedEmail}`);
                             try {
                                 const emailResult = await sendPendingEnrollmentEmail(
                                     normalizedEmail,
@@ -748,10 +750,10 @@ const importStudents = async (req, res) => {
                                 
                                 if (emailResult && emailResult.success) {
                                     emailSent = true;
-                                    console.log(`📧 Đã gửi email đến ${normalizedEmail}`);
+                                    console.log(`✅ Đã gửi email thành công đến ${normalizedEmail}`);
                                 } else {
                                     emailErrorMsg = emailResult?.error || 'Lỗi gửi email';
-                                    console.error(`❌ Lỗi gửi email đến ${normalizedEmail}:`, emailErrorMsg);
+                                    console.error(`❌ Gửi email thất bại đến ${normalizedEmail}:`, emailErrorMsg);
                                 }
                             } catch (emailError) {
                                 emailErrorMsg = emailError.message;
@@ -763,6 +765,7 @@ const importStudents = async (req, res) => {
                     } else {
                          // Logic gửi lại email như cũ...
                          if (!existingPending.enrolled && normalizedEmail) {
+                            console.log(`📧 Pending tồn tại, thử gửi lại email đến: ${normalizedEmail}`);
                             try {
                                 const emailResult = await sendPendingEnrollmentEmail(
                                     normalizedEmail,
@@ -772,7 +775,9 @@ const importStudents = async (req, res) => {
                                 );
                                 if (emailResult && emailResult.success) {
                                     emailSent = true;
-                                    console.log(`📧 Đã gửi LẠI email đến ${normalizedEmail}`);
+                                    console.log(`✅ Đã gửi LẠI email thành công đến ${normalizedEmail}`);
+                                } else {
+                                    console.error(`❌ Gửi lại email thất bại: ${emailResult?.error}`);
                                 }
                             } catch (e) {
                                 console.error(`❌ Lỗi gửi lại email: ${e.message}`);
@@ -797,6 +802,7 @@ const importStudents = async (req, res) => {
                         rollNumber: normalizedRollNumber,
                         email: normalizedEmail || 'N/A',
                         fullName: FullName || 'N/A',
+                        status: 'Pending', // Explicit status
                         message: message
                     });
                     continue;
@@ -856,6 +862,21 @@ const importStudents = async (req, res) => {
                         role_in_team: isLeader ? 'Leader' : 'Member',
                         is_active: true
                     });
+
+                    // Gửi thông báo cho sinh viên
+                    NotificationService.sendNotification(
+                        student._id,
+                        'STUDENT',
+                        '🎉 Bạn đã được thêm vào lớp mới',
+                        `Bạn đã được thêm vào lớp ${classExists.name} - Nhóm ${groupNumber}`,
+                        {
+                            class_id: classId,
+                            team_id: teamId,
+                            type: 'CLASS_ENROLLMENT'
+                        },
+                        'SYSTEM'
+                    );
+
                     results.created_members++;
                     results.success.push({
                         row: rowNumber,

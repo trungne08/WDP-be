@@ -682,4 +682,33 @@ module.exports = (app) => {
         }),
         AuthController.googleCallback
     );
+    /**
+     * @swagger
+     * /api/users/fcm-token:
+     *   post:
+     *     summary: Cập nhật FCM Token (để nhận thông báo)
+     *     tags: [Auth]
+     *     security:
+     *       - bearerAuth: []
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required:
+     *               - fcm_token
+     *             properties:
+     *               fcm_token:
+     *                 type: string
+     *                 description: Token lấy từ Firebase SDK ở client
+     *     responses:
+     *       200:
+     *         description: Cập nhật thành công
+     *       401:
+     *         description: Unauthorized
+     *       500:
+     *         description: Lỗi server
+     */
+    app.post('/api/users/fcm-token', authenticateToken, AuthController.updateFcmToken);
 };

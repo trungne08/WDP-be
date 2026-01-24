@@ -1056,6 +1056,32 @@ const googleCallback = async (req, res) => {
     }
 };
 
+// ==========================================
+// CẬP NHẬT FCM TOKEN
+// ==========================================
+/**
+ * POST /auth/fcm-token
+ * Cập nhật FCM Token cho user hiện tại
+ */
+const updateFcmToken = async (req, res) => {
+    try {
+        const user = req.user; // Từ middleware authenticateToken
+        const { fcm_token } = req.body;
+
+        if (!fcm_token) {
+            return res.status(400).json({ error: 'fcm_token là bắt buộc' });
+        }
+
+        user.fcm_token = fcm_token;
+        await user.save();
+
+        res.json({ message: '✅ Cập nhật FCM Token thành công!' });
+    } catch (error) {
+        console.error('Update FCM Token error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
     requestRegistrationOTP,
     register,
@@ -1067,5 +1093,6 @@ module.exports = {
     updateProfile,
     getMyClasses,
     logout,
-    googleCallback
+    googleCallback,
+    updateFcmToken
 };
