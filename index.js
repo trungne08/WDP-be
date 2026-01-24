@@ -3,12 +3,45 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
 const swaggerSpec = require('./config/swagger');
+const http = require('http'); // Import HTTP
+const { Server } = require("socket.io"); // Import Socket.io
+
 require('dotenv').config(); // Cái này để đọc file .env
 
 // Initialize Passport (cần import để load Google OAuth strategy)
 require('./config/passport');
 
 const app = express();
+
+// 1. Tạo HTTP Server bọc lấy Express App
+const server = http.createServer(app);
+
+// 2. Cấu hình Socket.io
+const io = new Server(server, {
+  cors: {
+    // Cho phép Frontend (tất cả origin) kết nối
+    origin: "*", 
+    methods: ["GET", "POST"]
+  }
+});
+
+// 3. Lưu biến io ra biến toàn cục (Global) để dùng ở bất cứ file nào
+global._io = io;
+
+// 4. Lắng nghe kết nối từ Client
+io.on('connection', (socket) => {
+  console.log('⚡ Client connected:', socket.id);
+
+  // Client sẽ gửi sự kiện 'join_class' kèm classId để vào phòng riêng
+  socket.on('join_class', (classId) => {
+    socket.join(classId);
+    console.log(`Socket ${socket.id} đã join vào phòng lớp: ${classId}`);
+  });
+
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
 
 // Cho phép các web khác gọi vào API của mình (CORS) - Full CORS enabled
 app.use(cors({
@@ -54,6 +87,11 @@ const connectDB = async () => {
     const mongoUri = normalizeMongoUri(process.env.MONGO_URI);
     await mongoose.connect(mongoUri);
     console.log("✅ Đã kết nối MongoDB thành công!");
+    
+    // Kích hoạt "Camera chạy bằng cơm" soi DB (Realtime Service)
+    // Chỉ kích hoạt khi đã connect DB thành công
+    require('./services/RealtimeService').watchTeamMembers();
+    
   } catch (err) {
     console.error("❌ Lỗi kết nối MongoDB:", err.message);
     process.exit(1); // Lỗi thì dừng server luôn
@@ -89,6 +127,7 @@ app.get('/', (req, res) => {
 
 // Chạy server
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
+// SỬA: Dùng server.listen thay vì app.listen
+server.listen(PORT, () => {
   console.log(`🚀 Server đang chạy tại http://localhost:${PORT}`);
 });
