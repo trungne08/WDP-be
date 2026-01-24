@@ -1110,19 +1110,8 @@ const addStudentToClass = async (req, res) => {
                 is_active: true
             });
 
-            // Populate để lấy full info cho Socket
-            const fullMemberInfo = await models.TeamMember.findById(newMember._id)
-                .populate('student_id', 'full_name student_code avatar_url email')
-                .lean();
-
-            // Bắn Socket event (RealtimeService cũng sẽ bắt được, nhưng bắn thủ công để chắc chắn)
-            if (global._io) {
-                global._io.to(classId.toString()).emit('team_member_changed', {
-                    action: 'insert',
-                    data: fullMemberInfo
-                });
-                console.log(`📡 Đã bắn Socket: Thêm sinh viên ${student.full_name || student.student_code} vào lớp ${classId}`);
-            }
+            // Không cần bắn Socket thủ công nữa - RealtimeService sẽ tự động bắt được
+            // (Hybrid Strategy: Change Stream lo việc này)
 
             return res.status(201).json({ message: '✅ Đã thêm sinh viên vào lớp thành công (Enrolled)!' });
         } else {
@@ -1224,19 +1213,8 @@ const updateStudentInClass = async (req, res) => {
 
             await member.save();
 
-            // Bắn Socket event để FE cập nhật realtime
-            if (global._io) {
-                const updatedMember = await models.TeamMember.findById(member._id)
-                    .populate('student_id', 'full_name student_code avatar_url email')
-                    .populate('team_id', 'project_name')
-                    .lean();
-
-                global._io.to(classId.toString()).emit('team_member_changed', {
-                    action: 'update',
-                    data: updatedMember
-                });
-                console.log(`📡 Đã bắn Socket: Cập nhật sinh viên ${updatedMember.student_id?.full_name || student_id} trong lớp ${classId}`);
-            }
+            // Không cần bắn Socket thủ công nữa - RealtimeService sẽ tự động bắt được
+            // (Hybrid Strategy: Change Stream lo việc này)
 
             return res.json({ message: '✅ Cập nhật sinh viên thành công!' });
 
@@ -1274,28 +1252,14 @@ const removeStudentFromClass = async (req, res) => {
             const classTeams = await models.Team.find({ class_id: classId }).select('_id');
             const classTeamIds = classTeams.map(t => t._id);
 
-            // Lấy thông tin TeamMember trước khi xóa (để bắn Socket)
-            const memberToDelete = await models.TeamMember.findOne({
+            // Xóa khỏi DB (RealtimeService sẽ tự động bắt được và bắn Socket)
+            await models.TeamMember.deleteOne({
                 team_id: { $in: classTeamIds },
                 student_id: student_id
-            }).populate('student_id', 'full_name student_code avatar_url email').lean();
+            });
 
-            if (memberToDelete) {
-                // Xóa khỏi DB
-                await models.TeamMember.deleteOne({
-                    team_id: { $in: classTeamIds },
-                    student_id: student_id
-                });
-
-                // Bắn Socket event để FE cập nhật realtime
-                if (global._io) {
-                    global._io.to(classId.toString()).emit('team_member_changed', {
-                        action: 'delete',
-                        data: memberToDelete
-                    });
-                    console.log(`📡 Đã bắn Socket: Xóa sinh viên ${memberToDelete.student_id?.full_name || student_id} khỏi lớp ${classId}`);
-                }
-            }
+            // Không cần bắn Socket thủ công nữa - RealtimeService sẽ tự động bắt được
+            // (Hybrid Strategy: Change Stream lo việc này)
 
             return res.json({ message: '✅ Đã xóa sinh viên khỏi lớp!' });
 
