@@ -21,4 +21,5 @@ module.exports = (app) => {
     teamDataRoutes(app);
     require('./routes/notificationRoutes')(app); // <--- Đã thêm route thông báo
     require('./routes/academicRoutes')(app); // <--- Đã thêm route học thuật (Schedule, Assignment, Lab)
+    require('./routes/webhookRoutes')(app); // <--- Webhook cho Jira real-time sync
 };

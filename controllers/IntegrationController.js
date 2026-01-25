@@ -578,15 +578,39 @@ exports.syncMyProjectData = async (req, res) => {
       
       console.log(`🔄 [Sync Jira] Đang sync dự án: "${cleanProjectKey}" với CloudID: ${cloudId}`);
       
-      const doJiraSearch = (token) =>
-        axios.get(jiraApiUrl, {
-          headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
-          params: {
-            jql: `project = "${cleanProjectKey}"`, // Dấu ngoặc kép để tránh lỗi JQL
-            maxResults: 100,
-            fields: 'summary,status,assignee,created,updated,issuetype,storyPoints'
-          }
-        });
+      // Hàm sync với pagination để lấy TẤT CẢ issues (không chỉ 100 đầu tiên)
+      const syncAllJiraIssues = async (token) => {
+        const allIssues = [];
+        let startAt = 0;
+        const maxResults = 100; // Jira API limit
+        let hasMore = true;
+
+        while (hasMore) {
+          const response = await axios.get(jiraApiUrl, {
+            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
+            params: {
+              jql: `project = "${cleanProjectKey}"`, // Dấu ngoặc kép để tránh lỗi JQL
+              startAt: startAt,
+              maxResults: maxResults,
+              fields: 'summary,status,assignee,created,updated,issuetype,storyPoints'
+            }
+          });
+
+          const issues = response.data?.issues || [];
+          allIssues.push(...issues);
+
+          // Kiểm tra còn issues không
+          const total = response.data?.total || 0;
+          hasMore = startAt + issues.length < total;
+          startAt += issues.length;
+
+          console.log(`   📥 [Sync Jira] Đã lấy ${allIssues.length}/${total} issues...`);
+        }
+
+        return { issues: allIssues, total: allIssues.length };
+      };
+
+      const doJiraSearch = (token) => syncAllJiraIssues(token);
 
       let jiraResponse = null;
       let accessToken = user.integrations.jira.accessToken;
@@ -625,8 +649,8 @@ exports.syncMyProjectData = async (req, res) => {
         }
       }
 
-      if (jiraResponse && jiraResponse.data) {
-        const issues = jiraResponse.data.issues || [];
+      if (jiraResponse && jiraResponse.issues) {
+        const issues = jiraResponse.issues || [];
 
         // Tạo hoặc lấy sprint mặc định cho project (nếu có team)
         let defaultSprintId = null;
