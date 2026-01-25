@@ -112,41 +112,42 @@ exports.deleteSprint = async (req, res) => {
 // POST: Tạo Task
 exports.createTask = async (req, res) => {
     try {
-        const { team_id, summary, description, story_point, assignee_account_id } = req.body;
+        const { team_id, summary, description } = req.body;
 
         const team = await Team.findById(team_id);
         if (!team) return res.status(404).json({ error: 'Team not found' });
 
         const { url, key, token } = getJiraConfig(team);
-        const spFieldId = team.jira_story_point_field || 'customfield_10026';
 
-        // Gọi Jira
+        // Gọi Jira tạo issue (Không gửi storyPoint)
         const jiraResp = await JiraService.createJiraIssue(url, token, {
             projectKey: key,
             summary,
             description,
-            storyPoint: story_point,
-            assigneeAccountId: assignee_account_id,
-            storyPointFieldId: spFieldId
+            // Không truyền storyPoint -> Jira sẽ để trống
+            assigneeAccountId: null 
         });
 
-        // Lưu DB (Mặc định vào Backlog -> sprint_id: null)
         const newTask = new JiraTask({
             team_id: team._id,
-            sprint_id: null,
+            sprint_id: null,       // Backlog
             issue_key: jiraResp.key,
             issue_id: jiraResp.id,
-            summary,
+            summary: summary,
             description: description || "",
-            story_point: story_point || 0,
-            assignee_account_id,
+            story_point: 0,        // Mặc định 0
+            assignee_account_id: null,
             status_name: 'To Do',
             status_category: 'To Do'
         });
 
         await newTask.save();
         res.status(201).json({ message: '✅ Tạo Task thành công', data: newTask });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+
+    } catch (error) {
+        console.error("Create Task Error:", error);
+        res.status(500).json({ error: error.message });
+    }
 };
 
 // GET: Chi tiết Task
@@ -162,7 +163,8 @@ exports.getTaskById = async (req, res) => {
 exports.updateTask = async (req, res) => {
     try {
         const { id } = req.params;
-        const { summary, story_point, assignee_account_id } = req.body;
+        // Nhận đầy đủ các trường
+        const { summary, story_point, assignee_account_id, sprint_id, status } = req.body;
         
         const task = await JiraTask.findById(id);
         if (!task) return res.status(404).json({ error: 'Task not found' });
@@ -171,19 +173,40 @@ exports.updateTask = async (req, res) => {
         const { url, token } = getJiraConfig(team);
         const spFieldId = team.jira_story_point_field || 'customfield_10026';
 
-        // Gọi Jira
+        // Update Jira
         await JiraService.updateJiraIssue(url, token, task.issue_key, {
-            summary, storyPoint: story_point, assigneeAccountId: assignee_account_id, storyPointFieldId: spFieldId
+            summary, 
+            storyPoint: story_point, // Lúc này mới gửi điểm lên
+            assigneeAccountId: assignee_account_id, 
+            storyPointFieldId: spFieldId
         });
 
-        // Update DB
+        // Update Local DB
         if (summary) task.summary = summary;
-        if (story_point) task.story_point = story_point;
-        if (assignee_account_id) task.assignee_account_id = assignee_account_id;
-        task.updated_at = Date.now();
+        if (story_point !== undefined) task.story_point = story_point;
+        if (assignee_account_id !== undefined) task.assignee_account_id = assignee_account_id;
         
+        // Logic gán Sprint
+        if (sprint_id !== undefined) {
+            if (!sprint_id) task.sprint_id = null; // Gửi null/rỗng -> Về Backlog
+            else {
+                const sprintExists = await Sprint.findById(sprint_id);
+                if (sprintExists) task.sprint_id = sprint_id;
+            }
+        }
+
+        // Logic đổi Status
+        if (status) {
+            task.status_name = status;
+            task.status_category = status;
+        }
+
+        task.updated_at = Date.now();
         await task.save();
-        res.json({ message: 'Update thành công', data: task });
+        
+        const updatedTask = await JiraTask.findById(id).populate('sprint_id', 'name state');
+        res.json({ message: '✅ Cập nhật Task thành công', data: updatedTask });
+
     } catch (error) { res.status(500).json({ error: error.message }); }
 };
 

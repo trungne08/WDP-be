@@ -159,95 +159,100 @@ module.exports = (app) => {
   // ================= TASK ROUTES =================
 
   /**
-   * @swagger
-   * /api/tasks:
-   *   post:
-   *     summary: Tạo Task mới
-   *     tags:
-   *       - Jira Data
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             required:
-   *               - team_id
-   *               - summary
-   *             properties:
-   *               team_id:
-   *                 type: string
-   *               summary:
-   *                 type: string
-   *               story_point:
-   *                 type: number
-   *               assignee_account_id:
-   *                 type: string
-   *     responses:
-   *       201:
-   *         description: Tạo thành công
-   */
-  app.post('/api/tasks', JiraController.createTask);
+ * @swagger
+ * /api/tasks:
+ *   post:
+ *     summary: Tạo Task mới (Chỉ cần Tên, Description)
+ *     tags:
+ *       - Jira Data
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - team_id
+ *               - summary
+ *             properties:
+ *               team_id:
+ *                 type: string
+ *               summary:
+ *                 type: string
+ *               description:
+ *                 type: string
+ *     responses:
+ *       201:
+ *         description: Tạo thành công
+ */
+app.post('/api/tasks', JiraController.createTask);
 
-  /**
-   * @swagger
-   * /api/tasks/{id}:
-   *   get:
-   *     summary: Lấy chi tiết Task
-   *     tags:
-   *       - Jira Data
-   *     parameters:
-   *       - in: path
-   *         name: id
-   *         required: true
-   *         schema:
-   *           type: string
-   *     responses:
-   *       200:
-   *         description: Chi tiết Task
-   *
-   *   put:
-   *     summary: Cập nhật Task
-   *     tags:
-   *       - Jira Data
-   *     parameters:
-   *       - in: path
-   *         name: id
-   *         required: true
-   *         schema:
-   *           type: string
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             type: object
-   *             properties:
-   *               summary:
-   *                 type: string
-   *               story_point:
-   *                 type: number
-   *               assignee_account_id:
-   *                 type: string
-   *     responses:
-   *       200:
-   *         description: Update thành công
-   *
-   *   delete:
-   *     summary: Xóa Task
-   *     tags:
-   *       - Jira Data
-   *     parameters:
-   *       - in: path
-   *         name: id
-   *         required: true
-   *         schema:
-   *           type: string
-   *     responses:
-   *       200:
-   *         description: Đã xóa thành công
-   */
-  app.get('/api/tasks/:id', JiraController.getTaskById);
-  app.put('/api/tasks/:id', JiraController.updateTask);
-  app.delete('/api/tasks/:id', JiraController.deleteTask);
+/**
+ * @swagger
+ * /api/tasks/{id}:
+ *   get:
+ *     summary: Lấy chi tiết Task
+ *     tags:
+ *       - Jira Data
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Chi tiết Task
+ *
+ *   put:
+ *     summary: Cập nhật Task (Điểm, Sprint, Status, Member)
+ *     tags:
+ *       - Jira Data
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               summary:
+ *                 type: string
+ *               story_point:
+ *                 type: number
+ *               assignee_account_id:
+ *                 type: string
+ *                 description: Account ID thành viên
+ *               sprint_id:
+ *                 type: string
+ *                 description: ID Sprint (MongoDB) - Null để về Backlog
+ *               status:
+ *                 type: string
+ *                 description: In Progress, Done...
+ *     responses:
+ *       200:
+ *         description: Update thành công
+ *
+ *   delete:
+ *     summary: Xóa Task
+ *     tags:
+ *       - Jira Data
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema:
+ *           type: string
+ *     responses:
+ *       200:
+ *         description: Đã xóa thành công
+ */
+app.get('/api/tasks/:id', JiraController.getTaskById);
+app.put('/api/tasks/:id', JiraController.updateTask);
+app.delete('/api/tasks/:id', JiraController.deleteTask);
 };
