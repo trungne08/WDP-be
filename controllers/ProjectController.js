@@ -7,8 +7,15 @@ exports.createProject = async (req, res) => {
   try {
     const { role, userId, user } = req;
 
+    // Log request để debug
+    console.log(`\n🚀 [CreateProject] Bắt đầu tạo project`);
+    console.log(`   👤 User: ${user?.email || 'N/A'} (${userId})`);
+    console.log(`   🔑 Role: ${role}`);
+    console.log(`   📦 Request Body:`, JSON.stringify(req.body, null, 2));
+
     // Chỉ cho phép STUDENT (Leader) tạo project
     if (role !== 'STUDENT') {
+      console.log(`   ❌ [CreateProject] Lỗi: Role không phải STUDENT`);
       return res.status(403).json({ error: 'Chỉ sinh viên (Leader) mới được tạo Project.' });
     }
 
@@ -52,8 +59,16 @@ exports.createProject = async (req, res) => {
     }
 
     if (!name || !Array.isArray(members) || members.length === 0) {
+      console.log(`   ❌ [CreateProject] Validation: Thiếu name hoặc members`);
+      console.log(`      name: ${name || '(empty)'}`);
+      console.log(`      members: ${Array.isArray(members) ? members.length : 'not array'} items`);
       return res.status(400).json({
-        error: 'name và members (array studentId) là bắt buộc.'
+        error: 'name và members (array studentId) là bắt buộc.',
+        received: {
+          name: name || null,
+          members: members || null,
+          members_type: Array.isArray(members) ? 'array' : typeof members
+        }
       });
     }
 
@@ -65,6 +80,7 @@ exports.createProject = async (req, res) => {
     // Kiểm tra tất cả ID có phải ObjectId hợp lệ không
     const invalidIds = allStudentIdStrings.filter(id => !mongoose.Types.ObjectId.isValid(id));
     if (invalidIds.length > 0) {
+      console.log(`   ❌ [CreateProject] Validation: Có ${invalidIds.length} ID không hợp lệ:`, invalidIds);
       return res.status(400).json({
         error: 'Một số member ID không hợp lệ (phải là ObjectId 24 ký tự hex).',
         invalid_ids: invalidIds
@@ -80,24 +96,59 @@ exports.createProject = async (req, res) => {
       is_active: true
     }).lean();
 
+    // Debug log
+    console.log(`🔍 [CreateProject] Tìm kiếm TeamMember cho ${allStudentIds.length} sinh viên`);
+    console.log(`   📋 Danh sách ID cần tìm: ${allStudentIds.map(id => id.toString()).join(', ')}`);
+    console.log(`   ✅ Tìm thấy ${teamMembers.length} TeamMember records`);
+    if (teamMembers.length > 0) {
+      console.log(`   📋 ID đã tìm thấy: ${teamMembers.map(tm => tm.student_id?.toString() || 'null').join(', ')}`);
+    }
+
     if (teamMembers.length !== allStudentIds.length) {
       // Tìm các student chưa nằm trong team nào
-      const foundIds = new Set(teamMembers.map(tm => tm.student_id.toString()));
+      // Chuyển tất cả về string để so sánh chính xác
+      const foundIdsSet = new Set(
+        teamMembers.map(tm => {
+          const id = tm.student_id;
+          // Xử lý cả ObjectId và string
+          return id ? (id.toString ? id.toString() : String(id)) : null;
+        }).filter(Boolean)
+      );
+      
       const missing = allStudentIds
-        .filter(id => !foundIds.has(id.toString()))
+        .filter(id => {
+          const idStr = id.toString();
+          const isMissing = !foundIdsSet.has(idStr);
+          if (isMissing) {
+            console.log(`   ❌ Không tìm thấy TeamMember cho student_id: ${idStr}`);
+          }
+          return isMissing;
+        })
         .map(id => id.toString());
+
+      console.log(`   ⚠️ [CreateProject] Thiếu ${missing.length} thành viên: ${missing.join(', ')}`);
 
       return res.status(400).json({
         error: 'Một số thành viên chưa thuộc nhóm (Team) nào, không thể tạo Project.',
-        missing_student_ids: missing
+        missing_student_ids: missing,
+        debug_info: {
+          requested_count: allStudentIds.length,
+          found_count: teamMembers.length,
+          requested_ids: allStudentIds.map(id => id.toString()),
+          found_ids: Array.from(foundIdsSet)
+        }
       });
     }
 
     // 2) Validate: tất cả phải thuộc CÙNG 1 team
     const teamIds = Array.from(new Set(teamMembers.map(tm => tm.team_id.toString())));
+    console.log(`   🔍 [CreateProject] Kiểm tra team: Tìm thấy ${teamIds.length} team(s): ${teamIds.join(', ')}`);
     if (teamIds.length !== 1) {
+      console.log(`   ❌ [CreateProject] Validation: Các thành viên không thuộc cùng 1 team`);
       return res.status(400).json({
-        error: 'Các thành viên không thuộc cùng một nhóm (team). Vui lòng kiểm tra lại.'
+        error: 'Các thành viên không thuộc cùng một nhóm (team). Vui lòng kiểm tra lại.',
+        found_teams: teamIds.length,
+        team_ids: teamIds
       });
     }
 
