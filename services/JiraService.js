@@ -166,6 +166,29 @@ const JiraService = {
         }
     },
 
+    updateJiraSprint: async (jiraUrl, tokenBase64, jiraSprintId, data) => {
+        try {
+            const cleanUrl = jiraUrl.replace(/\/$/, "");
+            
+            // Jira chỉ cho phép update các trường này
+            const payload = {};
+            if (data.name) payload.name = data.name;
+            if (data.startDate) payload.startDate = data.startDate;
+            if (data.endDate) payload.endDate = data.endDate;
+            if (data.state) payload.state = data.state; // active, future, closed
+
+            const response = await axios.put(`${cleanUrl}/rest/agile/1.0/sprint/${jiraSprintId}`, payload, {
+                headers: getJiraHeaders(tokenBase64)
+            });
+            
+            return response.data;
+
+        } catch (error) {
+            console.error("❌ Update Sprint Error:", error.response?.data || error.message);
+            throw new Error(error.response?.data?.message || "Không thể cập nhật Sprint trên Jira");
+        }
+    },
+    
     startJiraSprint: async (jiraUrl, tokenBase64, sprintId, startDate, endDate) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");

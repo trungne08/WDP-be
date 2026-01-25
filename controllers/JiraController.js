@@ -88,14 +88,42 @@ exports.getSprintById = async (req, res) => {
 // PUT: Update Sprint (Chỉ thông tin cơ bản, KHÔNG có điểm số)
 exports.updateSprint = async (req, res) => {
     try {
+        const { id } = req.params;
         const { name, state, start_date, end_date } = req.body;
-        const sprint = await Sprint.findByIdAndUpdate(
-            req.params.id, 
-            { name, state, start_date, end_date }, 
-            { new: true }
-        );
-        res.json({ message: 'Update thành công', data: sprint });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+
+        // 1. Tìm Sprint trong DB
+        const sprint = await Sprint.findById(id);
+        if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
+
+        // 2. Tìm Team để lấy config
+        const team = await Team.findById(sprint.team_id);
+        if (!team) return res.status(404).json({ error: 'Team not found' });
+
+        const { url, token } = getJiraConfig(team);
+
+        // 3. 🔥 GỌI JIRA UPDATE (Phần còn thiếu lúc trước)
+        // Lưu ý: Map từ snake_case (DB/FE) sang camelCase (Jira)
+        await JiraService.updateJiraSprint(url, token, sprint.jira_sprint_id, {
+            name: name,
+            state: state,
+            startDate: start_date,
+            endDate: end_date
+        });
+
+        // 4. Update Local DB
+        if (name) sprint.name = name;
+        if (state) sprint.state = state;
+        if (start_date) sprint.start_date = start_date;
+        if (end_date) sprint.end_date = end_date;
+        
+        await sprint.save();
+
+        res.json({ message: '✅ Cập nhật Sprint thành công (Đã đồng bộ Jira)', data: sprint });
+
+    } catch (error) {
+        console.error("Update Sprint Failed:", error);
+        res.status(500).json({ error: error.message });
+    }
 };
 
 // DELETE: Xóa Sprint
