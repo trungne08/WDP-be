@@ -191,39 +191,40 @@ exports.getTaskById = async (req, res) => {
 exports.updateTask = async (req, res) => {
     try {
         const { id } = req.params;
-        // Nhận đầy đủ các trường
-        const { summary, story_point, assignee_account_id, sprint_id, status } = req.body;
+        const { team_id, summary, story_point, assignee_account_id, sprint_id, status } = req.body;
         
+        if (!team_id) {
+            return res.status(400).json({ error: '❌ Thiếu team_id. Cần ID nhóm để xác thực.' });
+        }
+
         const task = await JiraTask.findById(id);
         if (!task) return res.status(404).json({ error: 'Task not found' });
-        
-        const team = await Team.findById(task.team_id);
+
+        const team = await Team.findById(team_id);
+        if (!team) return res.status(404).json({ error: 'Team not found' });
+
         const { url, token } = getJiraConfig(team);
         const spFieldId = team.jira_story_point_field || 'customfield_10026';
 
         // Update Jira
         await JiraService.updateJiraIssue(url, token, task.issue_key, {
-            summary, 
-            storyPoint: story_point, // Lúc này mới gửi điểm lên
-            assigneeAccountId: assignee_account_id, 
-            storyPointFieldId: spFieldId
+            summary, storyPoint: story_point, assigneeAccountId: assignee_account_id, storyPointFieldId: spFieldId
         });
 
-        // Update Local DB
+        // Update DB
+        task.team_id = team_id; // Cập nhật lại team_id cho chắc chắn
         if (summary) task.summary = summary;
         if (story_point !== undefined) task.story_point = story_point;
         if (assignee_account_id !== undefined) task.assignee_account_id = assignee_account_id;
         
-        // Logic gán Sprint
         if (sprint_id !== undefined) {
-            if (!sprint_id) task.sprint_id = null; // Gửi null/rỗng -> Về Backlog
+            if (!sprint_id) task.sprint_id = null;
             else {
                 const sprintExists = await Sprint.findById(sprint_id);
                 if (sprintExists) task.sprint_id = sprint_id;
             }
         }
 
-        // Logic đổi Status
         if (status) {
             task.status_name = status;
             task.status_category = status;

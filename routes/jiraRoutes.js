@@ -205,7 +205,7 @@ app.post('/api/tasks', JiraController.createTask);
  *         description: Chi tiết Task
  *
  *   put:
- *     summary: Cập nhật Task (Điểm, Sprint, Status, Member)
+ *     summary: Cập nhật Task (Bắt buộc gửi team_id)
  *     tags:
  *       - Jira Data
  *     parameters:
@@ -220,20 +220,21 @@ app.post('/api/tasks', JiraController.createTask);
  *         application/json:
  *           schema:
  *             type: object
+ *             required:
+ *               - team_id
  *             properties:
+ *               team_id:
+ *                 type: string
  *               summary:
  *                 type: string
  *               story_point:
  *                 type: number
  *               assignee_account_id:
  *                 type: string
- *                 description: Account ID thành viên
  *               sprint_id:
  *                 type: string
- *                 description: ID Sprint (MongoDB) - Null để về Backlog
  *               status:
  *                 type: string
- *                 description: In Progress, Done...
  *     responses:
  *       200:
  *         description: Update thành công
