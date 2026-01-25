@@ -188,7 +188,7 @@ const JiraService = {
             throw new Error(error.response?.data?.message || "Không thể cập nhật Sprint trên Jira");
         }
     },
-    
+
     startJiraSprint: async (jiraUrl, tokenBase64, sprintId, startDate, endDate) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
@@ -214,6 +214,50 @@ const JiraService = {
             throw new Error(error.response?.data?.message || "Không thể bắt đầu Sprint trên Jira");
         }
     },
+
+    addIssueToSprint: async (jiraUrl, tokenBase64, jiraSprintId, issueKey) => {
+        try {
+            const cleanUrl = jiraUrl.replace(/\/$/, "");
+            
+            // Payload nhận mảng các issue keys
+            const payload = {
+                issues: [issueKey]
+            };
+
+            await axios.post(`${cleanUrl}/rest/agile/1.0/sprint/${jiraSprintId}/issue`, payload, {
+                headers: getJiraHeaders(tokenBase64)
+            });
+            
+            return true;
+        } catch (error) {
+            console.error("❌ Move to Sprint Error:", error.response?.data || error.message);
+            // Không throw lỗi chết app, chỉ log ra để biết
+            return false;
+        }
+    },
+
+    /**
+     * ĐÁ ISSUE VỀ BACKLOG
+     * POST /rest/agile/1.0/backlog/issue
+     */
+    moveIssueToBacklog: async (jiraUrl, tokenBase64, issueKey) => {
+        try {
+            const cleanUrl = jiraUrl.replace(/\/$/, "");
+            
+            const payload = {
+                issues: [issueKey]
+            };
+
+            await axios.post(`${cleanUrl}/rest/agile/1.0/backlog/issue`, payload, {
+                headers: getJiraHeaders(tokenBase64)
+            });
+            
+            return true;
+        } catch (error) {
+            console.error("❌ Move to Backlog Error:", error.response?.data || error.message);
+            return false;
+        }
+    }
 };
 
 module.exports = JiraService;

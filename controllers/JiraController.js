@@ -193,10 +193,9 @@ exports.updateTask = async (req, res) => {
         const { id } = req.params;
         const { team_id, summary, story_point, assignee_account_id, sprint_id, status } = req.body;
         
-        if (!team_id) {
-            return res.status(400).json({ error: '❌ Thiếu team_id. Cần ID nhóm để xác thực.' });
-        }
+        if (!team_id) return res.status(400).json({ error: '❌ Thiếu team_id.' });
 
+        // 1. Tìm Task & Team
         const task = await JiraTask.findById(id);
         if (!task) return res.status(404).json({ error: 'Task not found' });
 
@@ -206,25 +205,40 @@ exports.updateTask = async (req, res) => {
         const { url, token } = getJiraConfig(team);
         const spFieldId = team.jira_story_point_field || 'customfield_10026';
 
-        // Update Jira
+        // 2. Cập nhật thông tin cơ bản (Tên, Điểm, Assignee)
+        // Hàm này KHÔNG di chuyển được Sprint
         await JiraService.updateJiraIssue(url, token, task.issue_key, {
-            summary, storyPoint: story_point, assigneeAccountId: assignee_account_id, storyPointFieldId: spFieldId
+            summary, 
+            storyPoint: story_point, 
+            assigneeAccountId: assignee_account_id, 
+            storyPointFieldId: spFieldId
         });
 
-        // Update DB
-        task.team_id = team_id; // Cập nhật lại team_id cho chắc chắn
-        if (summary) task.summary = summary;
-        if (story_point !== undefined) task.story_point = story_point;
-        if (assignee_account_id !== undefined) task.assignee_account_id = assignee_account_id;
-        
+        // 3. 🔥 XỬ LÝ DI CHUYỂN SPRINT (LOGIC MỚI)
         if (sprint_id !== undefined) {
-            if (!sprint_id) task.sprint_id = null;
+            // Case A: Đưa vào Sprint mới
+            if (sprint_id) {
+                const sprintTarget = await Sprint.findById(sprint_id);
+                if (sprintTarget) {
+                    // Gọi Jira Service để Move
+                    await JiraService.addIssueToSprint(url, token, sprintTarget.jira_sprint_id, task.issue_key);
+                    
+                    // Update DB Local
+                    task.sprint_id = sprint_id;
+                }
+            } 
+            // Case B: User gửi null hoặc rỗng -> Đá về Backlog
             else {
-                const sprintExists = await Sprint.findById(sprint_id);
-                if (sprintExists) task.sprint_id = sprint_id;
+                await JiraService.moveIssueToBacklog(url, token, task.issue_key);
+                task.sprint_id = null;
             }
         }
 
+        // 4. Update các trường khác trong DB
+        task.team_id = team_id;
+        if (summary) task.summary = summary;
+        if (story_point !== undefined) task.story_point = story_point;
+        if (assignee_account_id !== undefined) task.assignee_account_id = assignee_account_id;
         if (status) {
             task.status_name = status;
             task.status_category = status;
@@ -236,7 +250,10 @@ exports.updateTask = async (req, res) => {
         const updatedTask = await JiraTask.findById(id).populate('sprint_id', 'name state');
         res.json({ message: '✅ Cập nhật Task thành công', data: updatedTask });
 
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) { 
+        console.error(error);
+        res.status(500).json({ error: error.message }); 
+    }
 };
 
 // DELETE: Xóa Task
