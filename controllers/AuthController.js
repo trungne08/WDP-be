@@ -3,6 +3,9 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const models = require('../models');
 const OTP = require('../models/OTP');
+
+/** Thời hạn access token. Env JWT_ACCESS_EXPIRES: '15m' | '1h' | '24h' | ... (mặc định 1h) */
+const getAccessExpires = () => process.env.JWT_ACCESS_EXPIRES || '1h';
 const PendingEnrollment = require('../models/PendingEnrollment');
 const Team = require('../models/Team');
 const TeamMember = require('../models/TeamMember');
@@ -451,7 +454,8 @@ const login = async (req, res) => {
         const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
         const RefreshToken = require('../models/RefreshToken');
 
-        // Tạo Access Token (ngắn hạn - 15 phút)
+        // Tạo Access Token (mặc định 1h; cấu hình qua JWT_ACCESS_EXPIRES)
+        const accessExpires = getAccessExpires();
         const accessToken = jwt.sign(
             {
                 userId: user._id.toString(),
@@ -460,7 +464,7 @@ const login = async (req, res) => {
                 type: 'access'
             },
             jwtSecret,
-            { expiresIn: '15m' } // Access token hết hạn sau 15 phút
+            { expiresIn: accessExpires }
         );
 
         // Tạo Refresh Token (dài hạn - 30 ngày)
@@ -745,7 +749,8 @@ const refreshToken = async (req, res) => {
             });
         }
 
-        // Tạo access token mới
+        // Tạo access token mới (cùng thời hạn với login)
+        const accessExpires = getAccessExpires();
         const newAccessToken = jwt.sign(
             {
                 userId: user._id.toString(),
@@ -754,7 +759,7 @@ const refreshToken = async (req, res) => {
                 type: 'access'
             },
             jwtSecret,
-            { expiresIn: '15m' } // Access token hết hạn sau 15 phút
+            { expiresIn: accessExpires }
         );
 
         res.json({
@@ -979,7 +984,8 @@ const googleCallback = async (req, res) => {
         const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
         const RefreshToken = require('../models/RefreshToken');
 
-        // Tạo Access Token
+        // Tạo Access Token (cùng thời hạn với login)
+        const accessExpires = getAccessExpires();
         const accessToken = jwt.sign(
             {
                 userId: user._id.toString(),
@@ -988,7 +994,7 @@ const googleCallback = async (req, res) => {
                 type: 'access'
             },
             jwtSecret,
-            { expiresIn: '15m' }
+            { expiresIn: accessExpires }
         );
 
         // Tạo Refresh Token
