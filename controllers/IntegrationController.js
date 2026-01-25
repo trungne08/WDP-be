@@ -541,7 +541,12 @@ exports.syncMyProjectData = async (req, res) => {
         results.jira = syncedTasks;
       } catch (err) {
         console.error('Lỗi Sync Jira:', err.message);
-        results.errors.push(`Jira Error: ${err.message}`);
+        const status = err.response?.status;
+        if (status === 410) {
+          results.errors.push('Jira project không còn tồn tại (410). GitHub đã đồng bộ bình thường.');
+        } else {
+          results.errors.push(`Jira Error: ${err.message}`);
+        }
       }
     } else {
       if (!user.integrations?.jira?.accessToken) {
