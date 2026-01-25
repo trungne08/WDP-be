@@ -1,5 +1,6 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
+const { encryptIntegrations, decryptIntegrations } = require('../utils/encryption');
 
 const LecturerSchema = new Schema({
     email: { type: String, required: true, unique: true },
@@ -33,6 +34,38 @@ const LecturerSchema = new Schema({
     fcm_token: { type: String, default: null },
     is_verified: { type: Boolean, default: false }, // Email đã được xác minh chưa
     created_at: { type: Date, default: Date.now }
+});
+
+// Pre-save hook: Mã hóa tokens trước khi lưu vào DB
+LecturerSchema.pre('save', function(next) {
+  if (this.isModified('integrations') && this.integrations) {
+    this.integrations = encryptIntegrations(this.integrations);
+  }
+  next();
+});
+
+// Post-find hook: Giải mã tokens sau khi lấy từ DB
+LecturerSchema.post(['find', 'findOne', 'findOneAndUpdate'], function(docs) {
+  if (!docs) return;
+  
+  const processDoc = (doc) => {
+    if (doc && doc.integrations) {
+      doc.integrations = decryptIntegrations(doc.integrations);
+    }
+  };
+  
+  if (Array.isArray(docs)) {
+    docs.forEach(processDoc);
+  } else {
+    processDoc(docs);
+  }
+});
+
+// Post-init hook: Giải mã khi load document
+LecturerSchema.post('init', function(doc) {
+  if (doc && doc.integrations) {
+    doc.integrations = decryptIntegrations(doc.integrations);
+  }
 });
 
 module.exports = mongoose.model('Lecturer', LecturerSchema);
