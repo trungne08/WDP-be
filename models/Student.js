@@ -42,11 +42,10 @@ const StudentSchema = new Schema({
 });
 
 // Pre-save hook: Mã hóa tokens trước khi lưu vào DB
-StudentSchema.pre('save', function(next) {
+StudentSchema.pre('save', async function() {
   if (this.isModified('integrations') && this.integrations) {
     this.integrations = encryptIntegrations(this.integrations);
   }
-  next();
 });
 
 // Post-find hook: Giải mã tokens sau khi lấy từ DB

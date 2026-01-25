@@ -36,11 +36,10 @@ const AdminSchema = new Schema({
 });
 
 // Pre-save hook: Mã hóa tokens trước khi lưu vào DB
-AdminSchema.pre('save', function(next) {
+AdminSchema.pre('save', async function() {
   if (this.isModified('integrations') && this.integrations) {
     this.integrations = encryptIntegrations(this.integrations);
   }
-  next();
 });
 
 // Post-find hook: Giải mã tokens sau khi lấy từ DB

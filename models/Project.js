@@ -12,8 +12,12 @@ const ProjectSchema = new Schema(
   {
     name: { type: String, required: true },
 
+    // QUAN HỆ VỚI LỚP VÀ NHÓM (Quan trọng để phân biệt project ở lớp nào)
+    class_id: { type: Schema.Types.ObjectId, ref: 'Class', required: true },
+    team_id: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
+
     leader_id: { type: Schema.Types.ObjectId, ref: 'Student', required: true },
-    // Giảng viên có thể null nếu tạo project không gắn lớp cụ thể
+    // Giảng viên lấy từ class_id (có thể null nếu class chưa có lecturer)
     lecturer_id: { type: Schema.Types.ObjectId, ref: 'Lecturer' },
     members: [{ type: Schema.Types.ObjectId, ref: 'Student', default: [] }],
 
@@ -25,6 +29,10 @@ const ProjectSchema = new Schema(
   },
   { timestamps: true }
 );
+
+// Index để query nhanh theo lớp và team
+ProjectSchema.index({ class_id: 1, team_id: 1 });
+ProjectSchema.index({ team_id: 1 });
 
 module.exports = mongoose.models.Project || mongoose.model('Project', ProjectSchema);
 
