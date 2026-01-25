@@ -209,7 +209,7 @@ exports.jiraCallback = async (req, res) => {
       redirectUri
     });
 
-    // 1) Lấy cloudId (accessible-resources)
+    // 1) Lấy cloudId và jira_url từ accessible-resources
     const resources = await IntegrationService.fetchAtlassianAccessibleResources(accessToken);
     if (!resources.length) {
       return res.status(400).json({ error: 'Không lấy được accessible-resources từ Atlassian' });
@@ -217,7 +217,10 @@ exports.jiraCallback = async (req, res) => {
 
     // Comment VN: Nếu user có nhiều site Jira, tạm lấy resource đầu tiên.
     // Có thể nâng cấp: FE gửi cloudId mong muốn để chọn đúng site.
-    const cloudId = resources[0].id;
+    const selectedResource = resources[0];
+    const cloudId = selectedResource.id;
+    // Lấy jira_url từ resource (có thể là url hoặc scopes)
+    const jiraUrl = selectedResource.url || `https://${selectedResource.id}.atlassian.net`;
 
     // 2) Lấy accountId từ /myself
     const me = await IntegrationService.fetchJiraMyself({ accessToken, cloudId });
@@ -231,12 +234,18 @@ exports.jiraCallback = async (req, res) => {
     user.integrations.jira = {
       jiraAccountId: me.jiraAccountId,
       cloudId,
+      jiraUrl, // Tự động lấy Jira URL
       email: me.email,
       accessToken,
       refreshToken,
       linkedAt: new Date()
     };
     await user.save();
+    
+    console.log(`✅ [Jira Connect] Đã lưu integration cho user ${user.email}:`);
+    console.log(`   - Jira URL: ${jiraUrl}`);
+    console.log(`   - Cloud ID: ${cloudId}`);
+    console.log(`   - Account ID: ${me.jiraAccountId}`);
 
     // Redirect về frontend sau khi thành công
     // Dùng frontendRedirectUri từ state (đã được frontend truyền khi connect) hoặc fallback về CLIENT_URL
@@ -303,6 +312,83 @@ exports.getJiraProjects = async (req, res) => {
       throw err;
     }
   } catch (error) {
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+/**
+ * GET /api/integrations/jira/boards?projectKey=SCRUM
+ * Lấy danh sách boards của một Jira project
+ */
+exports.getJiraBoards = async (req, res) => {
+  try {
+    const jira = req.user?.integrations?.jira;
+    if (!jira?.accessToken || !jira?.cloudId) {
+      return res.status(400).json({ error: 'Chưa kết nối Jira. Vui lòng link Jira trước.' });
+    }
+
+    const { projectKey } = req.query;
+    if (!projectKey) {
+      return res.status(400).json({ error: 'Thiếu projectKey trong query params' });
+    }
+
+    // Sanitize project key
+    const sanitizeJiraProjectKey = (input) => {
+      if (!input || typeof input !== 'string') return '';
+      let cleaned = input.trim();
+      const bracketMatch = cleaned.match(/^\[([^\]]+)\]/);
+      if (bracketMatch) cleaned = bracketMatch[1];
+      cleaned = cleaned.trim().replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
+      return cleaned;
+    };
+    
+    const cleanProjectKey = sanitizeJiraProjectKey(projectKey);
+    if (!cleanProjectKey) {
+      return res.status(400).json({ error: 'Project key không hợp lệ' });
+    }
+
+    const { clientId, clientSecret } = getAtlassianConfig(req);
+
+    // Try 1 lần; nếu token hết hạn thì refresh và retry
+    try {
+      const boards = await IntegrationService.fetchJiraBoards({
+        accessToken: jira.accessToken,
+        cloudId: jira.cloudId,
+        projectKey: cleanProjectKey
+      });
+      return res.json({ 
+        projectKey: cleanProjectKey,
+        total: boards.length, 
+        boards 
+      });
+    } catch (err) {
+      const status = err.response?.status;
+      if ((status === 401 || status === 403) && jira.refreshToken) {
+        const refreshed = await IntegrationService.refreshAtlassianAccessToken({
+          clientId,
+          clientSecret,
+          refreshToken: jira.refreshToken
+        });
+
+        req.user.integrations.jira.accessToken = refreshed.accessToken;
+        req.user.integrations.jira.refreshToken = refreshed.refreshToken;
+        await req.user.save();
+
+        const boards = await IntegrationService.fetchJiraBoards({
+          accessToken: refreshed.accessToken,
+          cloudId: jira.cloudId,
+          projectKey: cleanProjectKey
+        });
+        return res.json({ 
+          projectKey: cleanProjectKey,
+          total: boards.length, 
+          boards 
+        });
+      }
+      throw err;
+    }
+  } catch (error) {
+    console.error('Get Jira Boards Error:', error);
     return res.status(500).json({ error: error.message });
   }
 };

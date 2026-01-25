@@ -19,6 +19,7 @@ const AdminSchema = new Schema({
         jira: {
             jiraAccountId: { type: String },
             cloudId: { type: String },
+            jiraUrl: { type: String },       // URL của Jira instance (tự động lấy khi connect)
             email: { type: String },
             accessToken: { type: String },
             refreshToken: { type: String },

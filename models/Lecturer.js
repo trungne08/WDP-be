@@ -19,6 +19,7 @@ const LecturerSchema = new Schema({
         jira: {
             jiraAccountId: { type: String }, // Quan trọng: dùng để map assignee trong Jira
             cloudId: { type: String },       // ID site Jira (accessible-resources)
+            jiraUrl: { type: String },       // URL của Jira instance (tự động lấy khi connect)
             email: { type: String },
             accessToken: { type: String },
             refreshToken: { type: String },  // offline_access để refresh token

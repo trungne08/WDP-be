@@ -156,6 +156,38 @@ async function fetchJiraProjectInfo({ accessToken, cloudId, projectKey }) {
   return res.data;
 }
 
+/**
+ * Lấy danh sách boards của một Jira project
+ * @param {string} accessToken - OAuth access token
+ * @param {string} cloudId - Jira cloud ID
+ * @param {string} projectKey - Project key (e.g., "SCRUM")
+ * @returns {Promise<Array>} - Danh sách boards
+ */
+async function fetchJiraBoards({ accessToken, cloudId, projectKey }) {
+  try {
+    // Lấy tất cả boards
+    const res = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/agile/1.0/board`, {
+      headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
+      params: {
+        projectKeyOrId: projectKey,
+        maxResults: 50
+      }
+    });
+    
+    const boards = (res.data?.values || []).map(board => ({
+      id: board.id,
+      name: board.name,
+      type: board.type, // scrum, kanban
+      location: board.location // project info
+    }));
+    
+    return boards;
+  } catch (error) {
+    console.error('❌ [IntegrationService] Lỗi lấy Jira boards:', error.message);
+    throw error;
+  }
+}
+
 module.exports = {
   signOAuthState,
   verifyOAuthState,
@@ -169,6 +201,7 @@ module.exports = {
   fetchAtlassianAccessibleResources,
   fetchJiraMyself,
   fetchJiraProjects,
-  fetchJiraProjectInfo
+  fetchJiraProjectInfo,
+  fetchJiraBoards
 };
 

@@ -177,6 +177,32 @@ module.exports = (app) => {
 
     /**
      * @swagger
+     * /api/integrations/jira/boards:
+     *   get:
+     *     summary: Lấy danh sách boards của một Jira project
+     *     tags: [Integrations]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Lấy danh sách boards (Scrum/Kanban) của một Jira project.
+     *       Dùng để lấy board_id khi tạo project.
+     *     parameters:
+     *       - in: query
+     *         name: projectKey
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: Jira project key (e.g., SCRUM, SWP)
+     *     responses:
+     *       200:
+     *         description: Danh sách boards
+     *       400:
+     *         description: Thiếu projectKey hoặc chưa kết nối Jira
+     */
+    app.get('/api/integrations/jira/boards', authenticateToken, IntegrationController.getJiraBoards);
+
+    /**
+     * @swagger
      * /api/integrations/github/disconnect:
      *   delete:
      *     summary: Ngắt kết nối tài khoản GitHub
