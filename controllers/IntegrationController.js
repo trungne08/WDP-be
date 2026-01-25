@@ -439,25 +439,11 @@ exports.syncMyProjectData = async (req, res) => {
     // SYNC JIRA (nếu có token và project key)
     // ==========================================
     if (user.integrations?.jira?.accessToken && user.integrations?.jira?.cloudId && project.jiraProjectKey) {
-      try {
-        // Lấy Jira URL từ project hoặc từ user's Jira integration
-        // Cần tìm Jira URL từ accessible resources hoặc lưu trong project
-        // Tạm thời dùng cloudId để gọi API Atlassian
-        const cloudId = user.integrations.jira.cloudId;
-        const accessToken = user.integrations.jira.accessToken;
-
-        // Fetch sprints từ Jira project
-        // Note: Cần boardId để fetch sprints, nhưng có thể fetch tasks trực tiếp từ project
-        // Tạm thời sync tasks trực tiếp từ project key
-        
-        // Fetch issues từ Jira project
-        const jiraApiUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search`;
-        
-        const jiraResponse = await axios.get(jiraApiUrl, {
-          headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Accept': 'application/json'
-          },
+      const cloudId = user.integrations.jira.cloudId;
+      const jiraApiUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search`;
+      const doJiraSearch = (token) =>
+        axios.get(jiraApiUrl, {
+          headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
           params: {
             jql: `project = ${project.jiraProjectKey}`,
             maxResults: 100,
@@ -465,9 +451,39 @@ exports.syncMyProjectData = async (req, res) => {
           }
         });
 
+      let jiraResponse = null;
+      let accessToken = user.integrations.jira.accessToken;
+      try {
+        jiraResponse = await doJiraSearch(accessToken);
+      } catch (jiraErr) {
+        const status = jiraErr.response?.status;
+        if ((status === 401 || status === 403) && user.integrations?.jira?.refreshToken) {
+          try {
+            const { clientId, clientSecret } = getAtlassianConfig(req);
+            const refreshed = await IntegrationService.refreshAtlassianAccessToken({
+              clientId,
+              clientSecret,
+              refreshToken: user.integrations.jira.refreshToken
+            });
+            user.integrations.jira.accessToken = refreshed.accessToken;
+            user.integrations.jira.refreshToken = refreshed.refreshToken ?? user.integrations.jira.refreshToken;
+            await user.save();
+            jiraResponse = await doJiraSearch(refreshed.accessToken);
+          } catch (refreshErr) {
+            console.error('Lỗi Sync Jira (refresh token thất bại):', refreshErr.message);
+            results.errors.push('Token Jira đã hết hạn. Vui lòng kết nối lại Jira.');
+          }
+        } else if (status === 410) {
+          results.errors.push('Jira project không còn tồn tại (410). GitHub đã đồng bộ bình thường.');
+        } else if (status === 401 || status === 403) {
+          results.errors.push('Token Jira đã hết hạn. Vui lòng kết nối lại Jira.');
+        } else {
+          results.errors.push(`Jira Error: ${jiraErr.message}`);
+        }
+      }
+
+      if (jiraResponse && jiraResponse.data) {
         const issues = jiraResponse.data.issues || [];
-        
-        // teamId đã được tìm ở trên
 
         // Tạo hoặc lấy sprint mặc định cho project (nếu có team)
         let defaultSprintId = null;
@@ -497,6 +513,7 @@ exports.syncMyProjectData = async (req, res) => {
           userJiraAccountId = userTeamMember?.jira_account_id;
         }
 
+        let syncedTasks = 0;
         for (const issue of issues) {
           // Nếu không có sprint, bỏ qua task này (vì schema yêu cầu sprint_id)
           if (!defaultSprintId) {
@@ -539,14 +556,6 @@ exports.syncMyProjectData = async (req, res) => {
           syncedTasks++;
         }
         results.jira = syncedTasks;
-      } catch (err) {
-        console.error('Lỗi Sync Jira:', err.message);
-        const status = err.response?.status;
-        if (status === 410) {
-          results.errors.push('Jira project không còn tồn tại (410). GitHub đã đồng bộ bình thường.');
-        } else {
-          results.errors.push(`Jira Error: ${err.message}`);
-        }
       }
     } else {
       if (!user.integrations?.jira?.accessToken) {
