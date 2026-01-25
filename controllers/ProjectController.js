@@ -12,7 +12,7 @@ exports.createProject = async (req, res) => {
       return res.status(403).json({ error: 'Chỉ sinh viên (Leader) mới được tạo Project.' });
     }
 
-    const { name, members, githubRepoUrl, jiraProjectKey: rawJiraKey } = req.body || {};
+    const { name, members, githubRepoUrl: rawGithubUrl, jiraProjectKey: rawJiraKey } = req.body || {};
     
     // Sanitize Jira Project Key (loại bỏ "[SCRUM]", trim, uppercase)
     const sanitizeJiraProjectKey = (input) => {
@@ -23,7 +23,33 @@ exports.createProject = async (req, res) => {
       cleaned = cleaned.trim().replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
       return cleaned;
     };
+    
+    // Normalize GitHub Repo URL (loại bỏ .git, trailing slash, validate format)
+    const normalizeGithubRepoUrl = (input) => {
+      if (!input || typeof input !== 'string') return '';
+      let cleaned = input.trim();
+      // Loại bỏ .git ở cuối
+      cleaned = cleaned.replace(/\.git$/, '');
+      // Loại bỏ trailing slash
+      cleaned = cleaned.replace(/\/$/, '');
+      // Validate: phải là URL GitHub hợp lệ
+      if (!cleaned.match(/^https?:\/\/(www\.)?github\.com\/[\w\-\.]+\/[\w\-\.]+/i)) {
+        console.warn(`⚠️ [CreateProject] GitHub URL có vẻ không hợp lệ: ${cleaned}`);
+        // Vẫn trả về để lưu (có thể là private repo hoặc format khác)
+      }
+      return cleaned;
+    };
+    
     const jiraProjectKey = rawJiraKey ? sanitizeJiraProjectKey(rawJiraKey) : '';
+    const githubRepoUrl = rawGithubUrl ? normalizeGithubRepoUrl(rawGithubUrl) : '';
+    
+    // Log để debug
+    if (rawJiraKey && jiraProjectKey !== rawJiraKey.trim()) {
+      console.log(`🔧 [CreateProject] Sanitized Jira Key: "${rawJiraKey}" -> "${jiraProjectKey}"`);
+    }
+    if (rawGithubUrl && githubRepoUrl !== rawGithubUrl.trim()) {
+      console.log(`🔧 [CreateProject] Normalized GitHub URL: "${rawGithubUrl}" -> "${githubRepoUrl}"`);
+    }
 
     if (!name || !Array.isArray(members) || members.length === 0) {
       return res.status(400).json({
@@ -75,32 +101,82 @@ exports.createProject = async (req, res) => {
       });
     }
 
-    // 3) Validate: chưa có project nào gắn với các member này
-    const membersWithProject = teamMembers.filter(tm => tm.project_id);
-    if (membersWithProject.length > 0) {
+    // 3) Lấy thông tin team hiện tại (để lấy class_id)
+    const currentTeam = await models.Team.findById(teamIds[0])
+      .populate({
+        path: 'class_id',
+        select: 'lecturer_id _id'
+      })
+      .lean();
+    
+    if (!currentTeam || !currentTeam.class_id) {
       return res.status(400).json({
-        error: 'Một số thành viên đã thuộc một Project khác.',
-        conflicted_members: membersWithProject.map(tm => ({
-          team_member_id: tm._id,
-          student_id: tm.student_id,
-          project_id: tm.project_id
-        }))
+        error: 'Không tìm thấy thông tin lớp học của nhóm này.'
       });
     }
 
-    // 4) Cố gắng tìm lecturer từ Class thông qua Team -> Class
-    let lecturerId = null;
-    try {
-      const team = await models.Team.findById(teamIds[0])
-        .populate({
-          path: 'class_id',
-          select: 'lecturer_id'
-        })
+    const currentClassId = currentTeam.class_id._id.toString();
+    const lecturerId = currentTeam.class_id.lecturer_id || null;
+
+    // 4) Validate: Kiểm tra xem member có project ở CÙNG LỚP không (khác lớp thì OK)
+    const membersWithProject = teamMembers.filter(tm => tm.project_id);
+    if (membersWithProject.length > 0) {
+      // Lấy tất cả project_id của các member có project
+      const existingProjectIds = Array.from(new Set(
+        membersWithProject.map(tm => tm.project_id.toString())
+      ));
+
+      // Tìm các TeamMember có project_id này để lấy team_id -> class_id
+      const otherTeamMembers = await models.TeamMember.find({
+        project_id: { $in: existingProjectIds },
+        is_active: true
+      })
+        .select('team_id project_id')
         .lean();
-      lecturerId = team?.class_id?.lecturer_id || null;
-    } catch (_) {
-      // Nếu lỗi thì cho lecturerId = null, không chặn flow tạo project
-      lecturerId = null;
+
+      // Lấy team_id từ các member này
+      const otherTeamIds = Array.from(new Set(
+        otherTeamMembers.map(tm => tm.team_id.toString())
+      ));
+
+      // Lấy thông tin các team đó để so sánh class_id
+      const otherTeams = await models.Team.find({
+        _id: { $in: otherTeamIds }
+      })
+        .select('class_id')
+        .lean();
+
+      // Kiểm tra xem có project nào thuộc CÙNG LỚP không
+      const conflictedInSameClass = otherTeams.some(team => 
+        team.class_id && team.class_id.toString() === currentClassId
+      );
+
+      if (conflictedInSameClass) {
+        // Tìm các member bị conflict (cùng lớp)
+        const conflictedMembers = membersWithProject.filter(tm => {
+          // Tìm team của project này
+          const projectTeamMember = otherTeamMembers.find(
+            otm => otm.project_id && otm.project_id.toString() === tm.project_id.toString()
+          );
+          if (!projectTeamMember) return false;
+          
+          const projectTeam = otherTeams.find(
+            t => t._id.toString() === projectTeamMember.team_id.toString()
+          );
+          return projectTeam && projectTeam.class_id && 
+                 projectTeam.class_id.toString() === currentClassId;
+        });
+
+        return res.status(400).json({
+          error: 'Một số thành viên đã có Project ở lớp này. Mỗi sinh viên chỉ được có 1 Project trong 1 lớp.',
+          conflicted_members: conflictedMembers.map(tm => ({
+            team_member_id: tm._id,
+            student_id: tm.student_id,
+            project_id: tm.project_id
+          }))
+        });
+      }
+      // Nếu project cũ thuộc lớp khác -> Cho phép tạo project mới ở lớp này
     }
 
     // 5) Tạo Project
@@ -109,9 +185,11 @@ exports.createProject = async (req, res) => {
       leader_id: userId,
       lecturer_id: lecturerId,
       members: allStudentIds,
-      githubRepoUrl: githubRepoUrl || '',
-      jiraProjectKey: jiraProjectKey || ''
+      githubRepoUrl: githubRepoUrl,
+      jiraProjectKey: jiraProjectKey
     });
+    
+    console.log(`✅ [CreateProject] Đã tạo project "${name}" với GitHub: ${githubRepoUrl || '(không có)'}, Jira: ${jiraProjectKey || '(không có)'}`);
 
     // 6) Cập nhật project_id cho tất cả TeamMember trong nhóm
     await models.TeamMember.updateMany(

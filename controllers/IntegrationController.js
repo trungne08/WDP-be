@@ -408,10 +408,17 @@ exports.syncMyProjectData = async (req, res) => {
     const Team = models.Team;
     const axios = require('axios');
 
+    // Log thông tin project để debug
+    console.log(`🔄 [Sync] Bắt đầu sync project "${project.name}" (ID: ${project._id})`);
+    console.log(`   📦 GitHub Repo: ${project.githubRepoUrl || '(không có)'}`);
+    console.log(`   📦 Jira Project Key: ${project.jiraProjectKey || '(không có)'}`);
+    console.log(`   👤 User: ${user.email} (${user._id})`);
+
     // ==========================================
     // SYNC GITHUB (nếu có token và repo URL)
     // ==========================================
     if (user.integrations?.github?.accessToken && project.githubRepoUrl) {
+      console.log(`🔄 [Sync GitHub] Đang sync repo: ${project.githubRepoUrl}`);
       try {
         const commits = await GithubService.fetchCommits(
           project.githubRepoUrl, 
@@ -449,16 +456,19 @@ exports.syncMyProjectData = async (req, res) => {
           }
         }
         results.github = syncedCommits;
+        console.log(`✅ [Sync GitHub] Đã sync ${syncedCommits} commits`);
       } catch (err) {
-        console.error('Lỗi Sync GitHub:', err.message);
+        console.error('❌ [Sync GitHub] Lỗi:', err.message);
         results.errors.push(`GitHub Error: ${err.message}`);
       }
     } else {
       if (!user.integrations?.github?.accessToken) {
         results.errors.push('Chưa kết nối GitHub. Vui lòng link GitHub trước.');
+        console.log('⚠️ [Sync GitHub] User chưa link GitHub');
       }
       if (!project.githubRepoUrl) {
         results.errors.push('Project chưa có GitHub repo URL.');
+        console.log('⚠️ [Sync GitHub] Project chưa có GitHub repo URL');
       }
     }
 
@@ -603,16 +613,21 @@ exports.syncMyProjectData = async (req, res) => {
           syncedTasks++;
         }
         results.jira = syncedTasks;
+        console.log(`✅ [Sync Jira] Đã sync ${syncedTasks} tasks`);
       }
     } else {
       if (!user.integrations?.jira?.accessToken) {
         results.errors.push('Chưa kết nối Jira. Vui lòng link Jira trước.');
+        console.log('⚠️ [Sync Jira] User chưa link Jira');
       }
       if (!project.jiraProjectKey) {
         results.errors.push('Project chưa có Jira project key.');
+        console.log('⚠️ [Sync Jira] Project chưa có Jira project key');
       }
     }
 
+    console.log(`✅ [Sync] Hoàn tất: GitHub=${results.github}, Jira=${results.jira}, Errors=${results.errors.length}`);
+    
     return res.json({
       message: '✅ Đồng bộ dữ liệu hoàn tất!',
       stats: results
