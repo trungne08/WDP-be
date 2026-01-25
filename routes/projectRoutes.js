@@ -103,5 +103,103 @@ module.exports = (app) => {
      *         description: Không phải LECTURER
      */
     app.get('/api/projects/lecturer/classes/:classId', authenticateToken, ProjectController.getProjectsByClassForLecturer);
+
+    /**
+     * @swagger
+     * /api/projects/my-projects:
+     *   get:
+     *     summary: Lấy TẤT CẢ projects của sinh viên (nhiều lớp)
+     *     tags: [Projects]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Dành cho STUDENT. Trả về TẤT CẢ projects mà sinh viên đang tham gia ở các lớp khác nhau.
+     *       Mỗi project bao gồm thông tin lớp (class) và team.
+     *     responses:
+     *       200:
+     *         description: Danh sách projects của sinh viên
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 total:
+     *                   type: number
+     *                 projects:
+     *                   type: array
+     *                   items:
+     *                     type: object
+     *                     properties:
+     *                       _id:
+     *                         type: string
+     *                       name:
+     *                         type: string
+     *                       class:
+     *                         type: object
+     *                         description: Thông tin lớp của project này
+     *                       team_id:
+     *                         type: string
+     *       403:
+     *         description: Không phải STUDENT
+     */
+    app.get('/api/projects/my-projects', authenticateToken, ProjectController.getMyProjects);
+
+    /**
+     * @swagger
+     * /api/projects/teams/{teamId}:
+     *   get:
+     *     summary: Lấy project của một team
+     *     tags: [Projects]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Lấy project của một team cụ thể.
+     *       - Student: Chỉ xem được team mà mình thuộc
+     *       - Lecturer: Xem được team trong lớp của mình
+     *     parameters:
+     *       - in: path
+     *         name: teamId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của team
+     *     responses:
+     *       200:
+     *         description: Thông tin project của team (hoặc null nếu chưa có)
+     *       403:
+     *         description: Không có quyền xem team này
+     *       404:
+     *         description: Không tìm thấy team
+     */
+    app.get('/api/projects/teams/:teamId', authenticateToken, ProjectController.getProjectByTeam);
+
+    /**
+     * @swagger
+     * /api/projects/classes/{classId}:
+     *   get:
+     *     summary: Lấy tất cả projects của một lớp
+     *     tags: [Projects]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Lấy tất cả projects của một lớp học.
+     *       - Student: Chỉ xem được lớp mà mình đang học
+     *       - Lecturer: Chỉ xem được lớp của mình
+     *     parameters:
+     *       - in: path
+     *         name: classId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của lớp học
+     *     responses:
+     *       200:
+     *         description: Danh sách projects của lớp
+     *       403:
+     *         description: Không có quyền xem lớp này
+     *       404:
+     *         description: Không tìm thấy lớp
+     */
+    app.get('/api/projects/classes/:classId', authenticateToken, ProjectController.getProjectsByClass);
 };
 
