@@ -59,6 +59,8 @@ module.exports = (app) => {
      *   get:
      *     summary: Lấy danh sách lịch dạy của một lớp
      *     tags: [Academic]
+     *     security:
+     *       - bearerAuth: []
      *     parameters:
      *       - in: path
      *         name: classId
@@ -133,6 +135,8 @@ module.exports = (app) => {
      *   get:
      *     summary: Lấy danh sách Bài tập & Lab của lớp
      *     tags: [Academic]
+     *     security:
+     *       - bearerAuth: []
      *     parameters:
      *       - in: path
      *         name: classId
