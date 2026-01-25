@@ -36,6 +36,33 @@ async function loadUserByRole(role, userId) {
   return null;
 }
 
+/**
+ * Sanitize Jira Project Key: Trim, uppercase, loại bỏ ký tự không hợp lệ
+ * Ví dụ: "[SCRUM] My Team" -> "SCRUM", "scrum " -> "SCRUM", "SCRUM-1" -> "SCRUM1"
+ * Jira Project Key chỉ cho phép: chữ cái, số, dấu gạch ngang, dấu gạch dưới
+ */
+function sanitizeJiraProjectKey(input) {
+  if (!input || typeof input !== 'string') return '';
+  
+  // 1. Loại bỏ dấu ngoặc vuông và nội dung sau (ví dụ: "[SCRUM] My Team" -> "[SCRUM]")
+  let cleaned = input.trim();
+  const bracketMatch = cleaned.match(/^\[([^\]]+)\]/);
+  if (bracketMatch) {
+    cleaned = bracketMatch[1];
+  }
+  
+  // 2. Trim lại
+  cleaned = cleaned.trim();
+  
+  // 3. Chỉ giữ lại chữ cái, số, dấu gạch ngang, dấu gạch dưới (Jira Project Key format)
+  cleaned = cleaned.replace(/[^A-Za-z0-9_-]/g, '');
+  
+  // 4. Uppercase để chuẩn hóa
+  cleaned = cleaned.toUpperCase();
+  
+  return cleaned;
+}
+
 // =========================
 // Helpers: đảm bảo GitHub/Jira không bị link trùng cho 2 user khác nhau
 // =========================
@@ -439,13 +466,27 @@ exports.syncMyProjectData = async (req, res) => {
     // SYNC JIRA (nếu có token và project key)
     // ==========================================
     if (user.integrations?.jira?.accessToken && user.integrations?.jira?.cloudId && project.jiraProjectKey) {
+      // Sanitize projectKey: loại bỏ "[SCRUM]", trim, uppercase
+      const cleanProjectKey = sanitizeJiraProjectKey(project.jiraProjectKey);
+      
+      if (!cleanProjectKey) {
+        results.errors.push('Jira Project Key không hợp lệ. Vui lòng kiểm tra lại.');
+        return res.json({
+          message: '✅ Đồng bộ dữ liệu hoàn tất!',
+          stats: results
+        });
+      }
+
       const cloudId = user.integrations.jira.cloudId;
       const jiraApiUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search`;
+      
+      console.log(`🔄 [Sync Jira] Đang sync dự án: "${cleanProjectKey}" với CloudID: ${cloudId}`);
+      
       const doJiraSearch = (token) =>
         axios.get(jiraApiUrl, {
           headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
           params: {
-            jql: `project = ${project.jiraProjectKey}`,
+            jql: `project = "${cleanProjectKey}"`, // Dấu ngoặc kép để tránh lỗi JQL
             maxResults: 100,
             fields: 'summary,status,assignee,created,updated,issuetype,storyPoints'
           }
@@ -473,8 +514,14 @@ exports.syncMyProjectData = async (req, res) => {
             console.error('Lỗi Sync Jira (refresh token thất bại):', refreshErr.message);
             results.errors.push('Token Jira đã hết hạn. Vui lòng kết nối lại Jira.');
           }
-        } else if (status === 410) {
-          results.errors.push('Jira project không còn tồn tại (410). GitHub đã đồng bộ bình thường.');
+        } else if (status === 404 || status === 410) {
+          // 404: Project không tồn tại (key sai hoặc không có quyền)
+          // 410: Project đã bị xóa
+          const message = status === 404 
+            ? `Không tìm thấy Jira Project có Key "${cleanProjectKey}". Kiểm tra lại Project Key trên Jira!`
+            : 'Jira project không còn tồn tại (410). GitHub đã đồng bộ bình thường.';
+          results.errors.push(message);
+          console.warn(`⚠️ [Sync Jira] ${status === 404 ? '404' : '410'}: Project Key "${cleanProjectKey}"`);
         } else if (status === 401 || status === 403) {
           results.errors.push('Token Jira đã hết hạn. Vui lòng kết nối lại Jira.');
         } else {

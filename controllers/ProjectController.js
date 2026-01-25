@@ -12,7 +12,18 @@ exports.createProject = async (req, res) => {
       return res.status(403).json({ error: 'Chỉ sinh viên (Leader) mới được tạo Project.' });
     }
 
-    const { name, members, githubRepoUrl, jiraProjectKey } = req.body || {};
+    const { name, members, githubRepoUrl, jiraProjectKey: rawJiraKey } = req.body || {};
+    
+    // Sanitize Jira Project Key (loại bỏ "[SCRUM]", trim, uppercase)
+    const sanitizeJiraProjectKey = (input) => {
+      if (!input || typeof input !== 'string') return '';
+      let cleaned = input.trim();
+      const bracketMatch = cleaned.match(/^\[([^\]]+)\]/);
+      if (bracketMatch) cleaned = bracketMatch[1];
+      cleaned = cleaned.trim().replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
+      return cleaned;
+    };
+    const jiraProjectKey = rawJiraKey ? sanitizeJiraProjectKey(rawJiraKey) : '';
 
     if (!name || !Array.isArray(members) || members.length === 0) {
       return res.status(400).json({
