@@ -14,17 +14,13 @@ const SyncHistorySchema = new Schema(
 const TeamSchema = new Schema({
     class_id: { type: Schema.Types.ObjectId, ref: 'Class', required: true },
     project_name: String,
-    
-    // Cấu hình Jira (flat fields theo schema)
-    jira_project_key: String, // e.g. SWP
-    jira_board_id: Number,     // REQUIRED for Agile API
+    jira_project_key: String, 
+    jira_board_id: Number,    
     jira_url: String,
-    api_token_jira: String,   // Encrypted
-    
-    // Cấu hình GitHub (flat fields theo schema)
+    api_token_jira: String,   
+    jira_story_point_field: { type: String, default: 'customfield_10016' },
     github_repo_url: String,
-    api_token_github: String, // Encrypted
-    
+    api_token_github: String,
     last_sync_at: Date,
     sync_history: { type: [SyncHistorySchema], default: [] },
     created_at: { type: Date, default: Date.now }
