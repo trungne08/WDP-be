@@ -966,8 +966,11 @@ const getStudentsInClass = async (req, res) => {
         const teams = await models.Team.find({ class_id: classId }).select('_id project_name');
         const teamIds = teams.map(t => t._id);
 
-        // Tìm tất cả thành viên trong các Team đó
-        const members = await models.TeamMember.find({ team_id: { $in: teamIds } })
+        // Tìm tất cả thành viên trong các Team đó (chỉ lấy is_active: true, bỏ qua xóa mềm)
+        const members = await models.TeamMember.find({
+            team_id: { $in: teamIds },
+            is_active: true
+        })
             .populate('student_id', 'student_code full_name email avatar_url')
             .populate('team_id', 'project_name')
             .lean();
@@ -1077,41 +1080,52 @@ const addStudentToClass = async (req, res) => {
             const team = await findOrCreateTeam(classId, group);
 
             // 2. Check xem đã vào lớp chưa (thông qua bất kỳ team nào của lớp đó)
-            // Tìm tất cả team của lớp
             const classTeams = await models.Team.find({ class_id: classId }).select('_id');
             const classTeamIds = classTeams.map(t => t._id);
             
-            // Check member
             const existingMember = await models.TeamMember.findOne({
                 team_id: { $in: classTeamIds },
                 student_id: student._id
             });
 
             if (existingMember) {
-                return res.status(400).json({ error: 'Sinh viên này đã có trong lớp rồi!' });
+                if (existingMember.is_active) {
+                    return res.status(400).json({ error: 'Sinh viên này đã có trong lớp rồi!' });
+                }
+                // Đã xóa mềm trước đó -> Khôi phục (soft restore)
+                let role = 'Member';
+                if (is_leader) {
+                    await models.TeamMember.updateMany(
+                        { team_id: team._id, role_in_team: 'Leader', _id: { $ne: existingMember._id } },
+                        { role_in_team: 'Member' }
+                    );
+                    role = 'Leader';
+                }
+                await models.TeamMember.findByIdAndUpdate(existingMember._id, {
+                    team_id: team._id,
+                    role_in_team: role,
+                    is_active: true
+                });
+                return res.status(200).json({ message: '✅ Đã khôi phục sinh viên vào lớp (Enrolled)!' });
             }
 
             // 3. Nếu set Leader, check xem team có Leader chưa
             let role = 'Member';
             if (is_leader) {
-                // Hạ bệ Leader cũ nếu có
                 await models.TeamMember.updateMany(
-                    { team_id: team._id, role_in_team: 'Leader' },
+                    { team_id: team._id, role_in_team: 'Leader', is_active: true },
                     { role_in_team: 'Member' }
                 );
                 role = 'Leader';
             }
 
-            // 4. Enroll
-            const newMember = await models.TeamMember.create({
+            // 4. Enroll (tạo mới)
+            await models.TeamMember.create({
                 team_id: team._id,
                 student_id: student._id,
                 role_in_team: role,
                 is_active: true
             });
-
-            // Không cần bắn Socket thủ công nữa - RealtimeService sẽ tự động bắt được
-            // (Hybrid Strategy: Change Stream lo việc này)
 
             return res.status(201).json({ message: '✅ Đã thêm sinh viên vào lớp thành công (Enrolled)!' });
         } else {
@@ -1179,10 +1193,11 @@ const updateStudentInClass = async (req, res) => {
 
             const member = await models.TeamMember.findOne({
                 team_id: { $in: classTeamIds },
-                student_id: student_id
+                student_id: student_id,
+                is_active: true
             }).populate('team_id');
 
-            if (!member) return res.status(404).json({ error: 'Không tìm thấy sinh viên trong lớp' });
+            if (!member) return res.status(404).json({ error: 'Không tìm thấy sinh viên trong lớp (hoặc đã bị xóa).' });
 
             // Check xem có đổi nhóm không
             const currentGroup = parseInt(member.team_id.project_name.replace('Group ', ''));
@@ -1204,7 +1219,7 @@ const updateStudentInClass = async (req, res) => {
                 // Nếu set lên Leader -> Hạ Leader cũ của targetTeam
                 if (newRole === 'Leader') {
                     await models.TeamMember.updateMany(
-                        { team_id: targetTeamId, role_in_team: 'Leader', _id: { $ne: member._id } },
+                        { team_id: targetTeamId, role_in_team: 'Leader', is_active: true, _id: { $ne: member._id } },
                         { role_in_team: 'Member' }
                     );
                 }
@@ -1248,19 +1263,21 @@ const removeStudentFromClass = async (req, res) => {
         if (!student_id && !pending_id) return res.status(400).json({ error: 'Cần student_id hoặc pending_id' });
 
         if (student_id) {
-            // -- ENROLLED --
+            // -- ENROLLED -- Xóa mềm (soft delete): set is_active = false
             const classTeams = await models.Team.find({ class_id: classId }).select('_id');
             const classTeamIds = classTeams.map(t => t._id);
 
-            // Xóa khỏi DB (RealtimeService sẽ tự động bắt được và bắn Socket)
-            await models.TeamMember.deleteOne({
-                team_id: { $in: classTeamIds },
-                student_id: student_id
-            });
+            const updated = await models.TeamMember.findOneAndUpdate(
+                { team_id: { $in: classTeamIds }, student_id: student_id, is_active: true },
+                { is_active: false },
+                { new: true }
+            ).populate('student_id', 'full_name student_code avatar_url email').lean();
 
-            // Không cần bắn Socket thủ công nữa - RealtimeService sẽ tự động bắt được
-            // (Hybrid Strategy: Change Stream lo việc này)
+            if (!updated) {
+                return res.status(404).json({ error: 'Không tìm thấy sinh viên trong lớp hoặc đã bị xóa trước đó.' });
+            }
 
+            // RealtimeService sẽ bắt được event update (is_active: false) và bắn action: 'delete'
             return res.json({ message: '✅ Đã xóa sinh viên khỏi lớp!' });
 
         } else if (pending_id) {

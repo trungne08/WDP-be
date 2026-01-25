@@ -38,27 +38,43 @@ const watchTeamMembers = () => {
         }
       }
 
-      // Xử lý UPDATE (Sửa nhóm, sửa role)
+      // Xử lý UPDATE (Sửa nhóm, role, hoặc xóa mềm is_active: false)
       if (change.operationType === 'update') {
         const doc = change.fullDocument;
         if (!doc) return;
 
         const team = await Team.findById(doc.team_id);
-        if (team) {
-          const classId = team.class_id.toString();
+        if (!team) return;
 
-          const fullData = await TeamMember.findById(doc._id)
-            .populate('student_id', 'full_name student_code avatar_url email')
-            .populate('team_id', 'project_name')
-            .lean();
+        const classId = team.class_id.toString();
 
+        // Xóa mềm: is_active = false -> bắn action 'delete' để FE xóa khỏi UI
+        if (doc.is_active === false) {
           if (global._io) {
             global._io.to(classId).emit('team_member_changed', {
-              action: 'update',
-              data: fullData
+              action: 'delete',
+              data: {
+                _id: doc._id,
+                student_id: doc.student_id
+              }
             });
-            console.log(`📡 Member updated (ID: ${doc._id}) -> Room ${classId}`);
+            console.log(`📡 Member soft-deleted (ID: ${doc._id}) -> Room ${classId}`);
           }
+          return;
+        }
+
+        // Cập nhật thông tin hoặc khôi phục (is_active: true)
+        const fullData = await TeamMember.findById(doc._id)
+          .populate('student_id', 'full_name student_code avatar_url email')
+          .populate('team_id', 'project_name')
+          .lean();
+
+        if (global._io) {
+          global._io.to(classId).emit('team_member_changed', {
+            action: 'update',
+            data: fullData
+          });
+          console.log(`📡 Member updated (ID: ${doc._id}) -> Room ${classId}`);
         }
       }
 
