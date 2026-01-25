@@ -67,7 +67,7 @@ const JiraService = {
                 headers: getJiraHeaders(tokenBase64)
             });
 
-            const targetField = response.data.find(f => 
+            const targetField = response.data.find(f =>
                 f.name === 'Story Points' || f.name === 'Story point estimate' || f.name === 'Story Points (Agile)'
             );
             return targetField ? targetField.id : 'customfield_10026';
@@ -87,10 +87,10 @@ const JiraService = {
                 fields: {
                     project: { key: data.projectKey },
                     summary: data.summary,
-                    description: { 
-                        type: "doc", 
-                        version: 1, 
-                        content: [{ type: "paragraph", content: [{ type: "text", text: data.description || "" }] }] 
+                    description: {
+                        type: "doc",
+                        version: 1,
+                        content: [{ type: "paragraph", content: [{ type: "text", text: data.description || "" }] }]
                     },
                     issuetype: { name: "Task" },
                     ...(data.assigneeAccountId && { assignee: { accountId: data.assigneeAccountId } }),
@@ -119,7 +119,7 @@ const JiraService = {
                 const fieldId = data.storyPointFieldId || 'customfield_10026';
                 payload.fields[fieldId] = Number(data.storyPoint);
             }
-            
+
             await axios.put(`${cleanUrl}/rest/api/3/issue/${issueIdOrKey}`, payload, {
                 headers: getJiraHeaders(tokenBase64)
             });
@@ -141,7 +141,56 @@ const JiraService = {
             console.error("❌ Delete Jira Issue Error:", error.response?.data || error.message);
             throw new Error("Không thể xóa Task trên Jira");
         }
-    }
+    },
+
+    createJiraSprint: async (jiraUrl, tokenBase64, boardId, name, startDate, endDate) => {
+        try {
+            const cleanUrl = jiraUrl.replace(/\/$/, "");
+
+            const payload = {
+                originBoardId: Number(boardId), // Bắt buộc là số
+                name: name,
+                startDate: startDate, // ISO String (2024-02-01T09:00:00.000Z)
+                endDate: endDate
+            };
+
+            const response = await axios.post(`${cleanUrl}/rest/agile/1.0/sprint`, payload, {
+                headers: getJiraHeaders(tokenBase64)
+            });
+            return response.data;
+
+        } catch (error) {
+            console.error("❌ Create Sprint Error:", error.response?.data || error.message);
+            // Ném lỗi chi tiết để Controller bắt được
+            throw new Error(error.response?.data?.message || "Lỗi tạo Sprint bên Jira");
+        }
+    },
+
+    startJiraSprint: async (jiraUrl, tokenBase64, sprintId, startDate, endDate) => {
+        try {
+            const cleanUrl = jiraUrl.replace(/\/$/, "");
+            
+            // Payload bắt buộc để Start Sprint trên Jira
+            const payload = {
+                state: 'active',
+                startDate: startDate, // Định dạng ISO 8601 (VD: 2024-02-01T09:00:00.000Z)
+                endDate: endDate
+            };
+
+            // Gọi API Jira Agile: POST /rest/agile/1.0/sprint/{sprintId}
+            // Lưu ý: Endpoint này dùng chung cho update, nhưng khi gửi state='active' nó sẽ hiểu là Start Sprint
+            const response = await axios.post(`${cleanUrl}/rest/agile/1.0/sprint/${sprintId}`, payload, {
+                headers: getJiraHeaders(tokenBase64)
+            });
+            
+            return response.data;
+
+        } catch (error) {
+            console.error("❌ Start Sprint Error:", error.response?.data || error.message);
+            // Ném lỗi chi tiết ra để Controller bắt được
+            throw new Error(error.response?.data?.message || "Không thể bắt đầu Sprint trên Jira");
+        }
+    },
 };
 
 module.exports = JiraService;
