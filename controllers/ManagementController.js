@@ -109,6 +109,53 @@ const getSemesters = async (req, res) => {
     }
 };
 
+/**
+ * GET /management/semesters/:semesterId
+ * Lấy chi tiết học kỳ (kèm danh sách lớp trong học kỳ)
+ */
+const getSemesterById = async (req, res) => {
+    try {
+        const { semesterId } = req.params;
+        const mongoose = require('mongoose');
+
+        if (!mongoose.Types.ObjectId.isValid(semesterId)) {
+            return res.status(400).json({ error: 'semesterId không hợp lệ' });
+        }
+
+        const semester = await Semester.findById(semesterId)
+            .populate('created_by_admin', 'email full_name')
+            .lean();
+
+        if (!semester) {
+            return res.status(404).json({ error: 'Không tìm thấy học kỳ' });
+        }
+
+        // Lấy danh sách lớp trong học kỳ này
+        const classes = await Class.find({ semester_id: semesterId })
+            .populate('lecturer_id', 'email full_name avatar_url')
+            .populate('subject_id', 'name code')
+            .select('_id name class_code subjectName subject_id lecturer_id status gradeStructure contributionConfig')
+            .lean();
+
+        // Thống kê
+        const stats = {
+            total_classes: classes.length,
+            active_classes: classes.filter(c => c.status === 'Active').length,
+            archived_classes: classes.filter(c => c.status === 'Archived').length,
+            total_lecturers: new Set(classes.map(c => c.lecturer_id?._id?.toString()).filter(Boolean)).size
+        };
+
+        res.json({
+            semester,
+            classes,
+            stats
+        });
+    } catch (error) {
+        console.error('Get semester by id error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
 // ==========================================
 // QUẢN LÝ MÔN HỌC (SUBJECT MANAGEMENT)
 // ==========================================
@@ -200,6 +247,54 @@ const getSubjects = async (req, res) => {
         });
     } catch (error) {
         console.error('Get subjects error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * GET /management/subjects/:subjectId
+ * Lấy chi tiết môn học (kèm danh sách lớp dạy môn này)
+ */
+const getSubjectById = async (req, res) => {
+    try {
+        const { subjectId } = req.params;
+        const mongoose = require('mongoose');
+
+        if (!mongoose.Types.ObjectId.isValid(subjectId)) {
+            return res.status(400).json({ error: 'subjectId không hợp lệ' });
+        }
+
+        const subject = await Subject.findById(subjectId)
+            .populate('created_by_admin', 'email full_name')
+            .lean();
+
+        if (!subject) {
+            return res.status(404).json({ error: 'Không tìm thấy môn học' });
+        }
+
+        // Lấy danh sách lớp dạy môn này (có thể có nhiều lớp, nhiều giảng viên)
+        const classes = await Class.find({ subject_id: subjectId })
+            .populate('lecturer_id', 'email full_name avatar_url')
+            .populate('semester_id', 'name code start_date end_date')
+            .select('_id name class_code subjectName lecturer_id semester_id status')
+            .lean();
+
+        // Thống kê
+        const stats = {
+            total_classes: classes.length,
+            active_classes: classes.filter(c => c.status === 'Active').length,
+            archived_classes: classes.filter(c => c.status === 'Archived').length,
+            total_lecturers: new Set(classes.map(c => c.lecturer_id?._id?.toString()).filter(Boolean)).size,
+            total_semesters: new Set(classes.map(c => c.semester_id?._id?.toString()).filter(Boolean)).size
+        };
+
+        res.json({
+            subject,
+            classes,
+            stats
+        });
+    } catch (error) {
+        console.error('Get subject by id error:', error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -487,6 +582,114 @@ const getClasses = async (req, res) => {
         });
     } catch (error) {
         console.error('Get classes error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * GET /management/classes/:classId
+ * Lấy chi tiết lớp học (kèm thông tin đầy đủ)
+ */
+const getClassById = async (req, res) => {
+    try {
+        const { classId } = req.params;
+        const mongoose = require('mongoose');
+
+        if (!mongoose.Types.ObjectId.isValid(classId)) {
+            return res.status(400).json({ error: 'classId không hợp lệ' });
+        }
+
+        const classInfo = await Class.findById(classId)
+            .populate('semester_id', '_id name code start_date end_date status')
+            .populate('lecturer_id', '_id email full_name avatar_url')
+            .populate('subject_id', '_id name code description credits')
+            .lean();
+
+        if (!classInfo) {
+            return res.status(404).json({ error: 'Không tìm thấy lớp học' });
+        }
+
+        // Lấy danh sách team trong lớp
+        const teams = await Team.find({ class_id: classId })
+            .select('_id project_name jira_project_key github_repo_url last_sync_at')
+            .lean();
+
+        // Lấy số lượng sinh viên trong lớp (qua TeamMember)
+        const teamIds = teams.map(t => t._id);
+        const studentCount = await TeamMember.countDocuments({
+            team_id: { $in: teamIds },
+            is_active: true
+        });
+
+        // Lấy số lượng project trong lớp
+        const projectCount = await models.Project.countDocuments({
+            class_id: classId
+        });
+
+        // Thống kê
+        const stats = {
+            total_teams: teams.length,
+            total_students: studentCount,
+            total_projects: projectCount
+        };
+
+        res.json({
+            class: classInfo,
+            teams,
+            stats
+        });
+    } catch (error) {
+        console.error('Get class by id error:', error);
+        res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * GET /management/lecturers/:lecturerId/classes
+ * Lấy danh sách lớp giảng viên đang dạy
+ */
+const getLecturerClasses = async (req, res) => {
+    try {
+        const { lecturerId } = req.params;
+        const mongoose = require('mongoose');
+
+        if (!mongoose.Types.ObjectId.isValid(lecturerId)) {
+            return res.status(400).json({ error: 'lecturerId không hợp lệ' });
+        }
+
+        // Kiểm tra giảng viên tồn tại
+        const lecturer = await models.Lecturer.findById(lecturerId)
+            .select('_id email full_name avatar_url')
+            .lean();
+
+        if (!lecturer) {
+            return res.status(404).json({ error: 'Không tìm thấy giảng viên' });
+        }
+
+        // Lấy danh sách lớp giảng viên đang dạy
+        const classes = await Class.find({ lecturer_id: lecturerId })
+            .populate('semester_id', '_id name code start_date end_date status')
+            .populate('subject_id', '_id name code description')
+            .select('_id name class_code subjectName subject_id semester_id status gradeStructure contributionConfig')
+            .sort({ created_at: -1 })
+            .lean();
+
+        // Thống kê
+        const stats = {
+            total_classes: classes.length,
+            active_classes: classes.filter(c => c.status === 'Active').length,
+            archived_classes: classes.filter(c => c.status === 'Archived').length,
+            total_subjects: new Set(classes.map(c => c.subject_id?._id?.toString() || c.subjectName).filter(Boolean)).size,
+            total_semesters: new Set(classes.map(c => c.semester_id?._id?.toString()).filter(Boolean)).size
+        };
+
+        res.json({
+            lecturer,
+            classes,
+            stats
+        });
+    } catch (error) {
+        console.error('Get lecturer classes error:', error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -1295,12 +1498,16 @@ const removeStudentFromClass = async (req, res) => {
 module.exports = {
     createSemester,
     getSemesters,
+    getSemesterById,
     createSubject,
     getSubjects,
+    getSubjectById,
     createUser,
     getUsers,
     createClass,
     getClasses,
+    getClassById,
+    getLecturerClasses,
     configureClassGrading,
     importStudents,
     getStudentsInClass,

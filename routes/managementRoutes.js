@@ -71,6 +71,40 @@ module.exports = (app) => {
 
     /**
      * @swagger
+     * /api/management/semesters/{semesterId}:
+     *   get:
+     *     summary: Lấy chi tiết học kỳ (kèm danh sách lớp)
+     *     tags: [Management]
+     *     parameters:
+     *       - in: path
+     *         name: semesterId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của học kỳ
+     *     responses:
+     *       200:
+     *         description: Chi tiết học kỳ kèm danh sách lớp
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 semester:
+     *                   type: object
+     *                 classes:
+     *                   type: array
+     *                 stats:
+     *                   type: object
+     *       400:
+     *         description: semesterId không hợp lệ
+     *       404:
+     *         description: Không tìm thấy học kỳ
+     */
+    app.get('/api/management/semesters/:semesterId', ManagementController.getSemesterById);
+
+    /**
+     * @swagger
      * /api/management/subjects:
      *   post:
      *     summary: "Tạo môn học mới (VD: Software Engineering Project)"
@@ -153,6 +187,40 @@ module.exports = (app) => {
      *                         type: string
      */
     app.get('/api/management/subjects', ManagementController.getSubjects);
+
+    /**
+     * @swagger
+     * /api/management/subjects/{subjectId}:
+     *   get:
+     *     summary: Lấy chi tiết môn học (kèm danh sách lớp dạy môn này)
+     *     tags: [Management]
+     *     parameters:
+     *       - in: path
+     *         name: subjectId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của môn học
+     *     responses:
+     *       200:
+     *         description: Chi tiết môn học kèm danh sách lớp
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 subject:
+     *                   type: object
+     *                 classes:
+     *                   type: array
+     *                 stats:
+     *                   type: object
+     *       400:
+     *         description: subjectId không hợp lệ
+     *       404:
+     *         description: Không tìm thấy môn học
+     */
+    app.get('/api/management/subjects/:subjectId', ManagementController.getSubjectById);
 
     /**
      * @swagger
@@ -306,6 +374,74 @@ module.exports = (app) => {
      *                   type: array
      */
     app.get('/api/management/classes', ManagementController.getClasses);
+
+    /**
+     * @swagger
+     * /api/management/classes/{classId}:
+     *   get:
+     *     summary: Lấy chi tiết lớp học (kèm thông tin đầy đủ)
+     *     tags: [Management]
+     *     parameters:
+     *       - in: path
+     *         name: classId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của lớp học
+     *     responses:
+     *       200:
+     *         description: Chi tiết lớp học kèm danh sách team và thống kê
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 class:
+     *                   type: object
+     *                 teams:
+     *                   type: array
+     *                 stats:
+     *                   type: object
+     *       400:
+     *         description: classId không hợp lệ
+     *       404:
+     *         description: Không tìm thấy lớp học
+     */
+    app.get('/api/management/classes/:classId', ManagementController.getClassById);
+
+    /**
+     * @swagger
+     * /api/management/lecturers/{lecturerId}/classes:
+     *   get:
+     *     summary: Lấy danh sách lớp giảng viên đang dạy
+     *     tags: [Management]
+     *     parameters:
+     *       - in: path
+     *         name: lecturerId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của giảng viên
+     *     responses:
+     *       200:
+     *         description: Danh sách lớp giảng viên đang dạy kèm thống kê
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 lecturer:
+     *                   type: object
+     *                 classes:
+     *                   type: array
+     *                 stats:
+     *                   type: object
+     *       400:
+     *         description: lecturerId không hợp lệ
+     *       404:
+     *         description: Không tìm thấy giảng viên
+     */
+    app.get('/api/management/lecturers/:lecturerId/classes', ManagementController.getLecturerClasses);
 
     /**
      * @swagger

@@ -107,11 +107,46 @@ exports.getTeam = async (req, res) => {
         const { teamId } = req.params;
         if (!isValidObjectId(teamId)) return res.status(400).json({ error: 'teamId không hợp lệ' });
 
-        const team = await Team.findById(teamId).lean();
+        // Lấy thông tin team với populate đầy đủ
+        const team = await Team.findById(teamId)
+            .populate({
+                path: 'class_id',
+                populate: [
+                    {
+                        path: 'semester_id',
+                        select: '_id name code start_date end_date status'
+                    },
+                    {
+                        path: 'lecturer_id',
+                        select: '_id email full_name avatar_url'
+                    },
+                    {
+                        path: 'subject_id',
+                        select: '_id name code description'
+                    }
+                ]
+            })
+            .lean();
+        
         if (!team) return res.status(404).json({ error: 'Không tìm thấy team' });
 
-        const [memberCount, sprintCount, githubCommits] = await Promise.all([
-            TeamMember.countDocuments({ team_id: teamId }),
+        // Lấy danh sách thành viên
+        const members = await TeamMember.find({ team_id: teamId, is_active: true })
+            .populate('student_id', '_id student_code email full_name avatar_url')
+            .select('_id student_id role_in_team is_leader project_id')
+            .lean();
+
+        // Lấy project của team
+        const Project = require('../models/Project');
+        const project = await Project.findOne({ team_id: teamId })
+            .populate('leader_id', 'student_code email full_name avatar_url')
+            .populate('members', 'student_code email full_name avatar_url')
+            .populate('semester_id', '_id name code')
+            .populate('subject_id', '_id name code')
+            .lean();
+
+        // Thống kê
+        const [sprintCount, githubCommits] = await Promise.all([
             Sprint.countDocuments({ team_id: teamId }),
             GithubCommit.countDocuments({ team_id: teamId })
         ]);
@@ -122,8 +157,10 @@ exports.getTeam = async (req, res) => {
 
         res.json({
             team,
-            counts: {
-                members: memberCount,
+            members,
+            project: project || null,
+            stats: {
+                members: members.length,
                 sprints: sprintCount,
                 tasks: jiraTasks,
                 commits: githubCommits

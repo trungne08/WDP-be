@@ -74,7 +74,7 @@ module.exports = (app) => {
      * @swagger
      * /api/teams/{teamId}:
      *   get:
-     *     summary: Xem thông tin team + thống kê nhanh
+     *     summary: Xem thông tin chi tiết team (kèm thành viên, project, thống kê)
      *     tags: [Team Management]
      *     parameters:
      *       - in: path
@@ -82,9 +82,10 @@ module.exports = (app) => {
      *         required: true
      *         schema:
      *           type: string
+     *         description: ID của team
      *     responses:
      *       200:
-     *         description: Thông tin team
+     *         description: Thông tin chi tiết team
      *         content:
      *           application/json:
      *             schema:
@@ -92,8 +93,17 @@ module.exports = (app) => {
      *               properties:
      *                 team:
      *                   type: object
-     *                 counts:
+     *                   description: Thông tin team (đã populate class_id với semester, lecturer, subject)
+     *                 members:
+     *                   type: array
+     *                   description: Danh sách thành viên trong team
+     *                 project:
      *                   type: object
+     *                   nullable: true
+     *                   description: Project của team (nếu có)
+     *                 stats:
+     *                   type: object
+     *                   description: Thống kê (số thành viên, sprints, tasks, commits)
      *       400:
      *         description: teamId không hợp lệ
      *       404:

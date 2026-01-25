@@ -18,8 +18,9 @@ module.exports = (app) => {
      *     description: |
      *       Leader (STUDENT) tạo Project mới cho nhóm hiện tại.
      *       - Validate: tất cả members phải đang thuộc cùng một team (TeamMember)
-     *       - Validate: chưa member nào đã có project_id khác
+     *       - Validate: chưa member nào đã có project ở cùng lớp + cùng học kỳ + cùng môn
      *       - Tự động set leader là user hiện tại, lecturer lấy từ Class của team (nếu có)
+     *       - Tự động lấy class_id, team_id, semester_id, subject_id từ Team → Class (không cần gửi lên)
      *     requestBody:
      *       required: true
      *       content:
@@ -48,8 +49,120 @@ module.exports = (app) => {
      *     responses:
      *       201:
      *         description: Tạo Project thành công
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message:
+     *                   type: string
+     *                   example: "✅ Tạo Project thành công!"
+     *                 project:
+     *                   type: object
+     *                   properties:
+     *                     _id:
+     *                       type: string
+     *                     name:
+     *                       type: string
+     *                     class_id:
+     *                       type: object
+     *                       description: Thông tin lớp học (tự động lấy từ Team)
+     *                       properties:
+     *                         _id:
+     *                           type: string
+     *                         name:
+     *                           type: string
+     *                         class_code:
+     *                           type: string
+     *                         subjectName:
+     *                           type: string
+     *                     team_id:
+     *                       type: object
+     *                       description: Thông tin team (tự động lấy từ TeamMember)
+     *                       properties:
+     *                         _id:
+     *                           type: string
+     *                         project_name:
+     *                           type: string
+     *                     semester_id:
+     *                       type: object
+     *                       description: Thông tin học kỳ (tự động lấy từ Class)
+     *                       properties:
+     *                         _id:
+     *                           type: string
+     *                         name:
+     *                           type: string
+     *                         code:
+     *                           type: string
+     *                     subject_id:
+     *                       type: object
+     *                       nullable: true
+     *                       description: Thông tin môn học (tự động lấy từ Class, có thể null)
+     *                       properties:
+     *                         _id:
+     *                           type: string
+     *                         name:
+     *                           type: string
+     *                         code:
+     *                           type: string
+     *                     leader_id:
+     *                       type: object
+     *                       description: Thông tin leader (tự động set là user hiện tại)
+     *                     lecturer_id:
+     *                       type: object
+     *                       nullable: true
+     *                       description: Thông tin giảng viên (tự động lấy từ Class)
+     *                     members:
+     *                       type: array
+     *                       items:
+     *                         type: object
+     *                       description: Danh sách thành viên (bao gồm cả leader)
+     *                     githubRepoUrl:
+     *                       type: string
+     *                     jiraProjectKey:
+     *                       type: string
+     *             examples:
+     *               success:
+     *                 summary: Tạo project thành công
+     *                 value:
+     *                   message: "✅ Tạo Project thành công!"
+     *                   project:
+     *                     _id: "65a1b2c3d4e5f67890123456"
+     *                     name: "E-Commerce Website"
+     *                     class_id:
+     *                       _id: "65a1b2c3d4e5f67890123457"
+     *                       name: "SE1837"
+     *                       class_code: "SE1837"
+     *                       subjectName: "Software Engineering"
+     *                     team_id:
+     *                       _id: "65a1b2c3d4e5f67890123458"
+     *                       project_name: "Team 1"
+     *                     semester_id:
+     *                       _id: "65a1b2c3d4e5f67890123459"
+     *                       name: "Spring 2026"
+     *                       code: "SP2026"
+     *                     subject_id:
+     *                       _id: "65a1b2c3d4e5f6789012345a"
+     *                       name: "Software Engineering"
+     *                       code: "SE"
+     *                     leader_id:
+     *                       _id: "65a1b2c3d4e5f6789012345b"
+     *                       student_code: "SE170505"
+     *                       email: "student@fpt.edu.vn"
+     *                       full_name: "Nguyễn Văn A"
+     *                     lecturer_id:
+     *                       _id: "65a1b2c3d4e5f6789012345c"
+     *                       email: "lecturer@fpt.edu.vn"
+     *                       full_name: "Trần Thị B"
+     *                     members:
+     *                       - _id: "65a1b2c3d4e5f6789012345b"
+     *                         student_code: "SE170505"
+     *                         email: "student@fpt.edu.vn"
+     *                         full_name: "Nguyễn Văn A"
+     *                     githubRepoUrl: "https://github.com/org/repo"
+     *                     jiraProjectKey: "SWP2025"
      *       400:
-     *         description: Lỗi validation (members chưa có team, đã có project, ...)
+     *         description: Lỗi validation (members chưa có team, đã có project ở cùng lớp/kỳ/môn, ...)
      *       403:
      *         description: Không có quyền tạo (không phải STUDENT)
      *       500:

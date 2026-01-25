@@ -91,6 +91,7 @@ exports.createProject = async (req, res) => {
     const allStudentIds = allStudentIdStrings.map(id => new mongoose.Types.ObjectId(id));
 
     // 1) Lấy TeamMember cho tất cả sinh viên trong danh sách
+    // QUAN TRỌNG: Populate đầy đủ để có thông tin lớp, học kỳ, môn học khi debug
     const allTeamMembers = await models.TeamMember.find({
       student_id: { $in: allStudentIds },
       is_active: true
@@ -100,7 +101,17 @@ exports.createProject = async (req, res) => {
       select: 'class_id',
       populate: {
         path: 'class_id',
-        select: '_id name'
+        select: '_id name class_code subjectName semester_id subject_id',
+        populate: [
+          {
+            path: 'semester_id',
+            select: '_id name code'
+          },
+          {
+            path: 'subject_id',
+            select: '_id name code'
+          }
+        ]
       }
     })
     .lean();
@@ -168,14 +179,17 @@ exports.createProject = async (req, res) => {
 
     if (commonTeams.length === 0) {
       console.log(`   ❌ [CreateProject] Validation: Không có team nào chứa TẤT CẢ thành viên`);
-      // Log chi tiết để debug
+      // Log chi tiết để debug (kèm thông tin lớp, học kỳ, môn học)
       Object.entries(teamMembersByStudent).forEach(([studentId, members]) => {
         const teams = members.map(m => ({
           team_id: m.team_id?._id?.toString(),
           class_id: m.team_id?.class_id?._id?.toString(),
-          class_name: m.team_id?.class_id?.name
+          class_name: m.team_id?.class_id?.name || m.team_id?.class_id?.class_code,
+          subject_name: m.team_id?.class_id?.subjectName,
+          semester: m.team_id?.class_id?.semester_id?.name || m.team_id?.class_id?.semester_id,
+          subject: m.team_id?.class_id?.subject_id?.name || m.team_id?.class_id?.subject_id
         }));
-        console.log(`      - Student ${studentId}: thuộc ${teams.length} team(s)`, teams);
+        console.log(`      - Student ${studentId}: thuộc ${teams.length} team(s)`, JSON.stringify(teams, null, 2));
       });
       
       return res.status(400).json({
@@ -187,27 +201,75 @@ exports.createProject = async (req, res) => {
           teams: members.map(m => ({
             team_id: m.team_id?._id?.toString(),
             class_id: m.team_id?.class_id?._id?.toString(),
-            class_name: m.team_id?.class_id?.name
+            class_name: m.team_id?.class_id?.name || m.team_id?.class_id?.class_code,
+            subject_name: m.team_id?.class_id?.subjectName,
+            semester: m.team_id?.class_id?.semester_id?.name || m.team_id?.class_id?.semester_id,
+            subject: m.team_id?.class_id?.subject_id?.name || m.team_id?.class_id?.subject_id
           }))
         }))
       });
     }
 
-    // Nếu có nhiều team chung (hiếm khi xảy ra, nhưng có thể do data lỗi)
+    // Nếu có nhiều team chung, cần kiểm tra xem chúng có cùng lớp không
+    // QUAN TRỌNG: Tất cả commonTeams phải thuộc CÙNG MỘT LỚP để đảm bảo project được tạo đúng lớp
+    let selectedTeamId = commonTeams[0];
+    
     if (commonTeams.length > 1) {
-      console.log(`   ⚠️ [CreateProject] Có ${commonTeams.length} teams chung. Chọn team đầu tiên: ${commonTeams[0]}`);
-      // Kiểm tra xem các team này có cùng lớp không (nếu không thì có vấn đề về data)
+      console.log(`   ⚠️ [CreateProject] Có ${commonTeams.length} teams chung. Kiểm tra xem có cùng lớp không...`);
+      
+      // Lấy thông tin các team này (kèm class_id, semester_id, subject_id)
       const teamsInfo = await models.Team.find({ _id: { $in: commonTeams } })
-        .select('class_id')
+        .populate({
+          path: 'class_id',
+          select: '_id semester_id subject_id'
+        })
         .lean();
-      const classIds = Array.from(new Set(teamsInfo.map(t => t.class_id?.toString()).filter(Boolean)));
-      if (classIds.length > 1) {
-        console.warn(`   ⚠️ [CreateProject] CẢNH BÁO: Có ${commonTeams.length} teams chung nhưng thuộc ${classIds.length} lớp khác nhau! Có thể do data lỗi.`);
+      
+      // Nhóm teams theo lớp (class_id + semester_id + subject_id)
+      const teamsByClass = {};
+      teamsInfo.forEach(team => {
+        const classId = team.class_id?._id?.toString();
+        const semesterId = team.class_id?.semester_id?.toString() || team.class_id?.semester_id;
+        const subjectId = team.class_id?.subject_id?.toString() || team.class_id?.subject_id || 'null';
+        
+        // Tạo key duy nhất cho mỗi lớp (class_id + semester_id + subject_id)
+        const classKey = `${classId}_${semesterId}_${subjectId}`;
+        
+        if (!teamsByClass[classKey]) {
+          teamsByClass[classKey] = {
+            class_id: classId,
+            semester_id: semesterId,
+            subject_id: subjectId,
+            teams: []
+          };
+        }
+        teamsByClass[classKey].teams.push({
+          team_id: team._id.toString(),
+          class_id: classId
+        });
+      });
+      
+      const classKeys = Object.keys(teamsByClass);
+      
+      if (classKeys.length > 1) {
+        // Có teams từ nhiều lớp khác nhau - KHÔNG CHO PHÉP
+        console.log(`   ❌ [CreateProject] Validation: Có ${commonTeams.length} teams chung nhưng thuộc ${classKeys.length} lớp khác nhau!`);
+        return res.status(400).json({
+          error: 'Các thành viên thuộc nhiều nhóm (team) ở các lớp khác nhau. Không thể xác định được lớp nào để tạo project. Vui lòng đảm bảo tất cả thành viên thuộc cùng một nhóm trong cùng một lớp.',
+          found_teams: commonTeams.length,
+          teams_by_class: Object.values(teamsByClass).map(group => ({
+            class_id: group.class_id,
+            semester_id: group.semester_id,
+            subject_id: group.subject_id,
+            team_count: group.teams.length,
+            team_ids: group.teams.map(t => t.team_id)
+          }))
+        });
       }
+      
+      // Tất cả teams đều thuộc cùng một lớp - OK, chọn team đầu tiên
+      console.log(`   ✅ [CreateProject] Tất cả ${commonTeams.length} teams đều thuộc cùng một lớp. Chọn team: ${selectedTeamId}`);
     }
-
-    // Chọn team chung (nếu có nhiều thì chọn team đầu tiên)
-    const selectedTeamId = commonTeams[0];
     
     // Lọc TeamMember chỉ lấy những record thuộc team được chọn
     const teamMembers = allTeamMembers.filter(tm => tm.team_id?._id?.toString() === selectedTeamId);
@@ -219,11 +281,11 @@ exports.createProject = async (req, res) => {
     
     console.log(`   ✅ [CreateProject] Đã chọn team: ${selectedTeamId} với ${teamMembers.length} TeamMember records`);
 
-    // 3) Lấy thông tin team hiện tại (để lấy class_id)
+    // 3) Lấy thông tin team hiện tại (để lấy class_id, semester_id và subject_id)
     const currentTeam = await models.Team.findById(selectedTeamId)
       .populate({
         path: 'class_id',
-        select: 'lecturer_id _id'
+        select: 'lecturer_id semester_id subject_id _id'
       })
       .lean();
     
@@ -234,14 +296,31 @@ exports.createProject = async (req, res) => {
     }
 
     const currentClassId = currentTeam.class_id._id.toString();
+    const currentSemesterId = currentTeam.class_id.semester_id?.toString() || currentTeam.class_id.semester_id;
+    const currentSubjectId = currentTeam.class_id.subject_id?.toString() || currentTeam.class_id.subject_id || null;
     const lecturerId = currentTeam.class_id.lecturer_id || null;
 
-    // 4) Validate: Kiểm tra xem member có project ở CÙNG LỚP không (khác lớp thì OK)
+    if (!currentSemesterId) {
+      return res.status(400).json({
+        error: 'Lớp học này chưa có thông tin học kỳ. Vui lòng kiểm tra lại.'
+      });
+    }
+
+    // 4) Validate: Kiểm tra xem member có project ở CÙNG LỚP + CÙNG HỌC KỲ + CÙNG MÔN không (khác lớp/kỳ/môn thì OK)
     // Cách mới: Query trực tiếp từ Project model (nhanh hơn)
-    const existingProjectsInSameClass = await models.Project.find({
+    // QUAN TRỌNG: Kiểm tra cả semester_id và subject_id để phân biệt project cùng lớp nhưng khác học kỳ/môn
+    const queryConditions = {
       class_id: currentClassId,
+      semester_id: currentSemesterId,
       members: { $in: allStudentIds }
-    }).lean();
+    };
+    
+    // Nếu có subject_id thì thêm vào điều kiện (để phân biệt rõ hơn)
+    if (currentSubjectId) {
+      queryConditions.subject_id = currentSubjectId;
+    }
+    
+    const existingProjectsInSameClass = await models.Project.find(queryConditions).lean();
 
     if (existingProjectsInSameClass.length > 0) {
       // Tìm các member bị conflict (đã có project ở lớp này)
@@ -255,25 +334,31 @@ exports.createProject = async (req, res) => {
       });
 
       if (conflictedMemberIds.size > 0) {
-        console.log(`   ❌ [CreateProject] Validation: Có ${conflictedMemberIds.size} thành viên đã có project ở lớp này`);
+        console.log(`   ❌ [CreateProject] Validation: Có ${conflictedMemberIds.size} thành viên đã có project ở lớp này (học kỳ ${currentSemesterId}, môn ${currentSubjectId || 'N/A'})`);
         return res.status(400).json({
-          error: 'Một số thành viên đã có Project ở lớp này. Mỗi sinh viên chỉ được có 1 Project trong 1 lớp.',
+          error: 'Một số thành viên đã có Project ở lớp này trong học kỳ này. Mỗi sinh viên chỉ được có 1 Project trong 1 lớp/1 học kỳ/1 môn.',
           conflicted_member_ids: Array.from(conflictedMemberIds),
+          semester_id: currentSemesterId,
+          subject_id: currentSubjectId,
           existing_projects: existingProjectsInSameClass.map(p => ({
             _id: p._id,
             name: p.name,
             class_id: p.class_id,
-            team_id: p.team_id
+            team_id: p.team_id,
+            semester_id: p.semester_id,
+            subject_id: p.subject_id
           }))
         });
       }
     }
 
-    // 5) Tạo Project (với class_id và team_id)
+    // 5) Tạo Project (với class_id, team_id, semester_id và subject_id)
     const project = await models.Project.create({
       name,
-      class_id: currentClassId, // QUAN TRỌNG: Lưu class_id để biết project thuộc lớp nào
-      team_id: selectedTeamId,   // QUAN TRỌNG: Lưu team_id để biết project thuộc team nào
+      class_id: currentClassId,       // QUAN TRỌNG: Lưu class_id để biết project thuộc lớp nào
+      team_id: selectedTeamId,        // QUAN TRỌNG: Lưu team_id để biết project thuộc team nào
+      semester_id: currentSemesterId, // QUAN TRỌNG: Lưu semester_id để phân biệt project cùng lớp/team nhưng khác học kỳ
+      subject_id: currentSubjectId,   // QUAN TRỌNG: Lưu subject_id để phân biệt project cùng lớp/team/kỳ nhưng khác môn
       leader_id: userId,
       lecturer_id: lecturerId,
       members: allStudentIds,
@@ -284,18 +369,36 @@ exports.createProject = async (req, res) => {
     console.log(`✅ [CreateProject] Đã tạo project "${name}"`);
     console.log(`   📚 Lớp: ${currentClassId}`);
     console.log(`   👥 Team: ${selectedTeamId}`);
+    console.log(`   📅 Học kỳ: ${currentSemesterId}`);
+    console.log(`   📖 Môn học: ${currentSubjectId || '(không có)'}`);
     console.log(`   📦 GitHub: ${githubRepoUrl || '(không có)'}`);
     console.log(`   📦 Jira: ${jiraProjectKey || '(không có)'}`);
 
     // 6) Cập nhật project_id cho tất cả TeamMember trong nhóm
+    // Dùng team_id và student_id để đảm bảo cập nhật đúng (tránh duplicate TeamMember records)
     await models.TeamMember.updateMany(
-      { _id: { $in: teamMembers.map(tm => tm._id) } },
+      { 
+        team_id: selectedTeamId,
+        student_id: { $in: allStudentIds },
+        is_active: true
+      },
       { project_id: project._id }
     );
 
+    // 7) Populate project để trả về đầy đủ thông tin (class_id, team_id, semester_id, subject_id)
+    const populatedProject = await models.Project.findById(project._id)
+      .populate('leader_id', 'student_code email full_name avatar_url')
+      .populate('lecturer_id', 'email full_name avatar_url')
+      .populate('members', 'student_code email full_name avatar_url')
+      .populate('class_id', '_id name class_code subjectName')
+      .populate('team_id', '_id project_name')
+      .populate('semester_id', '_id name code')
+      .populate('subject_id', '_id name code')
+      .lean();
+
     return res.status(201).json({
       message: '✅ Tạo Project thành công!',
-      project
+      project: populatedProject
     });
   } catch (error) {
     console.error('createProject error:', error);
@@ -342,6 +445,8 @@ exports.getMyProject = async (req, res) => {
       .populate('members', 'student_code email full_name avatar_url')
       .populate('class_id', '_id name class_code subjectName')
       .populate('team_id', '_id project_name')
+      .populate('semester_id', '_id name code')
+      .populate('subject_id', '_id name code')
       .lean();
 
     if (!project) {
@@ -426,7 +531,9 @@ exports.getMyProject = async (req, res) => {
             });
 
             // Nếu tìm thấy user và user này KHÁC leader hiện tại của project
-            if (newLeaderUser && newLeaderUser._id.toString() !== project.leader_id._id.toString()) {
+            // project.leader_id đã được populate nên là object, cần kiểm tra null
+            const currentLeaderId = project.leader_id?._id?.toString() || project.leader_id?.toString();
+            if (newLeaderUser && currentLeaderId && newLeaderUser._id.toString() !== currentLeaderId) {
               console.log(`🔄 Lazy Sync: Phát hiện Leader thay đổi từ Jira (${projectInfo.lead.displayName}) -> Cập nhật DB...`);
               
               // 1. Update Project Leader
@@ -436,20 +543,22 @@ exports.getMyProject = async (req, res) => {
               );
 
               // 2. Update TeamMember Roles
-              // Tìm team của project này (thông qua teamMember hiện tại)
-              const teamId = teamMember.team_id;
+              // Tìm team của project này (thông qua teamMember hiện tại hoặc project.team_id)
+              const teamId = teamMember?.team_id?._id || teamMember?.team_id || project.team_id;
               
-              // Reset tất cả thành Member
-              await models.TeamMember.updateMany(
-                { team_id: teamId },
-                { role_in_team: 'Member' }
-              );
+              if (teamId) {
+                // Reset tất cả thành Member
+                await models.TeamMember.updateMany(
+                  { team_id: teamId, is_active: true },
+                  { role_in_team: 'Member' }
+                );
 
-              // Set Leader mới
-              await models.TeamMember.updateOne(
-                { team_id: teamId, student_id: newLeaderUser._id },
-                { role_in_team: 'Leader' }
-              );
+                // Set Leader mới
+                await models.TeamMember.updateOne(
+                  { team_id: teamId, student_id: newLeaderUser._id, is_active: true },
+                  { role_in_team: 'Leader' }
+                );
+              }
 
               // Cập nhật lại biến project để trả về data mới nhất cho FE
               project.leader_id = newLeaderUser; // Gán object user mới vào
@@ -495,6 +604,7 @@ exports.getMyProjects = async (req, res) => {
     .populate('members', 'student_code email full_name avatar_url')
     .populate('class_id', '_id name class_code subjectName')
     .populate('team_id', '_id project_name')
+    .populate('semester_id', '_id name code')
     .lean();
 
     if (projects.length === 0) {
@@ -558,6 +668,8 @@ exports.getProjectByTeam = async (req, res) => {
       .populate('members', 'student_code email full_name avatar_url')
       .populate('class_id', '_id name class_code subjectName')
       .populate('team_id', '_id project_name')
+      .populate('semester_id', '_id name code')
+      .populate('subject_id', '_id name code')
       .lean();
 
     return res.json({
@@ -593,18 +705,30 @@ exports.getProjectsByClass = async (req, res) => {
     // Kiểm tra quyền
     if (role === 'STUDENT') {
       // Student chỉ xem được lớp mà mình đang học
-      const teamMember = await models.TeamMember.findOne({
-        student_id: userId,
-        is_active: true
-      })
-      .populate({
-        path: 'team_id',
-        select: 'class_id'
-      })
-      .lean();
+      // Kiểm tra xem student có project nào trong lớp này không (nhanh hơn)
+      const studentProject = await models.Project.findOne({
+        class_id: classId,
+        $or: [
+          { leader_id: userId },
+          { members: userId }
+        ]
+      }).lean();
 
-      if (!teamMember || teamMember.team_id?.class_id?.toString() !== classId) {
-        return res.status(403).json({ error: 'Bạn không thuộc lớp này' });
+      if (!studentProject) {
+        // Nếu không có project, kiểm tra xem có thuộc team nào trong lớp này không
+        const teamMember = await models.TeamMember.findOne({
+          student_id: userId,
+          is_active: true
+        })
+        .populate({
+          path: 'team_id',
+          select: 'class_id'
+        })
+        .lean();
+
+        if (!teamMember || teamMember.team_id?.class_id?.toString() !== classId) {
+          return res.status(403).json({ error: 'Bạn không thuộc lớp này' });
+        }
       }
     } else if (role === 'LECTURER') {
       // Lecturer chỉ xem được lớp của mình
@@ -659,6 +783,8 @@ exports.getProjectsByClassForLecturer = async (req, res) => {
       .populate('members', 'student_code email full_name avatar_url')
       .populate('class_id', '_id name class_code')
       .populate('team_id', '_id project_name')
+      .populate('semester_id', '_id name code')
+      .populate('subject_id', '_id name code')
       .lean();
 
     return res.json({
