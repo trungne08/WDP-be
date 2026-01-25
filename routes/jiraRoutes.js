@@ -160,33 +160,6 @@ module.exports = (app) => {
 
   /**
    * @swagger
-   * /api/teams/{teamId}/tasks:
-   *   get:
-   *     summary: Lấy danh sách Task (có filter)
-   *     tags:
-   *       - Jira Data
-   *     parameters:
-   *       - in: path
-   *         name: teamId
-   *         required: true
-   *         schema:
-   *           type: string
-   *       - in: query
-   *         name: sprintId
-   *         schema:
-   *           type: string
-   *       - in: query
-   *         name: status
-   *         schema:
-   *           type: string
-   *     responses:
-   *       200:
-   *         description: Danh sách Tasks
-   */
-  app.get('/api/teams/:teamId/tasks', JiraController.getTasksByTeam);
-
-  /**
-   * @swagger
    * /api/tasks:
    *   post:
    *     summary: Tạo Task mới
