@@ -16,12 +16,79 @@ module.exports = (app) => {
    *         required: true
    *         schema:
    *           type: string
-   *         description: ID của Team
    *     responses:
    *       200:
-   *         description: Danh sách Sprints thành công
+   *         description: Danh sách Sprints
    */
   app.get('/api/teams/:teamId/sprints', JiraController.getSprintsByTeam);
+
+  /**
+   * @swagger
+   * /api/sprints:
+   *   post:
+   *     summary: Tạo Sprint mới
+   *     tags:
+   *       - Jira Data
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - team_id
+   *               - name
+   *             properties:
+   *               team_id:
+   *                 type: string
+   *               name:
+   *                 type: string
+   *               start_date:
+   *                 type: string
+   *                 format: date-time
+   *               end_date:
+   *                 type: string
+   *                 format: date-time
+   *     responses:
+   *       201:
+   *         description: Tạo thành công
+   */
+  app.post('/api/sprints', JiraController.createSprint);
+
+  /**
+   * @swagger
+   * /api/sprints/{id}/start:
+   *   post:
+   *     summary: Bắt đầu Sprint (Active)
+   *     tags:
+   *       - Jira Data
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - start_date
+   *               - end_date
+   *             properties:
+   *               start_date:
+   *                 type: string
+   *                 format: date-time
+   *               end_date:
+   *                 type: string
+   *                 format: date-time
+   *     responses:
+   *       200:
+   *         description: Sprint đã start thành công
+   */
+  app.post('/api/sprints/:id/start', JiraController.startSprint);
 
   /**
    * @swagger
@@ -41,7 +108,7 @@ module.exports = (app) => {
    *         description: Chi tiết Sprint
    *
    *   put:
-   *     summary: Cập nhật Sprint (Ví dụ chấm điểm)
+   *     summary: Cập nhật Sprint (Tên, ngày tháng, trạng thái)
    *     tags:
    *       - Jira Data
    *     parameters:
@@ -57,10 +124,16 @@ module.exports = (app) => {
    *           schema:
    *             type: object
    *             properties:
-   *               lecturer_grade:
-   *                 type: number
+   *               name:
+   *                 type: string
    *               state:
    *                 type: string
+   *               start_date:
+   *                 type: string
+   *                 format: date-time
+   *               end_date:
+   *                 type: string
+   *                 format: date-time
    *     responses:
    *       200:
    *         description: Update thành công
@@ -102,12 +175,10 @@ module.exports = (app) => {
    *         name: sprintId
    *         schema:
    *           type: string
-   *         description: Lọc theo Sprint ID
    *       - in: query
    *         name: status
    *         schema:
    *           type: string
-   *         description: Lọc theo trạng thái (To Do, Done...)
    *     responses:
    *       200:
    *         description: Danh sách Tasks

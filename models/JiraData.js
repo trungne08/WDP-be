@@ -8,10 +8,7 @@ const SprintSchema = new Schema({
     name: String,
     state: String, // active, closed
     start_date: Date,
-    end_date: Date,
-    
-    // QUỸ ĐIỂM (Giảng viên nhập)
-    lecturer_grade: { type: Number, default: null } // Ví dụ: 8.0
+    end_date: Date
 });
 
 // 2. Jira Task
