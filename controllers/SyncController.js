@@ -105,5 +105,4 @@ exports.syncTeamData = async (req, res) => {
         console.error("General Sync Error:", error);
         res.status(500).json({ error: error.message });
     }
-    
 };

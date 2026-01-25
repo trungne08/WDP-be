@@ -1,100 +1,61 @@
 const axios = require('axios');
 
-/**
- * Hàm tạo Header Authen cho Jira
- * @param {string} tokenBase64 - Chuỗi đã mã hóa Base64 (Email:Token)
- */
+// Hàm cấu hình Header cho Jira
 const getJiraHeaders = (tokenBase64) => ({
     'Authorization': `Basic ${tokenBase64}`,
-    'Accept': 'application/json',
-    'Content-Type': 'application/json'
+    'Accept': 'application/json'
 });
 
-/**
- * 1. Lấy danh sách Sprint
- */
+// 1. Lấy danh sách Sprint từ Board
 const fetchSprints = async (jiraUrl, boardId, tokenBase64) => {
     try {
-        if (!jiraUrl || !boardId || !tokenBase64) return [];
-
-        // Xóa dấu / ở cuối URL nếu user lỡ nhập
-        const cleanUrl = jiraUrl.replace(/\/$/, ""); 
-
-        console.log(`📡 [JiraService] Đang lấy Sprint từ Board ID: ${boardId}...`);
-
+        // Domain ví dụ: https://trung-swp.atlassian.net
+        const cleanUrl = jiraUrl.replace(/\/$/, ""); // Xóa dấu / ở cuối nếu có
+        
         const response = await axios.get(`${cleanUrl}/rest/agile/1.0/board/${boardId}/sprint`, {
-            headers: getJiraHeaders(tokenBase64),
-            params: {
-                state: 'active,future,closed', // Lấy tất cả trạng thái
-                maxResults: 50
-            }
+            headers: getJiraHeaders(tokenBase64)
         });
 
-        const sprints = response.data.values.map(sprint => ({
+        return response.data.values.map(sprint => ({
             id: sprint.id,
             name: sprint.name,
-            state: sprint.state, // active, closed, future
-            startDate: sprint.startDate || null,
-            endDate: sprint.endDate || null
+            state: sprint.state, // active, future, closed
+            startDate: sprint.startDate,
+            endDate: sprint.endDate
         }));
 
-        console.log(`✅ [JiraService] Tìm thấy ${sprints.length} sprints.`);
-        return sprints;
-
     } catch (error) {
-        console.error(`❌ [JiraService] Lỗi lấy Sprint: ${error.message}`);
+        console.error('❌ Lỗi Jira Sprint API:', error.response ? error.response.data : error.message);
         return [];
     }
 };
 
-/**
- * 2. Lấy Task trong một Sprint cụ thể
- */
+// 2. Lấy Task trong một Sprint
 const fetchTasksInSprint = async (jiraUrl, sprintId, tokenBase64) => {
     try {
         const cleanUrl = jiraUrl.replace(/\/$/, "");
         
-        // Gọi API lấy Issue, chỉ lấy các trường cần thiết cho nhẹ
         const response = await axios.get(`${cleanUrl}/rest/agile/1.0/sprint/${sprintId}/issue`, {
             headers: getJiraHeaders(tokenBase64),
             params: {
-                // jql: 'issuetype = Story', // Nếu chỉ muốn lấy Story (tùy chọn)
-                fields: 'summary,status,assignee,customfield_10026,created,updated', 
-                maxResults: 100
+                // Chỉ lấy các trường cần thiết để nhẹ gánh
+                fields: 'summary,status,assignee,customfield_10026' // customfield_10026 thường là Story Point (check lại trên Jira của bạn)
             }
         });
 
-        const tasks = response.data.issues.map(issue => {
-            // Xử lý Story Point (Vì mỗi Jira mỗi khác, nên check kỹ)
-            let sp = 0;
-            if (issue.fields.customfield_10026) {
-                sp = issue.fields.customfield_10026;
-            }
-
-            return {
-                issue_key: issue.key,         // SWP-12
-                issue_id: issue.id,           // 10021
-                summary: issue.fields.summary,
-                
-                // Trạng thái (To Do, Done...)
-                status_name: issue.fields.status.name,
-                status_category: issue.fields.status.statusCategory.name, // Quan trọng: dùng để tính điểm (Done)
-                
-                // Người làm
-                assignee_account_id: issue.fields.assignee ? issue.fields.assignee.accountId : null,
-                assignee_name: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
-                assignee_email: issue.fields.assignee ? issue.fields.assignee.emailAddress : null, // (Lưu ý: Jira mới thường ẩn email)
-
-                story_point: sp,
-                created_at: issue.fields.created,
-                updated_at: issue.fields.updated
-            };
-        });
-
-        return tasks;
+        return response.data.issues.map(issue => ({
+            issue_key: issue.key,
+            issue_id: issue.id,
+            summary: issue.fields.summary,
+            status: issue.fields.status.name,
+            status_category: issue.fields.status.statusCategory.name, // To Do, In Progress, Done
+            assignee_account_id: issue.fields.assignee ? issue.fields.assignee.accountId : null,
+            assignee_name: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
+            story_point: issue.fields.customfield_10026 || 0 // Cần check ID của field Story Point trên Jira của bạn
+        }));
 
     } catch (error) {
-        console.error(`❌ [JiraService] Lỗi lấy Task (Sprint ${sprintId}): ${error.message}`);
+        console.error(`❌ Lỗi Jira Task API (Sprint ${sprintId}):`, error.message);
         return [];
     }
 };
