@@ -283,6 +283,21 @@ exports.getGithubRepos = async (req, res) => {
     const repos = await IntegrationService.fetchGithubRepos(token);
     return res.json({ total: repos.length, repos });
   } catch (error) {
+    const status = error?.response?.status;
+    // GitHub token sai / hết hạn / bị revoke → báo 401 + gợi ý reconnect
+    if (status === 401 || status === 403) {
+      // Best-effort: xóa github integration để tránh gọi lại token hỏng
+      try {
+        req.user.integrations = req.user.integrations || {};
+        delete req.user.integrations.github;
+        await req.user.save();
+      } catch (e) {
+        // ignore
+      }
+      return res.status(401).json({
+        error: 'GitHub token không hợp lệ hoặc đã hết hạn. Vui lòng ngắt kết nối và kết nối lại GitHub.'
+      });
+    }
     return res.status(500).json({ error: error.message });
   }
 };
@@ -327,6 +342,12 @@ exports.getJiraProjects = async (req, res) => {
       throw err;
     }
   } catch (error) {
+    const status = error?.response?.status;
+    if (status === 401 || status === 403) {
+      return res.status(401).json({
+        error: 'Jira token không hợp lệ hoặc đã hết hạn. Vui lòng ngắt kết nối và kết nối lại Jira.'
+      });
+    }
     return res.status(500).json({ error: error.message });
   }
 };
@@ -404,6 +425,12 @@ exports.getJiraBoards = async (req, res) => {
     }
   } catch (error) {
     console.error('Get Jira Boards Error:', error);
+    const status = error?.response?.status;
+    if (status === 401 || status === 403) {
+      return res.status(401).json({
+        error: 'Jira token không hợp lệ hoặc đã hết hạn. Vui lòng ngắt kết nối và kết nối lại Jira.'
+      });
+    }
     return res.status(500).json({ error: error.message });
   }
 };
