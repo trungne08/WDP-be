@@ -25,7 +25,9 @@ exports.syncTeamData = async (req, res) => {
                 for (const commit of commits) {
                     const checkResult = await GithubCommit.processCommit(commit, teamId);
                     await GithubCommit.findOneAndUpdate(
-                        { hash: commit.hash },
+                        // Upsert theo (team_id + hash) để cùng 1 hash ở team khác
+                        // không bị "đè" lẫn nhau.
+                        { team_id: teamId, hash: commit.hash },
                         {
                             team_id: teamId,
                             author_email: commit.author_email,

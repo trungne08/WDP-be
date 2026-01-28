@@ -189,7 +189,7 @@ exports.jiraConnect = async (req, res) => {
     // - read:board-scope:jira-software: Đọc boards (Agile API) - CẦN THIẾT cho /rest/agile/1.0/board
     // - read:sprint:jira-software: Đọc sprints (Agile API) - CẦN THIẾT cho /rest/agile/1.0/sprint
     // - offline_access: Để có refresh_token (refresh token khi access token hết hạn)
-    const scope = 'read:jira-user read:jira-work read:board-scope:jira-software read:sprint:jira-software offline_access';
+    const scope = 'read:jira-user read:jira-work offline_access';
     const url = IntegrationService.buildAtlassianAuthUrl({ clientId, redirectUri, scope, state });
     
     // Trả về JSON với URL thay vì redirect để frontend tự redirect (tránh lỗi CORS khi dùng XHR)
@@ -582,7 +582,9 @@ exports.syncMyProjectData = async (req, res) => {
 
             const checkResult = await GithubCommit.processCommit(commit, teamId);
             await GithubCommit.findOneAndUpdate(
-              { hash: commit.hash },
+              // Upsert theo (team_id + hash) để tránh trộn dữ liệu
+              // giữa các team có chung history/repo.
+              { team_id: teamId, hash: commit.hash },
               {
                 team_id: teamId,
                 author_email: commit.author_email,

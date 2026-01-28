@@ -4,7 +4,10 @@ const Schema = mongoose.Schema;
 const GithubCommitSchema = new Schema({
     team_id: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
     author_email: String, // Must match student email
-    hash: { type: String, required: true, unique: true },
+    // Không để unique theo hash toàn hệ thống nữa, vì cùng 1 commit hash
+    // có thể xuất hiện ở nhiều team/project khác nhau (fork, chia repo, v.v.)
+    // Unique sẽ được đảm bảo bằng index compound bên dưới: (team_id + hash)
+    hash: { type: String, required: true },
     message: String,
     commit_date: Date,
     
@@ -17,6 +20,10 @@ const GithubCommitSchema = new Schema({
     is_counted: { type: Boolean, default: false },
     rejection_reason: String // 'Spam', 'Too soon', 'Empty'
 });
+
+// Đảm bảo 1 commit hash chỉ unique trong PHẠM VI 1 team,
+// tránh việc 2 team khác nhau chia sẻ cùng history mà bị "đè" lẫn nhau.
+GithubCommitSchema.index({ team_id: 1, hash: 1 }, { unique: true });
 
 // --- LOGIC XỬ LÝ COOLDOWN 10 PHÚT (Viết ngay trong Model) ---
 GithubCommitSchema.statics.processCommit = async function(commitData, teamId) {
