@@ -730,16 +730,6 @@ exports.syncMyProjectData = async (req, res) => {
           defaultSprintId = defaultSprint._id;
         }
 
-        // Nếu là member, chỉ lấy tasks của chính mình
-        let userJiraAccountId = null;
-        if (userRoleInTeam === 'Member' && teamId) {
-          const userTeamMember = await TeamMember.findOne({
-            team_id: teamId,
-            student_id: user._id
-          });
-          userJiraAccountId = userTeamMember?.jira_account_id;
-        }
-
         let syncedTasks = 0;
         for (const issue of issues) {
           // Nếu không có sprint, bỏ qua task này (vì schema yêu cầu sprint_id)
@@ -747,11 +737,9 @@ exports.syncMyProjectData = async (req, res) => {
             console.log('⚠️ Bỏ qua Jira task vì không có sprint cho project');
             continue;
           }
-
-          // Nếu là member, chỉ sync tasks của chính mình
-          if (userRoleInTeam === 'Member' && issue.fields.assignee?.accountId !== userJiraAccountId) {
-            continue; // Bỏ qua task không phải của user
-          }
+          // Lưu ý: Không filter theo member ở bước sync nữa.
+          // Vì nếu member sync mà task được assign cho người khác, task sẽ không được update và UI sẽ bị stale
+          // (ví dụ assignee_name vẫn null dù Jira đã assign). Việc phân quyền/filter sẽ làm ở API GET tasks.
 
           let assigneeMemberId = null;
           if (issue.fields.assignee?.accountId && teamId) {
