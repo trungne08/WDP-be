@@ -62,18 +62,36 @@ function encrypt(text) {
  * @returns {string} - Decrypted text
  */
 function decrypt(encryptedText) {
-  if (!encryptedText) return null;
+  // Nếu null/undefined/empty → trả về null (không log, đây là trường hợp hợp lệ)
+  if (!encryptedText || typeof encryptedText !== 'string' || encryptedText.trim() === '') {
+    return null;
+  }
   
   try {
     // Parse format: iv:authTag:encryptedData
     const parts = encryptedText.split(':');
     if (parts.length !== 3) {
-      // Nếu không đúng format, có thể là plaintext (backward compatibility)
-      console.warn('⚠️ Encrypted text không đúng format, trả về nguyên bản (có thể là plaintext cũ)');
+      // Nếu không đúng format (không có 2 dấu ':'), có thể là plaintext cũ
+      // Chỉ log trong development để debug, không spam trong production
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('🔍 [Decrypt] Text không đúng format (có thể là plaintext cũ), trả về nguyên bản');
+      }
       return encryptedText;
     }
     
     const [ivHex, authTagHex, encrypted] = parts;
+    
+    // Validate hex format (mỗi phần phải là hex string hợp lệ)
+    if (!ivHex || !authTagHex || !encrypted || 
+        !/^[0-9a-f]+$/i.test(ivHex) || 
+        !/^[0-9a-f]+$/i.test(authTagHex) || 
+        !/^[0-9a-f]+$/i.test(encrypted)) {
+      if (process.env.NODE_ENV === 'development') {
+        console.debug('🔍 [Decrypt] Format không hợp lệ (không phải hex), trả về nguyên bản');
+      }
+      return encryptedText;
+    }
+    
     const iv = Buffer.from(ivHex, 'hex');
     const authTag = Buffer.from(authTagHex, 'hex');
     
@@ -96,9 +114,11 @@ function decrypt(encryptedText) {
     
     return decrypted;
   } catch (error) {
-    console.error('❌ Decryption Error:', error.message);
-    // Nếu giải mã thất bại, có thể là plaintext cũ → trả về nguyên bản
-    console.warn('⚠️ Không thể giải mã, trả về nguyên bản (có thể là plaintext cũ)');
+    // Chỉ log error trong development hoặc khi thực sự cần debug
+    // Trong production, silent fail và trả về nguyên bản (backward compatibility)
+    if (process.env.NODE_ENV === 'development') {
+      console.debug(`🔍 [Decrypt] Không thể giải mã (${error.message}), trả về nguyên bản (có thể là plaintext cũ)`);
+    }
     return encryptedText;
   }
 }
@@ -113,16 +133,16 @@ function encryptIntegrations(integrations) {
   
   const encrypted = { ...integrations };
   
-  // Mã hóa GitHub token
-  if (encrypted.github?.accessToken) {
+  // Mã hóa GitHub token (chỉ khi github tồn tại và có accessToken)
+  if (encrypted.github && typeof encrypted.github === 'object' && encrypted.github.accessToken) {
     encrypted.github = {
       ...encrypted.github,
       accessToken: encrypt(encrypted.github.accessToken)
     };
   }
   
-  // Mã hóa Jira tokens
-  if (encrypted.jira) {
+  // Mã hóa Jira tokens (chỉ khi jira tồn tại và là object)
+  if (encrypted.jira && typeof encrypted.jira === 'object') {
     encrypted.jira = { ...encrypted.jira };
     if (encrypted.jira.accessToken) {
       encrypted.jira.accessToken = encrypt(encrypted.jira.accessToken);
@@ -145,16 +165,16 @@ function decryptIntegrations(integrations) {
   
   const decrypted = { ...integrations };
   
-  // Giải mã GitHub token
-  if (decrypted.github?.accessToken) {
+  // Giải mã GitHub token (chỉ khi github tồn tại và có accessToken)
+  if (decrypted.github && typeof decrypted.github === 'object' && decrypted.github.accessToken) {
     decrypted.github = {
       ...decrypted.github,
       accessToken: decrypt(decrypted.github.accessToken)
     };
   }
   
-  // Giải mã Jira tokens
-  if (decrypted.jira) {
+  // Giải mã Jira tokens (chỉ khi jira tồn tại và là object)
+  if (decrypted.jira && typeof decrypted.jira === 'object') {
     decrypted.jira = { ...decrypted.jira };
     if (decrypted.jira.accessToken) {
       decrypted.jira.accessToken = decrypt(decrypted.jira.accessToken);

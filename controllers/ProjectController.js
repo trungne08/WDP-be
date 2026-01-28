@@ -307,8 +307,7 @@ exports.createProject = async (req, res) => {
     }
 
     // 4) Validate: Kiểm tra xem member có project ở CÙNG LỚP + CÙNG HỌC KỲ + CÙNG MÔN không (khác lớp/kỳ/môn thì OK)
-    // Cách mới: Query trực tiếp từ Project model (nhanh hơn)
-    // QUAN TRỌNG: Kiểm tra cả semester_id và subject_id để phân biệt project cùng lớp nhưng khác học kỳ/môn
+    // QUAN TRỌNG: Nếu student đã chuyển nhóm hoặc không còn thuộc team của project cũ, tự động cleanup project cũ
     const queryConditions = {
       class_id: currentClassId,
       semester_id: currentSemesterId,
@@ -324,31 +323,82 @@ exports.createProject = async (req, res) => {
 
     if (existingProjectsInSameClass.length > 0) {
       // Tìm các member bị conflict (đã có project ở lớp này)
+      // QUAN TRỌNG: Kiểm tra xem student có còn thuộc team của project cũ không
       const conflictedMemberIds = new Set();
-      existingProjectsInSameClass.forEach(proj => {
-        proj.members.forEach(memberId => {
-          if (allStudentIds.some(id => id.toString() === memberId.toString())) {
-            conflictedMemberIds.add(memberId.toString());
-          }
-        });
-      });
+      const projectsToCleanup = []; // Danh sách project cần cleanup (xóa student khỏi members)
 
+      for (const proj of existingProjectsInSameClass) {
+        const projectTeamId = proj.team_id?.toString();
+        
+        // Kiểm tra từng student trong project cũ
+        for (const memberId of proj.members) {
+          const memberIdStr = memberId.toString();
+          
+          // Nếu student này nằm trong danh sách tạo project mới
+          if (allStudentIds.some(id => id.toString() === memberIdStr)) {
+            // Kiểm tra xem student có còn thuộc team của project cũ không
+            const stillInOldTeam = await models.TeamMember.findOne({
+              team_id: projectTeamId,
+              student_id: memberIdStr,
+              is_active: true
+            }).lean();
+
+            if (!stillInOldTeam) {
+              // Student KHÔNG còn thuộc team cũ → tự động cleanup (xóa khỏi project cũ)
+              console.log(`   🔧 [CreateProject] Auto-cleanup: Student ${memberIdStr} không còn thuộc team ${projectTeamId} của project cũ "${proj.name}" → Xóa khỏi project cũ`);
+              
+              if (!projectsToCleanup.find(p => p.projectId === proj._id.toString())) {
+                projectsToCleanup.push({
+                  projectId: proj._id.toString(),
+                  projectName: proj.name,
+                  studentsToRemove: []
+                });
+              }
+              
+              const cleanupItem = projectsToCleanup.find(p => p.projectId === proj._id.toString());
+              cleanupItem.studentsToRemove.push(memberIdStr);
+            } else {
+              // Student VẪN còn thuộc team cũ → CONFLICT thật sự
+              conflictedMemberIds.add(memberIdStr);
+            }
+          }
+        }
+      }
+
+      // Thực hiện cleanup: Xóa student khỏi members của project cũ
+      for (const cleanup of projectsToCleanup) {
+        await models.Project.updateOne(
+          { _id: cleanup.projectId },
+          { $pull: { members: { $in: cleanup.studentsToRemove.map(id => new mongoose.Types.ObjectId(id)) } } }
+        );
+        console.log(`   ✅ [CreateProject] Đã cleanup project "${cleanup.projectName}": Xóa ${cleanup.studentsToRemove.length} student(s) khỏi members`);
+      }
+
+      // Sau khi cleanup, nếu vẫn còn conflict → báo lỗi
       if (conflictedMemberIds.size > 0) {
-        console.log(`   ❌ [CreateProject] Validation: Có ${conflictedMemberIds.size} thành viên đã có project ở lớp này (học kỳ ${currentSemesterId}, môn ${currentSubjectId || 'N/A'})`);
+        console.log(`   ❌ [CreateProject] Validation: Có ${conflictedMemberIds.size} thành viên VẪN CÒN thuộc team của project cũ ở lớp này (học kỳ ${currentSemesterId}, môn ${currentSubjectId || 'N/A'})`);
         return res.status(400).json({
-          error: 'Một số thành viên đã có Project ở lớp này trong học kỳ này. Mỗi sinh viên chỉ được có 1 Project trong 1 lớp/1 học kỳ/1 môn.',
+          error: 'Một số thành viên đã có Project ở lớp này trong học kỳ này và vẫn còn thuộc team của project đó. Mỗi sinh viên chỉ được có 1 Project trong 1 lớp/1 học kỳ/1 môn.',
           conflicted_member_ids: Array.from(conflictedMemberIds),
           semester_id: currentSemesterId,
           subject_id: currentSubjectId,
-          existing_projects: existingProjectsInSameClass.map(p => ({
-            _id: p._id,
-            name: p.name,
-            class_id: p.class_id,
-            team_id: p.team_id,
-            semester_id: p.semester_id,
-            subject_id: p.subject_id
-          }))
+          existing_projects: existingProjectsInSameClass
+            .filter(p => {
+              // Chỉ trả về project mà có student VẪN CÒN conflict (không phải đã cleanup)
+              return p.members.some(memberId => conflictedMemberIds.has(memberId.toString()));
+            })
+            .map(p => ({
+              _id: p._id,
+              name: p.name,
+              class_id: p.class_id,
+              team_id: p.team_id,
+              semester_id: p.semester_id,
+              subject_id: p.subject_id
+            }))
         });
+      } else if (projectsToCleanup.length > 0) {
+        // Đã cleanup thành công, không còn conflict → tiếp tục tạo project mới
+        console.log(`   ✅ [CreateProject] Đã cleanup ${projectsToCleanup.length} project(s) cũ, không còn conflict → Tiếp tục tạo project mới`);
       }
     }
 

@@ -1309,6 +1309,29 @@ const addStudentToClass = async (req, res) => {
                     role_in_team: role,
                     is_active: true
                 });
+                
+                // ==========================================
+                // TỰ ĐỘNG THÊM VÀO PROJECT: Nếu nhóm đã có project
+                // ==========================================
+                const teamProject = await models.Project.findOne({
+                    team_id: team._id
+                }).lean();
+                
+                if (teamProject) {
+                    // Kiểm tra xem student đã có trong members chưa
+                    const isAlreadyMember = teamProject.members.some(
+                        m => m.toString() === student._id.toString()
+                    );
+                    
+                    if (!isAlreadyMember) {
+                        await models.Project.updateOne(
+                            { _id: teamProject._id },
+                            { $addToSet: { members: student._id } }
+                        );
+                        console.log(`   ✅ [RestoreStudent] Đã thêm student ${student._id} vào project "${teamProject.name}" của nhóm (team ${team._id})`);
+                    }
+                }
+                
                 return res.status(200).json({ message: '✅ Đã khôi phục sinh viên vào lớp (Enrolled)!' });
             }
 
@@ -1329,6 +1352,28 @@ const addStudentToClass = async (req, res) => {
                 role_in_team: role,
                 is_active: true
             });
+
+            // ==========================================
+            // TỰ ĐỘNG THÊM VÀO PROJECT: Nếu nhóm đã có project
+            // ==========================================
+            const teamProject = await models.Project.findOne({
+                team_id: team._id
+            }).lean();
+            
+            if (teamProject) {
+                // Kiểm tra xem student đã có trong members chưa
+                const isAlreadyMember = teamProject.members.some(
+                    m => m.toString() === student._id.toString()
+                );
+                
+                if (!isAlreadyMember) {
+                    await models.Project.updateOne(
+                        { _id: teamProject._id },
+                        { $addToSet: { members: student._id } }
+                    );
+                    console.log(`   ✅ [AddStudent] Đã thêm student ${student._id} vào project "${teamProject.name}" của nhóm (team ${team._id})`);
+                }
+            }
 
             return res.status(201).json({ message: '✅ Đã thêm sinh viên vào lớp thành công (Enrolled)!' });
         } else {
@@ -1408,11 +1453,53 @@ const updateStudentInClass = async (req, res) => {
             
             let targetTeamId = member.team_id._id;
 
+            const oldTeamId = member.team_id._id.toString();
+            
             if (currentGroup !== newGroup) {
                 // Chuyển nhóm -> Tìm/Tạo team mới
                 const newTeam = await findOrCreateTeam(classId, newGroup);
                 targetTeamId = newTeam._id;
                 member.team_id = newTeam._id; // Update reference
+                
+                // ==========================================
+                // TỰ ĐỘNG CLEANUP PROJECT CŨ: Xóa student khỏi project của nhóm cũ
+                // ==========================================
+                const oldTeamProjects = await models.Project.find({
+                    team_id: oldTeamId,
+                    members: student_id
+                }).lean();
+                
+                if (oldTeamProjects.length > 0) {
+                    for (const oldProject of oldTeamProjects) {
+                        await models.Project.updateOne(
+                            { _id: oldProject._id },
+                            { $pull: { members: student_id } }
+                        );
+                        console.log(`   🔧 [UpdateStudent] Đã xóa student ${student_id} khỏi project "${oldProject.name}" của nhóm cũ (team ${oldTeamId})`);
+                    }
+                }
+                
+                // ==========================================
+                // TỰ ĐỘNG THÊM VÀO PROJECT MỚI: Nếu nhóm mới đã có project
+                // ==========================================
+                const newTeamProject = await models.Project.findOne({
+                    team_id: targetTeamId
+                }).lean();
+                
+                if (newTeamProject) {
+                    // Kiểm tra xem student đã có trong members chưa
+                    const isAlreadyMember = newTeamProject.members.some(
+                        m => m.toString() === student_id.toString()
+                    );
+                    
+                    if (!isAlreadyMember) {
+                        await models.Project.updateOne(
+                            { _id: newTeamProject._id },
+                            { $addToSet: { members: student_id } }
+                        );
+                        console.log(`   ✅ [UpdateStudent] Đã thêm student ${student_id} vào project "${newTeamProject.name}" của nhóm mới (team ${targetTeamId})`);
+                    }
+                }
             }
 
             // Update Role
@@ -1478,6 +1565,27 @@ const removeStudentFromClass = async (req, res) => {
 
             if (!updated) {
                 return res.status(404).json({ error: 'Không tìm thấy sinh viên trong lớp hoặc đã bị xóa trước đó.' });
+            }
+
+            // ==========================================
+            // TỰ ĐỘNG CLEANUP PROJECT: Xóa student khỏi project của nhóm cũ
+            // ==========================================
+            const oldTeamId = updated.team_id?.toString();
+            if (oldTeamId) {
+                const oldTeamProjects = await models.Project.find({
+                    team_id: oldTeamId,
+                    members: student_id
+                }).lean();
+                
+                if (oldTeamProjects.length > 0) {
+                    for (const oldProject of oldTeamProjects) {
+                        await models.Project.updateOne(
+                            { _id: oldProject._id },
+                            { $pull: { members: student_id } }
+                        );
+                        console.log(`   🔧 [RemoveStudent] Đã xóa student ${student_id} khỏi project "${oldProject.name}" của nhóm (team ${oldTeamId})`);
+                    }
+                }
             }
 
             // RealtimeService sẽ bắt được event update (is_active: false) và bắn action: 'delete'

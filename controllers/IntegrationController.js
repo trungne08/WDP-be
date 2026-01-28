@@ -139,16 +139,21 @@ exports.githubCallback = async (req, res) => {
     const user = await loadUserByRole(decoded.role, decoded.userId);
     if (!user) return res.status(404).json({ error: 'Không tìm thấy user để lưu integration' });
 
-    // Đảm bảo githubId không bị trùng với user khác
+    // Đảm bảo githubId không bị trùng với user khác (trừ chính user này)
     await ensureGithubUnique(ghUser.githubId, decoded.role, user._id);
 
+    // Đảm bảo integrations object tồn tại (có thể là {} hoặc có jira nhưng không có github)
     user.integrations = user.integrations || {};
+    
+    // Overwrite hoặc tạo mới github integration
+    // Nếu đã có github từ trước (reconnect), sẽ overwrite với token mới
     user.integrations.github = {
       githubId: ghUser.githubId,
       username: ghUser.username,
-      accessToken,
+      accessToken, // Token này sẽ được mã hóa trong pre-save hook
       linkedAt: new Date()
     };
+    
     await user.save();
 
     // Redirect về frontend sau khi thành công
@@ -178,8 +183,13 @@ exports.jiraConnect = async (req, res) => {
       frontendRedirectUri // Lưu URL frontend để redirect về sau
     });
 
-    // Scope bắt buộc theo yêu cầu
-    const scope = 'read:jira-user read:jira-work offline_access';
+    // Scope bắt buộc theo yêu cầu:
+    // - read:jira-user: Đọc thông tin user (myself)
+    // - read:jira-work: Đọc issues, projects (REST API v3)
+    // - read:board-scope:jira-software: Đọc boards (Agile API) - CẦN THIẾT cho /rest/agile/1.0/board
+    // - read:sprint:jira-software: Đọc sprints (Agile API) - CẦN THIẾT cho /rest/agile/1.0/sprint
+    // - offline_access: Để có refresh_token (refresh token khi access token hết hạn)
+    const scope = 'read:jira-user read:jira-work read:board-scope:jira-software read:sprint:jira-software offline_access';
     const url = IntegrationService.buildAtlassianAuthUrl({ clientId, redirectUri, scope, state });
     
     // Trả về JSON với URL thay vì redirect để frontend tự redirect (tránh lỗi CORS khi dùng XHR)
@@ -227,19 +237,24 @@ exports.jiraCallback = async (req, res) => {
     const user = await loadUserByRole(decoded.role, decoded.userId);
     if (!user) return res.status(404).json({ error: 'Không tìm thấy user để lưu integration' });
 
-    // Đảm bảo jiraAccountId + cloudId không bị trùng với user khác
+    // Đảm bảo jiraAccountId + cloudId không bị trùng với user khác (trừ chính user này)
     await ensureJiraUnique(me.jiraAccountId, cloudId, decoded.role, user._id);
 
+    // Đảm bảo integrations object tồn tại (có thể là {} hoặc có github nhưng không có jira)
     user.integrations = user.integrations || {};
+    
+    // Overwrite hoặc tạo mới jira integration
+    // Nếu đã có jira từ trước (reconnect), sẽ overwrite với token mới
     user.integrations.jira = {
       jiraAccountId: me.jiraAccountId,
       cloudId,
       jiraUrl, // Tự động lấy Jira URL
       email: me.email,
-      accessToken,
-      refreshToken,
+      accessToken, // Token này sẽ được mã hóa trong pre-save hook
+      refreshToken, // Refresh token này cũng sẽ được mã hóa trong pre-save hook
       linkedAt: new Date()
     };
+    
     await user.save();
     
     console.log(`✅ [Jira Connect] Đã lưu integration cho user ${user.email}:`);
@@ -409,8 +424,15 @@ exports.disconnectGithub = async (req, res) => {
     }
 
     // Xóa thông tin GitHub integration
+    // Đảm bảo integrations object tồn tại trước khi xóa
     user.integrations = user.integrations || {};
-    user.integrations.github = null;
+    
+    // Xóa field github (delete thay vì set null để clean hơn)
+    delete user.integrations.github;
+    
+    // Nếu integrations trở thành empty object sau khi xóa github, có thể giữ nguyên hoặc set về {}
+    // Mongoose sẽ tự xử lý với Schema.Types.Mixed
+    
     await user.save();
 
     return res.json({ 
@@ -418,6 +440,7 @@ exports.disconnectGithub = async (req, res) => {
       github: null
     });
   } catch (error) {
+    console.error('❌ [Disconnect GitHub] Lỗi:', error);
     return res.status(500).json({ error: error.message });
   }
 };
@@ -435,8 +458,15 @@ exports.disconnectJira = async (req, res) => {
     }
 
     // Xóa thông tin Jira integration
+    // Đảm bảo integrations object tồn tại trước khi xóa
     user.integrations = user.integrations || {};
-    user.integrations.jira = null;
+    
+    // Xóa field jira (delete thay vì set null để clean hơn)
+    delete user.integrations.jira;
+    
+    // Nếu integrations trở thành empty object sau khi xóa jira, có thể giữ nguyên hoặc set về {}
+    // Mongoose sẽ tự xử lý với Schema.Types.Mixed
+    
     await user.save();
 
     return res.json({ 
@@ -444,6 +474,7 @@ exports.disconnectJira = async (req, res) => {
       jira: null
     });
   } catch (error) {
+    console.error('❌ [Disconnect Jira] Lỗi:', error);
     return res.status(500).json({ error: error.message });
   }
 };
