@@ -43,16 +43,24 @@ const JiraService = {
                 }
             });
 
-            return response.data.issues.map(issue => ({
-                issue_key: issue.key,
-                issue_id: issue.id,
-                summary: issue.fields.summary,
-                status: issue.fields.status.name,
-                status_category: issue.fields.status.statusCategory.name, // To Do, In Progress, Done
-                assignee_account_id: issue.fields.assignee ? issue.fields.assignee.accountId : null,
-                assignee_name: issue.fields.assignee ? issue.fields.assignee.displayName : 'Unassigned',
-                story_point: issue.fields.customfield_10026 || 0 // Cần check ID của field Story Point trên Jira của bạn
-            }));
+            return response.data.issues.map(issue => {
+                const fields = issue.fields || {};
+                const assignee = fields.assignee || null;
+
+                return {
+                    issue_key: issue.key,
+                    issue_id: issue.id,
+                    summary: fields.summary || '',
+                    status: fields.status?.name || '',
+                    status_category: fields.status?.statusCategory?.name || '', // To Do, In Progress, Done
+
+                    // Nếu không có assignee thì lưu null (FE tự hiển thị "Unassigned")
+                    assignee_account_id: assignee?.accountId || null,
+                    assignee_name: assignee?.displayName || null,
+
+                    story_point: fields.customfield_10026 || 0 // Cần check ID của field Story Point trên Jira của bạn
+                };
+            });
 
         } catch (error) {
             console.error(`❌ Lỗi Jira Task API (Sprint ${sprintId}):`, error.message);

@@ -19,7 +19,8 @@ const JiraTaskSchema = new Schema({
     issue_id: String,
     summary: String,
     assignee_account_id: { type: String, default: null },
-    assignee_name: { type: String, default: 'Unassigned' },
+    // Nếu task không có assignee thì lưu null (UI tự hiển thị "Unassigned")
+    assignee_name: { type: String, default: null },
     status_name: String,    
     status_category: String, 
     story_point: { type: Number, default: 0 },
