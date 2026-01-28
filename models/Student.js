@@ -12,23 +12,17 @@ const StudentSchema = new Schema({
     ent: { type: String }, 
     // ==================================================
     // TÍCH HỢP TÀI KHOẢN (Account Integration)
+    // Lưu ý: dùng Mixed + default {} để tránh lỗi "Cast to Object"
+    // khi field integrations/github/jira đang là undefined/null hoặc
+    // dữ liệu cũ chưa đúng format.
+    // Cấu trúc mong đợi vẫn là:
+    // integrations.github: { githubId, username, accessToken, linkedAt }
+    // integrations.jira:  { jiraAccountId, cloudId, jiraUrl, email, accessToken, refreshToken, linkedAt }
+    // nhưng schema mềm hơn để backward-compatible với dữ liệu cũ.
     // ==================================================
     integrations: {
-        github: {
-            githubId: { type: String },
-            username: { type: String },
-            accessToken: { type: String },
-            linkedAt: { type: Date }
-        },
-        jira: {
-            jiraAccountId: { type: String }, // Quan trọng: dùng để map assignee trong Jira
-            cloudId: { type: String },       // ID site Jira (accessible-resources)
-            jiraUrl: { type: String },       // URL của Jira instance (tự động lấy khi connect)
-            email: { type: String },
-            accessToken: { type: String },
-            refreshToken: { type: String },  // offline_access để refresh token
-            linkedAt: { type: Date }
-        }
+        type: Schema.Types.Mixed,
+        default: {}
     },
     password: { type: String, required: true },
     // Google OAuth

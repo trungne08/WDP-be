@@ -8,23 +8,13 @@ const LecturerSchema = new Schema({
     avatar_url: String,
     // ==================================================
     // TÍCH HỢP TÀI KHOẢN (Account Integration)
+    // Dùng Mixed + default {} tương tự Student để tránh
+    // lỗi "Cast to Object failed for value 'undefined' at path 'integrations.github'"
+    // khi dữ liệu cũ hoặc khi integrations/github/jira bị null/undefined.
     // ==================================================
     integrations: {
-        github: {
-            githubId: { type: String },
-            username: { type: String },
-            accessToken: { type: String },
-            linkedAt: { type: Date }
-        },
-        jira: {
-            jiraAccountId: { type: String }, // Quan trọng: dùng để map assignee trong Jira
-            cloudId: { type: String },       // ID site Jira (accessible-resources)
-            jiraUrl: { type: String },       // URL của Jira instance (tự động lấy khi connect)
-            email: { type: String },
-            accessToken: { type: String },
-            refreshToken: { type: String },  // offline_access để refresh token
-            linkedAt: { type: Date }
-        }
+        type: Schema.Types.Mixed,
+        default: {}
     },
     password: { type: String, required: true },
     // Google OAuth
