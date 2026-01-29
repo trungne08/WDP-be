@@ -19,6 +19,12 @@ module.exports = (app) => {
    *     responses:
    *       200:
    *         description: Danh sách Sprints
+  *       400:
+  *         description: teamId không hợp lệ
+  *       404:
+  *         description: Không tìm thấy team
+  *       500:
+  *         description: Lỗi server
    */
   app.get('/api/teams/:teamId/sprints', JiraController.getSprintsByTeam);
 
@@ -52,6 +58,12 @@ module.exports = (app) => {
    *     responses:
    *       201:
    *         description: Tạo thành công
+  *       400:
+  *         description: Lỗi validation (thiếu team_id/name hoặc dữ liệu không hợp lệ)
+  *       404:
+  *         description: Không tìm thấy team
+  *       500:
+  *         description: Lỗi server
    */
   app.post('/api/sprints', JiraController.createSprint);
 
@@ -87,6 +99,12 @@ module.exports = (app) => {
    *     responses:
    *       200:
    *         description: Sprint đã start thành công
+  *       400:
+  *         description: Lỗi validation (thiếu start_date/end_date hoặc dữ liệu không hợp lệ)
+  *       404:
+  *         description: Không tìm thấy sprint
+  *       500:
+  *         description: Lỗi server
    */
   app.post('/api/sprints/:id/start', JiraController.startSprint);
 
@@ -106,6 +124,12 @@ module.exports = (app) => {
    *     responses:
    *       200:
    *         description: Chi tiết Sprint
+  *       400:
+  *         description: id không hợp lệ
+  *       404:
+  *         description: Không tìm thấy sprint
+  *       500:
+  *         description: Lỗi server
    *
    *   put:
    *     summary: Cập nhật Sprint (Tên, ngày tháng, trạng thái)
@@ -137,6 +161,12 @@ module.exports = (app) => {
    *     responses:
    *       200:
    *         description: Update thành công
+  *       400:
+  *         description: id không hợp lệ hoặc body không hợp lệ
+  *       404:
+  *         description: Không tìm thấy sprint
+  *       500:
+  *         description: Lỗi server
    *
    *   delete:
    *     summary: Xóa Sprint
@@ -151,6 +181,12 @@ module.exports = (app) => {
    *     responses:
    *       200:
    *         description: Đã xóa thành công
+  *       400:
+  *         description: id không hợp lệ
+  *       404:
+  *         description: Không tìm thấy sprint
+  *       500:
+  *         description: Lỗi server
    */
   app.get('/api/sprints/:id', JiraController.getSprintById);
   app.put('/api/sprints/:id', JiraController.updateSprint);
@@ -184,6 +220,12 @@ module.exports = (app) => {
  *     responses:
  *       201:
  *         description: Tạo thành công
+ *       400:
+ *         description: Lỗi validation (thiếu team_id/summary hoặc dữ liệu không hợp lệ)
+ *       404:
+ *         description: Không tìm thấy team hoặc sprint (nếu có)
+ *       500:
+ *         description: Lỗi server
  */
 app.post('/api/tasks', JiraController.createTask);
 
@@ -203,6 +245,12 @@ app.post('/api/tasks', JiraController.createTask);
  *     responses:
  *       200:
  *         description: Chi tiết Task
+ *       400:
+ *         description: id không hợp lệ
+ *       404:
+ *         description: Không tìm thấy task
+ *       500:
+ *         description: Lỗi server
  *
  *   put:
  *     summary: Cập nhật Task (Bắt buộc gửi team_id)
@@ -238,6 +286,12 @@ app.post('/api/tasks', JiraController.createTask);
  *     responses:
  *       200:
  *         description: Update thành công
+ *       400:
+ *         description: id không hợp lệ hoặc body không hợp lệ
+ *       404:
+ *         description: Không tìm thấy task
+ *       500:
+ *         description: Lỗi server
  *
  *   delete:
  *     summary: Xóa Task
@@ -252,6 +306,12 @@ app.post('/api/tasks', JiraController.createTask);
  *     responses:
  *       200:
  *         description: Đã xóa thành công
+ *       400:
+ *         description: id không hợp lệ
+ *       404:
+ *         description: Không tìm thấy task
+ *       500:
+ *         description: Lỗi server
  */
 app.get('/api/tasks/:id', JiraController.getTaskById);
 app.put('/api/tasks/:id', JiraController.updateTask);

@@ -256,6 +256,40 @@ exports.jiraCallback = async (req, res) => {
     };
     
     await user.save();
+
+    // ==========================================
+    // Best-effort: auto map Jira accountId cho TeamMember của user này
+    // để assignee_id có thể resolve (TeamMember) khi sync/get tasks.
+    // ==========================================
+    try {
+      // Update tất cả TeamMember active của student này
+      const updatedMembers = await models.TeamMember.find({
+        student_id: user._id,
+        is_active: true
+      }).select('_id team_id').lean();
+
+      if (updatedMembers.length > 0) {
+        await models.TeamMember.updateMany(
+          { student_id: user._id, is_active: true },
+          { jira_account_id: me.jiraAccountId }
+        );
+
+        // Backfill JiraTask.assignee_id cho các team/sprint hiện có (best-effort)
+        const { Sprint, JiraTask } = require('../models/JiraData');
+        for (const tm of updatedMembers) {
+          const sprintIds = await Sprint.find({ team_id: tm.team_id }).select('_id').lean();
+          const ids = sprintIds.map(s => s._id);
+          if (ids.length === 0) continue;
+
+          await JiraTask.updateMany(
+            { sprint_id: { $in: ids }, assignee_account_id: me.jiraAccountId },
+            { assignee_id: tm._id }
+          );
+        }
+      }
+    } catch (e) {
+      // ignore - mapping chỉ là best-effort, không làm fail flow connect
+    }
     
     console.log(`✅ [Jira Connect] Đã lưu integration cho user ${user.email}:`);
     console.log(`   - Jira URL: ${jiraUrl}`);

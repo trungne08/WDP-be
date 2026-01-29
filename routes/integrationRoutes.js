@@ -153,6 +153,10 @@ module.exports = (app) => {
      *         description: Danh sách repo
      *       400:
      *         description: Chưa link GitHub
+     *       401:
+     *         description: GitHub token không hợp lệ hoặc đã hết hạn (cần reconnect)
+     *       500:
+     *         description: Lỗi server
      */
     app.get('/api/integrations/github/repos', authenticateToken, IntegrationController.getGithubRepos);
 
@@ -172,6 +176,10 @@ module.exports = (app) => {
      *         description: Danh sách project
      *       400:
      *         description: Chưa link Jira
+     *       401:
+     *         description: Jira token không hợp lệ hoặc đã hết hạn (cần reconnect)
+     *       500:
+     *         description: Lỗi server
      */
     app.get('/api/integrations/jira/projects', authenticateToken, IntegrationController.getJiraProjects);
 
@@ -198,6 +206,10 @@ module.exports = (app) => {
      *         description: Danh sách boards
      *       400:
      *         description: Thiếu projectKey hoặc chưa kết nối Jira
+     *       401:
+     *         description: Jira token không hợp lệ hoặc đã hết hạn (cần reconnect)
+     *       500:
+     *         description: Lỗi server
      */
     app.get('/api/integrations/jira/boards', authenticateToken, IntegrationController.getJiraBoards);
 
@@ -315,6 +327,8 @@ module.exports = (app) => {
      *         description: Không có quyền sync project này
      *       404:
      *         description: Không tìm thấy project
+     *       500:
+     *         description: Lỗi server
      */
     app.post('/api/integrations/projects/:projectId/sync', authenticateToken, IntegrationController.syncMyProjectData);
 
