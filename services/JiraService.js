@@ -120,48 +120,84 @@ module.exports = {
         }
     },
 
-    fetchTasksInSprint: async (jiraUrl, sprintId, tokenBase64) => {
+    fetchAllBoardIssues: async (jiraUrl, boardId, tokenBase64) => {
+        const cleanUrl = jiraUrl.replace(/\/$/, "");
+        let allIssues = [];
+        let startAt = 0;
+        let isLast = false;
+
+        // 1. Dò ID các field quan trọng
+        const pointFieldId = await module.exports.getCustomFieldId(jiraUrl, tokenBase64, "Story Points") || "customfield_10026";
+        // Field "Sprint" chứa thông tin sprint của task (Thường là customfield_10020)
+        const sprintFieldId = await module.exports.getCustomFieldId(jiraUrl, tokenBase64, "Sprint") || "customfield_10020";
+
         try {
-            const cleanUrl = jiraUrl.replace(/\/$/, "");
-            const jql = `sprint=${sprintId}`;
-            
-            // Config ID
-            const POINT_FIELD = "customfield_10026"; 
-            const START_DATE_FIELD = "customfield_10015";
+            while (!isLast) {
+                // Gọi API Board Issue (Không lọc JQL gì cả -> Lấy hết)
+                const response = await axios.get(`${cleanUrl}/rest/agile/1.0/board/${boardId}/issue`, {
+                    headers: getJiraHeaders(tokenBase64),
+                    params: {
+                        startAt: startAt,
+                        maxResults: 50,
+                        fields: `summary,status,assignee,description,duedate,reporter,${pointFieldId},${sprintFieldId}`
+                    }
+                });
 
-            const fieldsToGet = `summary,status,issuetype,assignee,reporter,description,duedate,${POINT_FIELD},${START_DATE_FIELD}`;
-            
-            const searchUrl = `${cleanUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=${fieldsToGet}&expand=renderedFields&maxResults=100`;
-            
-            const response = await axios.get(searchUrl, {
-                headers: getJiraHeaders(tokenBase64)
-            });
+                const issues = response.data.issues;
 
-            return response.data.issues.map(issue => {
-                const descHtml = issue.renderedFields && issue.renderedFields.description 
-                                ? issue.renderedFields.description 
-                                : (issue.fields.description || "");
+                const mappedIssues = issues.map(issue => {
+                    // --- LOGIC TÁCH SPRINT ---
+                    let currentSprintId = null;
+                    const sprintsData = issue.fields[sprintFieldId];
 
-                return {
-                    issue_id: issue.id,
-                    issue_key: issue.key,
-                    summary: issue.fields.summary,
-                    description: descHtml,
-                    status_name: issue.fields.status.name,
-                    status_category: issue.fields.status.statusCategory.name,
-                    story_point: issue.fields[POINT_FIELD] || 0,
-                    assignee: issue.fields.assignee,
-                    reporter: issue.fields.reporter,
-                    due_date: issue.fields.duedate,
-                    start_date: issue.fields[START_DATE_FIELD]
-                };
-            });
+                    if (sprintsData && Array.isArray(sprintsData) && sprintsData.length > 0) {
+                        // Jira trả về mảng các sprint task từng đi qua.
+                        // Sprint đang active hoặc future thường nằm cuối mảng.
+                        // Cấu trúc item: { id: 123, name: 'Sprint 1', state: 'active' }
+                        const lastSprint = sprintsData[sprintsData.length - 1];
+                        
+                        // Parse ID (tùy version Jira trả về Object hay String)
+                        if (lastSprint && lastSprint.id) {
+                            currentSprintId = lastSprint.id;
+                        } else if (typeof lastSprint === 'string') {
+                            const match = lastSprint.match(/id=(\d+)/);
+                            if (match) currentSprintId = Number(match[1]);
+                        }
+                    } 
+                    // Nếu sprintsData null hoặc rỗng -> Task này đang ở Backlog (currentSprintId = null)
+
+                    return {
+                        issue_key: issue.key,
+                        issue_id: issue.id,
+                        summary: issue.fields.summary,
+                        description: issue.fields.description || "",
+                        status_name: issue.fields.status.name,
+                        status_category: issue.fields.status.statusCategory.name,
+                        assignee_account_id: issue.fields.assignee ? issue.fields.assignee.accountId : null,
+                        reporter_account_id: issue.fields.reporter ? issue.fields.reporter.accountId : null,
+                        due_date: issue.fields.duedate,
+                        story_point: issue.fields[pointFieldId] || 0,
+                        
+                        // ID Sprint lấy từ Jira (để lát nữa map với DB)
+                        jira_sprint_id: currentSprintId 
+                    };
+                });
+
+                allIssues.push(...mappedIssues);
+
+                if (issues.length < 50) isLast = true;
+                else startAt += 50;
+            }
+            
+            console.log(`📦 [Board Sync] Tổng cộng: ${allIssues.length} tasks (Sprint + Backlog).`);
+            return allIssues;
+
         } catch (error) {
-            console.error("Fetch Tasks Error:", error.message);
-            return [];
+            console.error(`❌ Lỗi Fetch Board Issues:`, error.message);
+            throw error;
         }
     },
-
+    
     createJiraIssue: async (jiraUrl, tokenBase64, data) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
