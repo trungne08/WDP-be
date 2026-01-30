@@ -6,19 +6,11 @@ const JiraService = require('../services/JiraService');
 
 exports.syncTeamData = async (req, res) => {
     const { teamId } = req.params;
-    
     try {
         const team = await Team.findById(teamId);
         if (!team) return res.status(404).json({ msg: "Team not found" });
-
-        // ❌ XÓA DÒNG CHECK CỨNG NHẮC CŨ: if (!team.api_token_github || !team.api_token_jira) ...
-
         console.log(`⏳ Đang Sync dữ liệu cho Team: ${team.project_name}...`);
         const results = { git: 0, jira_sprints: 0, jira_tasks: 0, errors: [] };
-
-        // ==========================================
-        // PHẦN 1: GITHUB (Chỉ chạy nếu có Token)
-        // ==========================================
         if (team.api_token_github && team.github_repo_url) {
             try {
                 const commits = await GithubService.fetchCommits(team.github_repo_url, team.api_token_github);
@@ -49,13 +41,15 @@ exports.syncTeamData = async (req, res) => {
         }
 
         // ==========================================
-        // PHẦN 2: JIRA (Chỉ chạy nếu có Token)
+        // PHẦN 2: JIRA (Cập nhật logic mới)
         // ==========================================
         if (team.api_token_jira && team.jira_url && team.jira_board_id) {
             try {
+                // 1. Lấy danh sách Sprint
                 const sprints = await JiraService.fetchSprints(team.jira_url, team.jira_board_id, team.api_token_jira);
                 
                 for (const sprintData of sprints) {
+                    // Lưu Sprint vào DB
                     const savedSprint = await Sprint.findOneAndUpdate(
                         { jira_sprint_id: sprintData.id },
                         {
@@ -69,17 +63,40 @@ exports.syncTeamData = async (req, res) => {
                     );
                     results.jira_sprints++;
 
-                    // Lấy Task của Sprint này
+                    // 2. Lấy danh sách Task trong Sprint
                     const tasks = await JiraService.fetchTasksInSprint(team.jira_url, sprintData.id, team.api_token_jira);
+                    
                     for (const task of tasks) {
+                        // Lưu Task vào DB với đầy đủ trường thông tin
                         await JiraTask.findOneAndUpdate(
                             { issue_id: task.issue_id },
                             {
                                 sprint_id: savedSprint._id,
+                                team_id: team._id,
                                 issue_key: task.issue_key,
+                                summary: task.summary,
+                                
+                                // 🔥 Update: Description (HTML)
+                                description: task.description, 
+
                                 status_name: task.status_name,
                                 status_category: task.status_category,
                                 story_point: task.story_point,
+                                
+                                // 🔥 Update: Assignee
+                                assignee_account_id: task.assignee ? task.assignee.accountId : null,
+                                assignee_name: task.assignee ? task.assignee.displayName : null,
+                                assignee_avatar: task.assignee ? task.assignee.avatarUrls['48x48'] : null,
+
+                                // 🔥 Update: Reporter
+                                reporter_account_id: task.reporter ? task.reporter.accountId : null,
+                                reporter_name: task.reporter ? task.reporter.displayName : null,
+                                reporter_avatar: task.reporter ? task.reporter.avatarUrls['48x48'] : null,
+
+                                // 🔥 Update: Dates
+                                start_date: task.start_date ? new Date(task.start_date) : null,
+                                due_date: task.due_date ? new Date(task.due_date) : null,
+
                                 updated_at: new Date()
                             },
                             { upsert: true }
@@ -92,14 +109,13 @@ exports.syncTeamData = async (req, res) => {
                 results.errors.push(`Jira Error: ${err.message}`);
             }
         } else {
-             console.log("⏩ Bỏ qua Jira (Chưa có Token)");
+             console.log("⏩ Bỏ qua Jira (Chưa có Token hoặc Board ID)");
         }
 
-        // Cập nhật thời gian Sync
         await Team.findByIdAndUpdate(teamId, { last_sync_at: new Date() });
 
         res.json({ 
-            message: "✅ Đồng bộ hoàn tất (theo cấu hình có sẵn)!", 
+            message: "✅ Đồng bộ hoàn tất!", 
             stats: results 
         });
 

@@ -1,108 +1,200 @@
 const axios = require('axios');
 
-// Hàm cấu hình Header cho Jira
-const getJiraHeaders = (tokenBase64) => ({
-    'Authorization': `Basic ${tokenBase64}`,
-    'Accept': 'application/json'
+// ==================================================================
+// 1. HELPER FUNCTIONS
+// ==================================================================
+
+const getJiraHeaders = (token) => ({
+    'Authorization': `Basic ${token}`,
+    'Accept': 'application/json',
+    'Content-Type': 'application/json'
 });
-const JiraService = {
-    // 1. Lấy danh sách Sprint từ Board
+
+/**
+ * Chuyển đổi String thường -> Jira ADF (Dùng cho Description)
+ */
+const textToADF = (text) => {
+    if (!text) return null;
+    return {
+        type: "doc",
+        version: 1,
+        content: [{
+            type: "paragraph",
+            content: [{ type: "text", text: text }]
+        }]
+    };
+};
+
+// ==================================================================
+// 2. MAIN SERVICE
+// ==================================================================
+
+module.exports = {
+
+    // --- A. QUẢN LÝ SPRINT (ĐÃ KHÔI PHỤC) ---
+
     fetchSprints: async (jiraUrl, boardId, tokenBase64) => {
         try {
-            // Domain ví dụ: https://trung-swp.atlassian.net
-            const cleanUrl = jiraUrl.replace(/\/$/, ""); // Xóa dấu / ở cuối nếu có
-
-            const response = await axios.get(`${cleanUrl}/rest/agile/1.0/board/${boardId}/sprint`, {
-                headers: getJiraHeaders(tokenBase64)
-            });
-
-            return response.data.values.map(sprint => ({
-                id: sprint.id,
-                name: sprint.name,
-                state: sprint.state, // active, future, closed
-                startDate: sprint.startDate,
-                endDate: sprint.endDate
-            }));
-
+            const cleanUrl = jiraUrl.replace(/\/$/, "");
+            const response = await axios.get(
+                `${cleanUrl}/rest/agile/1.0/board/${boardId}/sprint?state=active,future`,
+                { headers: getJiraHeaders(tokenBase64) }
+            );
+            return response.data.values;
         } catch (error) {
-            console.error('❌ Lỗi Jira Sprint API:', error.response ? error.response.data : error.message);
+            console.error("Fetch Sprints Error:", error.message);
             return [];
         }
     },
 
-    // 2. Lấy Task trong một Sprint
-    fetchTasksInSprint: async (jiraUrl, sprintId, tokenBase64) => {
+    createJiraSprint: async (jiraUrl, tokenBase64, originBoardId, name, startDate, endDate) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
-
-            const response = await axios.get(`${cleanUrl}/rest/agile/1.0/sprint/${sprintId}/issue`, {
-                headers: getJiraHeaders(tokenBase64),
-                params: {
-                    // Chỉ lấy các trường cần thiết để nhẹ gánh
-                    fields: 'summary,status,assignee,customfield_10026' // customfield_10026 thường là Story Point (check lại trên Jira của bạn)
-                }
-            });
-
-            return response.data.issues.map(issue => {
-                const fields = issue.fields || {};
-                const assignee = fields.assignee || null;
-
-                return {
-                    issue_key: issue.key,
-                    issue_id: issue.id,
-                    summary: fields.summary || '',
-                    status: fields.status?.name || '',
-                    status_category: fields.status?.statusCategory?.name || '', // To Do, In Progress, Done
-
-                    // Nếu không có assignee thì lưu null (FE tự hiển thị "Unassigned")
-                    assignee_account_id: assignee?.accountId || null,
-                    assignee_name: assignee?.displayName || null,
-
-                    story_point: fields.customfield_10026 || 0 // Cần check ID của field Story Point trên Jira của bạn
-                };
-            });
-
+            const payload = {
+                name: name,
+                originBoardId: originBoardId,
+                startDate: startDate, // Format: ISO String
+                endDate: endDate      // Format: ISO String
+            };
+            const response = await axios.post(
+                `${cleanUrl}/rest/agile/1.0/sprint`, 
+                payload, 
+                { headers: getJiraHeaders(tokenBase64) }
+            );
+            return response.data;
         } catch (error) {
-            console.error(`❌ Lỗi Jira Task API (Sprint ${sprintId}):`, error.message);
-            return [];
+            throw new Error(error.response?.data?.message || "Lỗi tạo Sprint trên Jira");
         }
     },
 
-    detectStoryPointField: async (jiraUrl, tokenBase64) => {
+    startJiraSprint: async (jiraUrl, tokenBase64, sprintId, startDate, endDate) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
+            const payload = {
+                state: 'active',
+                startDate: startDate,
+                endDate: endDate
+            };
+            const response = await axios.post(
+                `${cleanUrl}/rest/agile/1.0/sprint/${sprintId}`, 
+                payload, 
+                { headers: getJiraHeaders(tokenBase64) }
+            );
+            return response.data;
+        } catch (error) {
+            throw new Error(error.response?.data?.message || "Lỗi Start Sprint trên Jira");
+        }
+    },
+
+    updateJiraSprint: async (jiraUrl, tokenBase64, sprintId, data) => {
+        try {
+            const cleanUrl = jiraUrl.replace(/\/$/, "");
+            const response = await axios.put(
+                `${cleanUrl}/rest/agile/1.0/sprint/${sprintId}`, 
+                data, 
+                { headers: getJiraHeaders(tokenBase64) }
+            );
+            return response.data;
+        } catch (error) {
+            throw new Error(error.response?.data?.message || "Lỗi cập nhật Sprint trên Jira");
+        }
+    },
+
+    // --- B. QUẢN LÝ TASK (CÓ CÁC TRƯỜNG MỚI) ---
+
+    getCustomFieldId: async (jiraUrl, tokenBase64, fieldName) => {
+        try {
+            const cleanUrl = jiraUrl.replace(/\/$/, "");
+            // Gọi API lấy toàn bộ danh sách Field
             const response = await axios.get(`${cleanUrl}/rest/api/3/field`, {
                 headers: getJiraHeaders(tokenBase64)
             });
 
-            const targetField = response.data.find(f =>
-                f.name === 'Story Points' || f.name === 'Story point estimate' || f.name === 'Story Points (Agile)'
-            );
-            return targetField ? targetField.id : 'customfield_10026';
+            // Tìm field có tên trùng khớp (Không phân biệt hoa thường)
+            const field = response.data.find(f => f.name.toLowerCase() === fieldName.toLowerCase());
+            
+            return field ? field.id : null;
         } catch (error) {
-            return 'customfield_10026';
+            console.error(`⚠️ Không tìm thấy field "${fieldName}":`, error.message);
+            return null;
         }
     },
 
-    // ==========================================
-    // 3. CÁC HÀM CRUD (Dùng token trực tiếp)
-    // ==========================================
+    fetchTasksInSprint: async (jiraUrl, sprintId, tokenBase64) => {
+        try {
+            const cleanUrl = jiraUrl.replace(/\/$/, "");
+            const jql = `sprint=${sprintId}`;
+            
+            // Config ID
+            const POINT_FIELD = "customfield_10026"; 
+            const START_DATE_FIELD = "customfield_10015";
+
+            const fieldsToGet = `summary,status,issuetype,assignee,reporter,description,duedate,${POINT_FIELD},${START_DATE_FIELD}`;
+            
+            const searchUrl = `${cleanUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&fields=${fieldsToGet}&expand=renderedFields&maxResults=100`;
+            
+            const response = await axios.get(searchUrl, {
+                headers: getJiraHeaders(tokenBase64)
+            });
+
+            return response.data.issues.map(issue => {
+                const descHtml = issue.renderedFields && issue.renderedFields.description 
+                                ? issue.renderedFields.description 
+                                : (issue.fields.description || "");
+
+                return {
+                    issue_id: issue.id,
+                    issue_key: issue.key,
+                    summary: issue.fields.summary,
+                    description: descHtml,
+                    status_name: issue.fields.status.name,
+                    status_category: issue.fields.status.statusCategory.name,
+                    story_point: issue.fields[POINT_FIELD] || 0,
+                    assignee: issue.fields.assignee,
+                    reporter: issue.fields.reporter,
+                    due_date: issue.fields.duedate,
+                    start_date: issue.fields[START_DATE_FIELD]
+                };
+            });
+        } catch (error) {
+            console.error("Fetch Tasks Error:", error.message);
+            return [];
+        }
+    },
 
     createJiraIssue: async (jiraUrl, tokenBase64, data) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
+            
+            // 1. Tự động tìm ID nếu không được truyền vào
+            let pointFieldId = data.storyPointFieldId;
+            if (!pointFieldId && data.storyPoint) {
+                pointFieldId = await module.exports.getCustomFieldId(jiraUrl, tokenBase64, "Story Points");
+            }
+
+            let startDateFieldId = data.startDateFieldId;
+            if (!startDateFieldId && data.startDate) {
+                startDateFieldId = await module.exports.getCustomFieldId(jiraUrl, tokenBase64, "Start date");
+            }
+
+            // 2. Build Payload
             const payload = {
                 fields: {
                     project: { key: data.projectKey },
-                    summary: data.summary,
-                    description: {
-                        type: "doc",
-                        version: 1,
-                        content: [{ type: "paragraph", content: [{ type: "text", text: data.description || "" }] }]
-                    },
                     issuetype: { name: "Task" },
+                    summary: data.summary,
+                    description: textToADF(data.description || ""),
+                    
+                    // Assignee & Reporter
                     ...(data.assigneeAccountId && { assignee: { accountId: data.assigneeAccountId } }),
-                    ...(data.storyPoint && { [data.storyPointFieldId || 'customfield_10026']: Number(data.storyPoint) })
+                    ...(data.reporterAccountId && { reporter: { accountId: data.reporterAccountId } }),
+                    
+                    // Due Date
+                    ...(data.duedate && { duedate: data.duedate }),
+
+                    // Custom Fields (Dùng ID vừa tìm được)
+                    ...(data.storyPoint && pointFieldId && { [pointFieldId]: Number(data.storyPoint) }),
+                    ...(data.startDate && startDateFieldId && { [startDateFieldId]: data.startDate })
                 }
             };
 
@@ -116,156 +208,118 @@ const JiraService = {
         }
     },
 
-    updateJiraIssue: async (jiraUrl, tokenBase64, issueIdOrKey, data) => {
+    updateJiraIssue: async (jiraUrl, tokenBase64, issueKey, data) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
-            const payload = { fields: {} };
+            const fields = {};
 
-            if (data.summary) payload.fields.summary = data.summary;
-            if (data.assigneeAccountId) payload.fields.assignee = { accountId: data.assigneeAccountId };
-            if (data.storyPoint) {
-                const fieldId = data.storyPointFieldId || 'customfield_10026';
-                payload.fields[fieldId] = Number(data.storyPoint);
+            // 1. Tự động tìm ID nếu cần
+            let pointFieldId = data.storyPointFieldId;
+            if (!pointFieldId && data.storyPoint !== undefined) {
+                pointFieldId = await module.exports.getCustomFieldId(jiraUrl, tokenBase64, "Story Points");
             }
 
-            await axios.put(`${cleanUrl}/rest/api/3/issue/${issueIdOrKey}`, payload, {
-                headers: getJiraHeaders(tokenBase64)
-            });
+            let startDateFieldId = data.startDateFieldId;
+            if (!startDateFieldId && data.startDate) {
+                startDateFieldId = await module.exports.getCustomFieldId(jiraUrl, tokenBase64, "Start date");
+            }
+
+            // 2. Map dữ liệu
+            if (data.summary) fields.summary = data.summary;
+            if (data.description) fields.description = textToADF(data.description);
+            if (data.assigneeAccountId) fields.assignee = { accountId: data.assigneeAccountId };
+            if (data.reporterAccountId) fields.reporter = { accountId: data.reporterAccountId };
+            if (data.duedate) fields.duedate = data.duedate;
+
+            // Map Custom Fields
+            if (data.storyPoint !== undefined && pointFieldId) {
+                fields[pointFieldId] = Number(data.storyPoint);
+            }
+            if (data.startDate && startDateFieldId) {
+                fields[startDateFieldId] = data.startDate;
+            }
+
+            if (Object.keys(fields).length === 0) return true;
+
+            await axios.put(
+                `${cleanUrl}/rest/api/3/issue/${issueKey}`,
+                { fields }, 
+                { headers: getJiraHeaders(tokenBase64) }
+            );
+
             return true;
         } catch (error) {
-            console.error("❌ Update Jira Issue Error:", error.response?.data || error.message);
-            throw new Error("Không thể cập nhật Task trên Jira");
+            console.error(`❌ Update Error [${issueKey}]:`, error.response?.data || error.message);
+            throw new Error("Lỗi cập nhật Jira");
         }
     },
 
-    deleteJiraIssue: async (jiraUrl, tokenBase64, issueIdOrKey) => {
+    // --- C. XÓA & CHUYỂN TRẠNG THÁI (ĐÃ KHÔI PHỤC) ---
+
+    deleteJiraIssue: async (jiraUrl, tokenBase64, issueKeyOrId) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
-            await axios.delete(`${cleanUrl}/rest/api/3/issue/${issueIdOrKey}`, {
-                headers: getJiraHeaders(tokenBase64)
-            });
+            await axios.delete(
+                `${cleanUrl}/rest/api/3/issue/${issueKeyOrId}`, 
+                { headers: getJiraHeaders(tokenBase64) }
+            );
             return true;
         } catch (error) {
-            console.error("❌ Delete Jira Issue Error:", error.response?.data || error.message);
-            throw new Error("Không thể xóa Task trên Jira");
+            console.error("Delete Jira Issue Error:", error.message);
+            throw new Error("Không thể xóa issue trên Jira");
         }
     },
 
-    createJiraSprint: async (jiraUrl, tokenBase64, boardId, name, startDate, endDate) => {
+    transitionIssue: async (jiraUrl, tokenBase64, issueKey, targetStatusName) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
+            const headers = getJiraHeaders(tokenBase64);
+            const transitionsRes = await axios.get(
+                `${cleanUrl}/rest/api/3/issue/${issueKey}/transitions`,
+                { headers }
+            );
+            const transition = transitionsRes.data.transitions.find(
+                t => t.name.toLowerCase() === targetStatusName.toLowerCase()
+            );
 
-            const payload = {
-                originBoardId: Number(boardId), // Bắt buộc là số
-                name: name,
-                startDate: startDate, // ISO String (2024-02-01T09:00:00.000Z)
-                endDate: endDate
-            };
+            if (!transition) return false;
 
-            const response = await axios.post(`${cleanUrl}/rest/agile/1.0/sprint`, payload, {
-                headers: getJiraHeaders(tokenBase64)
-            });
-            return response.data;
-
+            await axios.post(
+                `${cleanUrl}/rest/api/3/issue/${issueKey}/transitions`,
+                { transition: { id: transition.id } },
+                { headers }
+            );
+            return true;
         } catch (error) {
-            console.error("❌ Create Sprint Error:", error.response?.data || error.message);
-            // Ném lỗi chi tiết để Controller bắt được
-            throw new Error(error.response?.data?.message || "Lỗi tạo Sprint bên Jira");
-        }
-    },
-
-    updateJiraSprint: async (jiraUrl, tokenBase64, jiraSprintId, data) => {
-        try {
-            const cleanUrl = jiraUrl.replace(/\/$/, "");
-            
-            // Jira chỉ cho phép update các trường này
-            const payload = {};
-            if (data.name) payload.name = data.name;
-            if (data.startDate) payload.startDate = data.startDate;
-            if (data.endDate) payload.endDate = data.endDate;
-            if (data.state) payload.state = data.state; // active, future, closed
-
-            const response = await axios.put(`${cleanUrl}/rest/agile/1.0/sprint/${jiraSprintId}`, payload, {
-                headers: getJiraHeaders(tokenBase64)
-            });
-            
-            return response.data;
-
-        } catch (error) {
-            console.error("❌ Update Sprint Error:", error.response?.data || error.message);
-            throw new Error(error.response?.data?.message || "Không thể cập nhật Sprint trên Jira");
-        }
-    },
-
-    startJiraSprint: async (jiraUrl, tokenBase64, sprintId, startDate, endDate) => {
-        try {
-            const cleanUrl = jiraUrl.replace(/\/$/, "");
-            
-            // Payload bắt buộc để Start Sprint trên Jira
-            const payload = {
-                state: 'active',
-                startDate: startDate, // Định dạng ISO 8601 (VD: 2024-02-01T09:00:00.000Z)
-                endDate: endDate
-            };
-
-            // Gọi API Jira Agile: POST /rest/agile/1.0/sprint/{sprintId}
-            // Lưu ý: Endpoint này dùng chung cho update, nhưng khi gửi state='active' nó sẽ hiểu là Start Sprint
-            const response = await axios.post(`${cleanUrl}/rest/agile/1.0/sprint/${sprintId}`, payload, {
-                headers: getJiraHeaders(tokenBase64)
-            });
-            
-            return response.data;
-
-        } catch (error) {
-            console.error("❌ Start Sprint Error:", error.response?.data || error.message);
-            // Ném lỗi chi tiết ra để Controller bắt được
-            throw new Error(error.response?.data?.message || "Không thể bắt đầu Sprint trên Jira");
+            return false;
         }
     },
 
     addIssueToSprint: async (jiraUrl, tokenBase64, jiraSprintId, issueKey) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
-            
-            // Payload nhận mảng các issue keys
-            const payload = {
-                issues: [issueKey]
-            };
-
-            await axios.post(`${cleanUrl}/rest/agile/1.0/sprint/${jiraSprintId}/issue`, payload, {
-                headers: getJiraHeaders(tokenBase64)
-            });
-            
+            await axios.post(
+                `${cleanUrl}/rest/agile/1.0/sprint/${jiraSprintId}/issue`,
+                { issues: [issueKey] },
+                { headers: getJiraHeaders(tokenBase64) }
+            );
             return true;
         } catch (error) {
-            console.error("❌ Move to Sprint Error:", error.response?.data || error.message);
-            // Không throw lỗi chết app, chỉ log ra để biết
             return false;
         }
     },
 
-    /**
-     * ĐÁ ISSUE VỀ BACKLOG
-     * POST /rest/agile/1.0/backlog/issue
-     */
     moveIssueToBacklog: async (jiraUrl, tokenBase64, issueKey) => {
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
-            
-            const payload = {
-                issues: [issueKey]
-            };
-
-            await axios.post(`${cleanUrl}/rest/agile/1.0/backlog/issue`, payload, {
-                headers: getJiraHeaders(tokenBase64)
-            });
-            
+            await axios.post(
+                `${cleanUrl}/rest/agile/1.0/backlog/issue`,
+                { issues: [issueKey] },
+                { headers: getJiraHeaders(tokenBase64) }
+            );
             return true;
         } catch (error) {
-            console.error("❌ Move to Backlog Error:", error.response?.data || error.message);
             return false;
         }
     }
 };
-
-module.exports = JiraService;
