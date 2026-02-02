@@ -1,31 +1,37 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
-// 1. Sprint
+// Sprint Schema (Giữ nguyên)
 const SprintSchema = new Schema({
     team_id: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
-    jira_sprint_id: Number,
-    name: String,
-    state: String,
-    start_date: Date,
-    end_date: Date
+    jira_sprint_id: { type: Number, required: true },
+    name: { type: String, required: true },
+    state: { type: String, enum: ['active', 'closed', 'future'], default: 'future' },
+    start_date: { type: Date },
+    end_date: { type: Date },
+    goal: { type: String }
 });
 
-// 2. Jira Task
+// Task Schema (Cập nhật thêm fields)
 const JiraTaskSchema = new Schema({
+    team_id: { type: Schema.Types.ObjectId, ref: 'Team' },
     sprint_id: { type: Schema.Types.ObjectId, ref: 'Sprint', default: null },
-    assignee_id: { type: Schema.Types.ObjectId, ref: 'TeamMember', default: null },
-    issue_key: String,
-    issue_id: String,
-    summary: String,
-    assignee_account_id: { type: String, default: null },
-    // Nếu task không có assignee thì lưu null (UI tự hiển thị "Unassigned")
-    assignee_name: { type: String, default: null },
-    status_name: String,    
-    status_category: String, 
+    issue_id: { type: String, required: true, unique: true },
+    issue_key: { type: String, required: true },
+    summary: { type: String },
+    description: { type: String, default: '' }, 
+    status_name: { type: String },
+    status_category: { type: String },
     story_point: { type: Number, default: 0 },
-    created_at: Date,
-    updated_at: Date
+    assignee_account_id: { type: String },
+    assignee_avatar: { type: String },
+    assignee_name: { type: String },
+    reporter_account_id: { type: String },
+    reporter_name: { type: String },
+    reporter_avatar: { type: String },
+    start_date: { type: Date, default: null }, 
+    due_date: { type: Date, default: null },
+    updated_at: { type: Date, default: Date.now }
 });
 
 module.exports = {

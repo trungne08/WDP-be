@@ -1,15 +1,21 @@
+const express = require('express');
 const JiraController = require('../controllers/JiraController');
 
 module.exports = (app) => {
-  // ================= SPRINT ROUTES =================
+  const router = express.Router();
+
+  // ==================================================================
+  // 1. SPRINT ROUTES
+  // ==================================================================
 
   /**
    * @swagger
-   * /api/teams/{teamId}/sprints:
+   * /api/sprints/{teamId}:
    *   get:
-   *     summary: Lấy danh sách Sprint của team
-   *     tags:
-   *       - Jira Data
+   *     summary: Get Sprints by Team
+   *     tags: [Jira Sprints]
+   *     security:
+   *       - bearerAuth: []
    *     parameters:
    *       - in: path
    *         name: teamId
@@ -18,23 +24,48 @@ module.exports = (app) => {
    *           type: string
    *     responses:
    *       200:
-   *         description: Danh sách Sprints
-  *       400:
-  *         description: teamId không hợp lệ
-  *       404:
-  *         description: Không tìm thấy team
-  *       500:
-  *         description: Lỗi server
+   *         description: Sprints retrieved successfully
+   *       400:
+   *         description: Invalid teamId
+   *       404:
+   *         description: Team not found
+   *       500:
+   *         description: Internal server error
    */
-  app.get('/api/teams/:teamId/sprints', JiraController.getSprintsByTeam);
+  router.get('/sprints/:teamId', JiraController.getSprintsByTeam);
+
+  /**
+   * @swagger
+   * /api/sprints/detail/{id}:
+   *   get:
+   *     summary: Get Sprint details
+   *     tags: [Jira Sprints]
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: Sprint details retrieved successfully
+   *       404:
+   *         description: Sprint not found
+   *       500:
+   *         description: Internal server error
+   */
+  router.get('/sprints/detail/:id', JiraController.getSprintById);
 
   /**
    * @swagger
    * /api/sprints:
    *   post:
-   *     summary: Tạo Sprint mới
-   *     tags:
-   *       - Jira Data
+   *     summary: Create a new Sprint (Sync with Jira)
+   *     tags: [Jira Sprints]
+   *     security:
+   *       - bearerAuth: []
    *     requestBody:
    *       required: true
    *       content:
@@ -57,23 +88,24 @@ module.exports = (app) => {
    *                 format: date-time
    *     responses:
    *       201:
-   *         description: Tạo thành công
-  *       400:
-  *         description: Lỗi validation (thiếu team_id/name hoặc dữ liệu không hợp lệ)
-  *       404:
-  *         description: Không tìm thấy team
-  *       500:
-  *         description: Lỗi server
+   *         description: Sprint created successfully
+   *       400:
+   *         description: Missing or invalid request data
+   *       404:
+   *         description: Team or Jira Board not found
+   *       500:
+   *         description: Internal server error
    */
-  app.post('/api/sprints', JiraController.createSprint);
+  router.post('/sprints', JiraController.createSprint);
 
   /**
    * @swagger
    * /api/sprints/{id}/start:
    *   post:
-   *     summary: Bắt đầu Sprint (Active)
-   *     tags:
-   *       - Jira Data
+   *     summary: Start Sprint
+   *     tags: [Jira Sprints]
+   *     security:
+   *       - bearerAuth: []
    *     parameters:
    *       - in: path
    *         name: id
@@ -86,9 +118,6 @@ module.exports = (app) => {
    *         application/json:
    *           schema:
    *             type: object
-   *             required:
-   *               - start_date
-   *               - end_date
    *             properties:
    *               start_date:
    *                 type: string
@@ -98,43 +127,24 @@ module.exports = (app) => {
    *                 format: date-time
    *     responses:
    *       200:
-   *         description: Sprint đã start thành công
-  *       400:
-  *         description: Lỗi validation (thiếu start_date/end_date hoặc dữ liệu không hợp lệ)
-  *       404:
-  *         description: Không tìm thấy sprint
-  *       500:
-  *         description: Lỗi server
+   *         description: Sprint started successfully
+   *       400:
+   *         description: Invalid date format
+   *       404:
+   *         description: Sprint not found
+   *       500:
+   *         description: Internal server error
    */
-  app.post('/api/sprints/:id/start', JiraController.startSprint);
+  router.post('/sprints/:id/start', JiraController.startSprint);
 
   /**
    * @swagger
    * /api/sprints/{id}:
-   *   get:
-   *     summary: Lấy chi tiết 1 Sprint
-   *     tags:
-   *       - Jira Data
-   *     parameters:
-   *       - in: path
-   *         name: id
-   *         required: true
-   *         schema:
-   *           type: string
-   *     responses:
-   *       200:
-   *         description: Chi tiết Sprint
-  *       400:
-  *         description: id không hợp lệ
-  *       404:
-  *         description: Không tìm thấy sprint
-  *       500:
-  *         description: Lỗi server
-   *
    *   put:
-   *     summary: Cập nhật Sprint (Tên, ngày tháng, trạng thái)
-   *     tags:
-   *       - Jira Data
+   *     summary: Update Sprint
+   *     tags: [Jira Sprints]
+   *     security:
+   *       - bearerAuth: []
    *     parameters:
    *       - in: path
    *         name: id
@@ -142,7 +152,6 @@ module.exports = (app) => {
    *         schema:
    *           type: string
    *     requestBody:
-   *       required: true
    *       content:
    *         application/json:
    *           schema:
@@ -152,6 +161,7 @@ module.exports = (app) => {
    *                 type: string
    *               state:
    *                 type: string
+   *                 enum: [active, future, closed]
    *               start_date:
    *                 type: string
    *                 format: date-time
@@ -160,18 +170,24 @@ module.exports = (app) => {
    *                 format: date-time
    *     responses:
    *       200:
-   *         description: Update thành công
-  *       400:
-  *         description: id không hợp lệ hoặc body không hợp lệ
-  *       404:
-  *         description: Không tìm thấy sprint
-  *       500:
-  *         description: Lỗi server
-   *
+   *         description: Sprint updated successfully
+   *       400:
+   *         description: Invalid request data
+   *       404:
+   *         description: Sprint not found
+   *       500:
+   *         description: Internal server error
+   */
+  router.put('/sprints/:id', JiraController.updateSprint);
+
+  /**
+   * @swagger
+   * /api/sprints/{id}:
    *   delete:
-   *     summary: Xóa Sprint
-   *     tags:
-   *       - Jira Data
+   *     summary: Delete Sprint
+   *     tags: [Jira Sprints]
+   *     security:
+   *       - bearerAuth: []
    *     parameters:
    *       - in: path
    *         name: id
@@ -180,140 +196,199 @@ module.exports = (app) => {
    *           type: string
    *     responses:
    *       200:
-   *         description: Đã xóa thành công
-  *       400:
-  *         description: id không hợp lệ
-  *       404:
-  *         description: Không tìm thấy sprint
-  *       500:
-  *         description: Lỗi server
+   *         description: Sprint deleted successfully
+   *       404:
+   *         description: Sprint not found
+   *       500:
+   *         description: Internal server error
    */
-  app.get('/api/sprints/:id', JiraController.getSprintById);
-  app.put('/api/sprints/:id', JiraController.updateSprint);
-  app.delete('/api/sprints/:id', JiraController.deleteSprint);
+  router.delete('/sprints/:id', JiraController.deleteSprint);
 
-  // ================= TASK ROUTES =================
+  // ==================================================================
+  // 2. TASK ROUTES
+  // ==================================================================
 
   /**
- * @swagger
- * /api/tasks:
- *   post:
- *     summary: Tạo Task mới (Chỉ cần Tên, Description)
- *     tags:
- *       - Jira Data
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - team_id
- *               - summary
- *             properties:
- *               team_id:
- *                 type: string
- *               summary:
- *                 type: string
- *               description:
- *                 type: string
- *     responses:
- *       201:
- *         description: Tạo thành công
- *       400:
- *         description: Lỗi validation (thiếu team_id/summary hoặc dữ liệu không hợp lệ)
- *       404:
- *         description: Không tìm thấy team hoặc sprint (nếu có)
- *       500:
- *         description: Lỗi server
- */
-app.post('/api/tasks', JiraController.createTask);
+   * @swagger
+   * /api/tasks:
+   *   get:
+   *     summary: Get Tasks (Filter)
+   *     tags: [Jira Tasks]
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: query
+   *         name: team_id
+   *         schema:
+   *           type: string
+   *         description: Filter by Team ID
+   *       - in: query
+   *         name: sprint_id
+   *         schema:
+   *           type: string
+   *         description: Filter by Sprint ID
+   *     responses:
+   *       200:
+   *         description: Tasks retrieved successfully
+   *       500:
+   *         description: Internal server error
+   */
+  router.get('/tasks', JiraController.getTasks);
 
-/**
- * @swagger
- * /api/tasks/{id}:
- *   get:
- *     summary: Lấy chi tiết Task
- *     tags:
- *       - Jira Data
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Chi tiết Task
- *       400:
- *         description: id không hợp lệ
- *       404:
- *         description: Không tìm thấy task
- *       500:
- *         description: Lỗi server
- *
- *   put:
- *     summary: Cập nhật Task (Bắt buộc gửi team_id)
- *     tags:
- *       - Jira Data
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     requestBody:
- *       required: true
- *       content:
- *         application/json:
- *           schema:
- *             type: object
- *             required:
- *               - team_id
- *             properties:
- *               team_id:
- *                 type: string
- *               summary:
- *                 type: string
- *               story_point:
- *                 type: number
- *               assignee_account_id:
- *                 type: string
- *               sprint_id:
- *                 type: string
- *               status:
- *                 type: string
- *     responses:
- *       200:
- *         description: Update thành công
- *       400:
- *         description: id không hợp lệ hoặc body không hợp lệ
- *       404:
- *         description: Không tìm thấy task
- *       500:
- *         description: Lỗi server
- *
- *   delete:
- *     summary: Xóa Task
- *     tags:
- *       - Jira Data
- *     parameters:
- *       - in: path
- *         name: id
- *         required: true
- *         schema:
- *           type: string
- *     responses:
- *       200:
- *         description: Đã xóa thành công
- *       400:
- *         description: id không hợp lệ
- *       404:
- *         description: Không tìm thấy task
- *       500:
- *         description: Lỗi server
- */
-app.get('/api/tasks/:id', JiraController.getTaskById);
-app.put('/api/tasks/:id', JiraController.updateTask);
-app.delete('/api/tasks/:id', JiraController.deleteTask);
+  /**
+   * @swagger
+   * /api/tasks/{id}:
+   *   get:
+   *     summary: Get Task details
+   *     tags: [Jira Tasks]
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: Task retrieved successfully
+   *       404:
+   *         description: Task not found
+   *       500:
+   *         description: Internal server error
+   */
+  router.get('/tasks/:id', JiraController.getTaskById);
+
+  /**
+   * @swagger
+   * /api/tasks:
+   *   post:
+   *     summary: Create a new Task
+   *     tags: [Jira Tasks]
+   *     security:
+   *       - bearerAuth: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             required:
+   *               - team_id
+   *               - summary
+   *             properties:
+   *               team_id:
+   *                 type: string
+   *               summary:
+   *                 type: string
+   *               description:
+   *                 type: string
+   *               assignee_account_id:
+   *                 type: string
+   *               story_point:
+   *                 type: number
+   *               start_date:
+   *                 type: string
+   *                 format: date
+   *               due_date:
+   *                 type: string
+   *                 format: date
+   *               sprint_id:
+   *                 type: string
+   *     responses:
+   *       201:
+   *         description: Task created successfully
+   *       400:
+   *         description: Missing required fields
+   *       401:
+   *         description: Unauthorized
+   *       404:
+   *         description: Team not found
+   *       500:
+   *         description: Internal server error
+   */
+  router.post('/tasks', JiraController.createTask);
+
+  /**
+   * @swagger
+   * /api/tasks/{id}:
+   *   put:
+   *     summary: Update Task
+   *     tags: [Jira Tasks]
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *     requestBody:
+   *       content:
+   *         application/json:
+   *           schema:
+   *             type: object
+   *             properties:
+   *               team_id:
+   *                 type: string
+   *               summary:
+   *                 type: string
+   *               description:
+   *                 type: string
+   *               status:
+   *                 type: string
+   *               sprint_id:
+   *                 type: string
+   *               story_point:
+   *                 type: number
+   *               assignee_account_id:
+   *                 type: string
+   *               reporter_account_id:
+   *                 type: string
+   *               start_date:
+   *                 type: string
+   *                 format: date
+   *               due_date:
+   *                 type: string
+   *                 format: date
+   *     responses:
+   *       200:
+   *         description: Task updated successfully
+   *       400:
+   *         description: Invalid request data
+   *       404:
+   *         description: Task not found
+   *       500:
+   *         description: Internal server error
+   */
+  router.put('/tasks/:id', JiraController.updateTask);
+
+  /**
+   * @swagger
+   * /api/tasks/{id}:
+   *   delete:
+   *     summary: Delete Task
+   *     tags: [Jira Tasks]
+   *     security:
+   *       - bearerAuth: []
+   *     parameters:
+   *       - in: path
+   *         name: id
+   *         required: true
+   *         schema:
+   *           type: string
+   *     responses:
+   *       200:
+   *         description: Task deleted successfully
+   *       404:
+   *         description: Task not found
+   *       500:
+   *         description: Internal server error
+   */
+  router.delete('/tasks/:id', JiraController.deleteTask);
+
+  // ==================================================================
+  // REGISTER ROUTER
+  // ==================================================================
+  app.use('/api', router);
 };
