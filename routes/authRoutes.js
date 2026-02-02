@@ -607,6 +607,40 @@ module.exports = (app) => {
      *       302:
      *         description: Redirect đến Google OAuth
      */
+    /**
+     * @swagger
+     * /auth/google/token:
+     *   post:
+     *     summary: Đăng nhập Google bằng ID Token (cho Mobile)
+     *     tags: [Auth]
+     *     description: |
+     *       Dành cho mobile app: FE dùng Google Sign-In SDK để lấy id_token.
+     *       SDK hiển thị popup chọn tài khoản NGAY TRONG APP, không cần mở Chrome.
+     *       FE gửi id_token lên đây, BE verify và trả JWT.
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required: [id_token]
+     *             properties:
+     *               id_token:
+     *                 type: string
+     *                 description: ID Token từ Google Sign-In SDK
+     *               credential:
+     *                 type: string
+     *                 description: Alias của id_token (một số SDK dùng tên này)
+     *     responses:
+     *       200:
+     *         description: Đăng nhập thành công, trả JWT
+     *       400:
+     *         description: Thiếu id_token hoặc không lấy được email
+     *       401:
+     *         description: Token không hợp lệ hoặc đã hết hạn
+     */
+    app.post('/auth/google/token', AuthController.googleTokenLogin);
+
     app.get('/auth/google', (req, res) => {
         // Trả về JSON với redirectUrl thay vì redirect trực tiếp (tránh lỗi CORS khi frontend dùng XHR/fetch)
         // Tương tự như cách GitHub/Jira integration làm

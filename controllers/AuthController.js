@@ -1,8 +1,10 @@
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const { OAuth2Client } = require('google-auth-library');
 const models = require('../models');
 const OTP = require('../models/OTP');
+const { getRoleFromEmail, extractStudentCodeFromEmail } = require('../utils/roleHelper');
 
 /** Thời hạn access token. Env JWT_ACCESS_EXPIRES: '15m' | '1h' | '24h' | ... (mặc định 1h) */
 const getAccessExpires = () => process.env.JWT_ACCESS_EXPIRES || '1h';
@@ -967,6 +969,130 @@ const logout = async (req, res) => {
 };
 
 // ==========================================
+// GOOGLE TOKEN LOGIN (cho Mobile - dùng ID Token từ Google Sign-In SDK)
+// ==========================================
+/**
+ * POST /auth/google/token
+ * 
+ * Dành cho mobile app: FE dùng Google Sign-In SDK (React Native, Flutter, etc.)
+ * -> SDK hiển thị popup chọn tài khoản NGAY TRONG APP, không cần mở Chrome
+ * -> FE gửi id_token lên đây, BE verify và trả JWT
+ * 
+ * Body: { id_token: "..." } hoặc { credential: "..." }
+ */
+const googleTokenLogin = async (req, res) => {
+    try {
+        const idToken = req.body.id_token || req.body.credential;
+        if (!idToken) {
+            return res.status(400).json({ 
+                error: 'id_token hoặc credential là bắt buộc' 
+            });
+        }
+
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        if (!clientId) {
+            return res.status(500).json({ error: 'GOOGLE_CLIENT_ID chưa được cấu hình' });
+        }
+
+        const client = new OAuth2Client(clientId);
+        const ticket = await client.verifyIdToken({
+            idToken,
+            audience: clientId
+        });
+        const payload = ticket.getPayload();
+        const email = payload.email?.toLowerCase();
+        const googleId = payload.sub;
+        const displayName = payload.name || (payload.given_name && payload.family_name ? `${payload.given_name} ${payload.family_name}` : '');
+        const avatarUrl = payload.picture || '';
+
+        if (!email) {
+            return res.status(400).json({ error: 'Không thể lấy email từ Google account' });
+        }
+
+        const role = getRoleFromEmail(email);
+        let user = null;
+        let UserModel = null;
+
+        if (role === 'STUDENT') UserModel = models.Student;
+        else if (role === 'LECTURER') UserModel = models.Lecturer;
+        else if (role === 'ADMIN') UserModel = models.Admin;
+        else {
+            return res.status(400).json({ error: `Không thể xác định Role từ email: ${email}` });
+        }
+
+        user = await UserModel.findOne({
+            $or: [{ googleId }, { email }]
+        });
+
+        if (user) {
+            if (!user.googleId) user.googleId = googleId;
+            if (avatarUrl && (!user.avatar_url || user.avatar_url !== avatarUrl)) user.avatar_url = avatarUrl;
+            if (displayName && (!user.full_name || user.full_name !== displayName)) user.full_name = displayName;
+            user.is_verified = true;
+            await user.save();
+        } else {
+            const randomPassword = crypto.randomBytes(32).toString('hex');
+            const hashedPassword = await bcrypt.hash(randomPassword, 10);
+            const userData = {
+                email,
+                googleId,
+                full_name: displayName,
+                avatar_url: avatarUrl,
+                password: hashedPassword,
+                is_verified: true
+            };
+            if (role === 'STUDENT') {
+                const studentCode = extractStudentCodeFromEmail(email);
+                userData.student_code = studentCode || email.split('@')[0].toUpperCase();
+            }
+            user = await UserModel.create(userData);
+        }
+
+        const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
+        const RefreshToken = require('../models/RefreshToken');
+        const accessExpires = getAccessExpires();
+
+        const accessToken = jwt.sign(
+            { userId: user._id.toString(), email: user.email, role, type: 'access' },
+            jwtSecret,
+            { expiresIn: accessExpires }
+        );
+        const refreshToken = jwt.sign(
+            { userId: user._id.toString(), email: user.email, role, type: 'refresh' },
+            jwtSecret,
+            { expiresIn: '30d' }
+        );
+
+        await RefreshToken.create({
+            token: refreshToken,
+            user_id: user._id.toString(),
+            role,
+            expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000)
+        });
+
+        return res.json({
+            message: 'Đăng nhập Google thành công',
+            accessToken,
+            refreshToken,
+            role,
+            user: {
+                id: user._id,
+                email: user.email,
+                full_name: user.full_name,
+                avatar_url: user.avatar_url,
+                role
+            }
+        });
+    } catch (error) {
+        console.error('Google Token Login Error:', error);
+        if (error.message?.includes('Token used too late') || error.message?.includes('expired')) {
+            return res.status(401).json({ error: 'Token đã hết hạn, vui lòng đăng nhập lại' });
+        }
+        return res.status(401).json({ error: error.message || 'Xác thực Google thất bại' });
+    }
+};
+
+// ==========================================
 // GOOGLE OAUTH CALLBACK
 // ==========================================
 const googleCallback = async (req, res) => {
@@ -1099,6 +1225,7 @@ module.exports = {
     updateProfile,
     getMyClasses,
     logout,
+    googleTokenLogin,
     googleCallback,
     updateFcmToken
 };
