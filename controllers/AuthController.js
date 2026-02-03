@@ -989,15 +989,20 @@ const googleTokenLogin = async (req, res) => {
             });
         }
 
-        const clientId = process.env.GOOGLE_CLIENT_ID;
-        if (!clientId) {
+        // Mobile (Android/iOS) dùng Client ID riêng; Web dùng GOOGLE_CLIENT_ID.
+        // id_token từ Android có audience = Android Client ID → BE phải verify với cả hai.
+        const webClientId = process.env.GOOGLE_CLIENT_ID;
+        const androidClientId = process.env.GOOGLE_ANDROID_CLIENT_ID || '';
+        const iosClientId = process.env.GOOGLE_IOS_CLIENT_ID || '';
+        const allowedAudiences = [webClientId, androidClientId, iosClientId].filter(Boolean);
+        if (allowedAudiences.length === 0) {
             return res.status(500).json({ error: 'GOOGLE_CLIENT_ID chưa được cấu hình' });
         }
 
-        const client = new OAuth2Client(clientId);
+        const client = new OAuth2Client();
         const ticket = await client.verifyIdToken({
             idToken,
-            audience: clientId
+            audience: allowedAudiences.length === 1 ? allowedAudiences[0] : allowedAudiences
         });
         const payload = ticket.getPayload();
         const email = payload.email?.toLowerCase();
