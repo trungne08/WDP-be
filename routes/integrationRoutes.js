@@ -43,6 +43,10 @@ module.exports = (app) => {
      */
     app.get('/api/integrations/github/connect', authenticateToken, IntegrationController.githubConnect);
 
+    // Route tương thích với flow cũ /auth/github
+    // Hỗ trợ query ?platform=web|mobile hoặc header x-platform để chọn GitHub App tương ứng
+    app.get('/auth/github', authenticateToken, IntegrationController.githubConnect);
+
     /**
      * @swagger
      * /api/integrations/github/callback:

@@ -23,9 +23,12 @@ const JiraTaskSchema = new Schema({
     status_name: { type: String },
     status_category: { type: String },
     story_point: { type: Number, default: 0 },
+    // accountId trên Jira (đảm bảo không dùng các field cũ như key/name)
     assignee_account_id: { type: String },
     assignee_avatar: { type: String },
     assignee_name: { type: String },
+    // Mapping sang TeamMember trong hệ thống (để populate thông tin user nội bộ)
+    assignee_id: { type: Schema.Types.ObjectId, ref: 'TeamMember', default: null },
     reporter_account_id: { type: String },
     reporter_name: { type: String },
     reporter_avatar: { type: String },

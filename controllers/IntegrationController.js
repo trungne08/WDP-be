@@ -9,14 +9,36 @@ function getClientBaseUrl(req) {
   return process.env.CLIENT_URL || `${req.protocol}://${req.get('host')}`;
 }
 
-function getGithubConfig(req) {
-  const clientId = process.env.GITHUB_CLIENT_ID;
-  const clientSecret = process.env.GITHUB_CLIENT_SECRET;
-  const redirectUri = process.env.GITHUB_CALLBACK_URL || `${getClientBaseUrl(req)}/api/integrations/github/callback`;
-  if (!clientId || !clientSecret) {
-    throw new Error('Thiếu cấu hình GITHUB_CLIENT_ID hoặc GITHUB_CLIENT_SECRET trong .env');
+function getGithubConfig(req, platform = 'web') {
+  // Hỗ trợ 2 OAuth App khác nhau cho GitHub: WEB & MOBILE
+  // - WEB:   GITHUB_CLIENT_ID_WEB,   GITHUB_CLIENT_SECRET_WEB
+  // - MOBILE:GITHUB_CLIENT_ID_MOBILE,GITHUB_CLIENT_SECRET_MOBILE
+  // Backward-compatible: nếu biến *_WEB không có, fallback về GITHUB_CLIENT_ID / GITHUB_CLIENT_SECRET cũ.
+
+  const normalizedPlatform = (platform || 'web').toLowerCase();
+
+  let clientId;
+  let clientSecret;
+
+  if (normalizedPlatform === 'mobile') {
+    clientId = process.env.GITHUB_CLIENT_ID_MOBILE;
+    clientSecret = process.env.GITHUB_CLIENT_SECRET_MOBILE;
+
+    if (!clientId || !clientSecret) {
+      throw new Error('Thiếu cấu hình GITHUB_CLIENT_ID_MOBILE hoặc GITHUB_CLIENT_SECRET_MOBILE trong .env');
+    }
+  } else {
+    // WEB (mặc định)
+    clientId = process.env.GITHUB_CLIENT_ID_WEB || process.env.GITHUB_CLIENT_ID;
+    clientSecret = process.env.GITHUB_CLIENT_SECRET_WEB || process.env.GITHUB_CLIENT_SECRET;
+
+    if (!clientId || !clientSecret) {
+      throw new Error('Thiếu cấu hình GITHUB_CLIENT_ID_WEB/GITHUB_CLIENT_SECRET_WEB (hoặc GITHUB_CLIENT_ID/GITHUB_CLIENT_SECRET) trong .env');
+    }
   }
-  return { clientId, clientSecret, redirectUri };
+
+  const redirectUri = process.env.GITHUB_CALLBACK_URL || `${getClientBaseUrl(req)}/api/integrations/github/callback`;
+  return { clientId, clientSecret, redirectUri, platform: normalizedPlatform };
 }
 
 function getAtlassianConfig(req) {
@@ -91,7 +113,9 @@ async function ensureJiraUnique(jiraAccountId, cloudId, currentRole, currentId) 
 // =========================
 exports.githubConnect = async (req, res) => {
   try {
-    const { clientId, redirectUri } = getGithubConfig(req);
+    // platform: 'web' (default) | 'mobile'
+    const platform = (req.query.platform || req.headers['x-platform'] || 'web').toString().toLowerCase();
+    const { clientId, redirectUri } = getGithubConfig(req, platform);
     
     // Frontend có thể truyền redirect_uri để redirect về sau khi callback (cho dev local)
     // Nếu không có thì dùng CLIENT_URL từ env
@@ -102,7 +126,8 @@ exports.githubConnect = async (req, res) => {
       provider: 'github',
       userId: req.userId,
       role: req.role,
-      frontendRedirectUri // Lưu URL frontend để redirect về sau
+      platform, // Lưu lại platform để callback biết dùng OAuth App nào
+      frontendRedirectUri // Lưu URL frontend (có thể là web hoặc deep link mobile) để redirect về sau
     });
 
     const scope = 'repo user';
@@ -127,7 +152,8 @@ exports.githubCallback = async (req, res) => {
       return res.status(400).json({ error: 'State không hợp lệ (provider mismatch)' });
     }
 
-    const { clientId, clientSecret, redirectUri } = getGithubConfig(req);
+    const platform = decoded.platform || 'web';
+    const { clientId, clientSecret, redirectUri } = getGithubConfig(req, platform);
     const accessToken = await IntegrationService.exchangeGithubCodeForToken({
       clientId,
       clientSecret,
@@ -183,13 +209,11 @@ exports.jiraConnect = async (req, res) => {
       frontendRedirectUri // Lưu URL frontend để redirect về sau
     });
 
-    // Scope bắt buộc theo yêu cầu:
-    // - read:jira-user: Đọc thông tin user (myself)
-    // - read:jira-work: Đọc issues, projects (REST API v3)
-    // - read:board-scope:jira-software: Đọc boards (Agile API) - CẦN THIẾT cho /rest/agile/1.0/board
-    // - read:sprint:jira-software: Đọc sprints (Agile API) - CẦN THIẾT cho /rest/agile/1.0/sprint
-    // - offline_access: Để có refresh_token (refresh token khi access token hết hạn)
-    const scope = 'read:jira-user read:jira-work offline_access';
+    // Granular Scopes mới cho Jira (Atlassian)
+    // Lưu ý: offline_access PHẢI đứng đầu để Atlassian trả về refresh_token
+    // Tham chiếu yêu cầu:
+    // offline_access read:issue:jira write:issue:jira delete:issue:jira read:project:jira write:project:jira read:user:jira read:me
+    const scope = 'offline_access read:issue:jira write:issue:jira delete:issue:jira read:project:jira write:project:jira read:user:jira read:me';
     const url = IntegrationService.buildAtlassianAuthUrl({ clientId, redirectUri, scope, state });
     
     // Trả về JSON với URL thay vì redirect để frontend tự redirect (tránh lỗi CORS khi dùng XHR)
