@@ -211,9 +211,16 @@ exports.jiraConnect = async (req, res) => {
 
     // Granular Scopes mới cho Jira (Atlassian)
     // Lưu ý: offline_access PHẢI đứng đầu để Atlassian trả về refresh_token
-    // Tham chiếu yêu cầu:
-    // offline_access read:issue:jira write:issue:jira delete:issue:jira read:project:jira write:project:jira read:user:jira read:me
-    const scope = 'offline_access read:issue:jira write:issue:jira delete:issue:jira read:project:jira write:project:jira read:user:jira read:me';
+    // Scope hợp lệ theo Atlassian OAuth 2.0:
+    // - offline_access: Để lấy refresh_token (bắt buộc cho mobile)
+    // - read:issue:jira: Đọc issues/tasks
+    // - write:issue:jira: Tạo/sửa issues (nếu cần)
+    // - read:project:jira: Đọc thông tin projects
+    // - read:user:jira: Đọc thông tin user (để lấy displayName, avatar của assignee) - QUAN TRỌNG
+    // 
+    // LƯU Ý: Đảm bảo trong Atlassian Developer Console, app của bạn đã được cấu hình với các scopes này
+    // Nếu chưa có, vào https://developer.atlassian.com/console/myapps/ → chọn app → Permissions → tick các scopes tương ứng
+    const scope = 'offline_access read:issue:jira read:project:jira read:user:jira';
     const url = IntegrationService.buildAtlassianAuthUrl({ clientId, redirectUri, scope, state });
     
     // Trả về JSON với URL thay vì redirect để frontend tự redirect (tránh lỗi CORS khi dùng XHR)
