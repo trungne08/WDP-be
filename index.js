@@ -8,6 +8,21 @@ const { Server } = require("socket.io"); // Import Socket.io
 
 require('dotenv').config(); // Cái này để đọc file .env
 
+// Log env OAuth (chỉ báo có/không, không in giá trị) để dễ check trên Render
+const oauthEnv = {
+  github: ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'GITHUB_CLIENT_ID_WEB', 'GITHUB_CLIENT_SECRET_WEB', 'GITHUB_CLIENT_ID_MOBILE', 'GITHUB_CLIENT_SECRET_MOBILE'],
+  atlassian: ['ATLASSIAN_CLIENT_ID', 'ATLASSIAN_CLIENT_SECRET', 'ATLASSIAN_CALLBACK_URL']
+};
+const has = (key) => !!(process.env[key] && process.env[key].trim());
+const logEnv = (group, keys) => {
+  const set = keys.filter(has);
+  const miss = keys.filter(k => !has(k));
+  if (set.length) console.log(`🔑 OAuth env ${group}: có ${set.join(', ')}`);
+  if (miss.length) console.warn(`⚠️ OAuth env ${group} (chưa set): ${miss.join(', ')}`);
+};
+logEnv('GitHub', oauthEnv.github);
+logEnv('Atlassian', oauthEnv.atlassian);
+
 // Initialize Passport (cần import để load Google OAuth strategy)
 require('./config/passport');
 

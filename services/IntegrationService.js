@@ -91,22 +91,29 @@ function buildAtlassianAuthUrl({ clientId, redirectUri, scope, state }) {
   return url.toString();
 }
 
-// Atlassian token endpoint: chuẩn OAuth 2.0 dùng application/json (theo docs Atlassian)
+// Atlassian token endpoint (RFC 6749: token request dùng application/x-www-form-urlencoded)
 const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
-const ATLASSIAN_TOKEN_HEADERS = { 'Content-Type': 'application/json' };
+const FORM_HEADERS = { 'Content-Type': 'application/x-www-form-urlencoded' };
+
+function atlassianTokenBody(params) {
+  return Object.entries(params)
+    .filter(([, v]) => v != null && v !== '')
+    .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(String(v))}`)
+    .join('&');
+}
 
 async function exchangeAtlassianCodeForTokens({ clientId, clientSecret, code, redirectUri }) {
-  const res = await axios.post(
-    ATLASSIAN_TOKEN_URL,
-    {
-      grant_type: 'authorization_code',
-      client_id: clientId,
-      client_secret: clientSecret,
-      code,
-      redirect_uri: redirectUri
-    },
-    { headers: ATLASSIAN_TOKEN_HEADERS }
-  );
+  const body = atlassianTokenBody({
+    grant_type: 'authorization_code',
+    client_id: clientId,
+    client_secret: clientSecret,
+    code,
+    redirect_uri: redirectUri
+  });
+  const res = await axios.post(ATLASSIAN_TOKEN_URL, body, {
+    headers: FORM_HEADERS,
+    timeout: 15000
+  });
   return {
     accessToken: res.data.access_token,
     refreshToken: res.data.refresh_token || null
@@ -120,16 +127,16 @@ async function refreshAtlassianAccessToken({ clientId, clientSecret, refreshToke
     throw err;
   }
   try {
-    const res = await axios.post(
-      ATLASSIAN_TOKEN_URL,
-      {
-        grant_type: 'refresh_token',
-        client_id: clientId,
-        client_secret: clientSecret,
-        refresh_token: refreshToken
-      },
-      { headers: ATLASSIAN_TOKEN_HEADERS, timeout: 15000 }
-    );
+    const body = atlassianTokenBody({
+      grant_type: 'refresh_token',
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken
+    });
+    const res = await axios.post(ATLASSIAN_TOKEN_URL, body, {
+      headers: FORM_HEADERS,
+      timeout: 15000
+    });
     return {
       accessToken: res.data.access_token,
       refreshToken: res.data.refresh_token || refreshToken
