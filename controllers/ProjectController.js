@@ -536,36 +536,40 @@ exports.getMyProject = async (req, res) => {
               project.jira_sync_warning = 'Jira project không còn tồn tại (410). GitHub và dữ liệu khác vẫn dùng bình thường.';
               projectInfo = null;
             } else if ((status === 401 || status === 403) && jiraIntegration.refreshToken) {
-              try {
-                const IntegrationService = require('../services/IntegrationService');
-                const clientId = process.env.ATLASSIAN_CLIENT_ID;
-                const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
-                
-                const refreshed = await IntegrationService.refreshAtlassianAccessToken({
-                  clientId,
-                  clientSecret,
-                  refreshToken: jiraIntegration.refreshToken
-                });
-                
-                // Cập nhật token mới vào DB
-                requestUser.integrations.jira.accessToken = refreshed.accessToken;
-                if (refreshed.refreshToken) {
-                  requestUser.integrations.jira.refreshToken = refreshed.refreshToken;
+              const clientId = process.env.ATLASSIAN_CLIENT_ID;
+              const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
+              if (!clientId || !clientSecret) {
+                console.warn('⚠️ Lazy Sync: Thiếu ATLASSIAN_CLIENT_ID hoặc ATLASSIAN_CLIENT_SECRET (env). Không thể refresh token Jira.');
+              } else {
+                try {
+                  const refreshed = await IntegrationService.refreshAtlassianAccessToken({
+                    clientId,
+                    clientSecret,
+                    refreshToken: jiraIntegration.refreshToken
+                  });
+
+                  // Cập nhật token mới vào DB
+                  requestUser.integrations.jira.accessToken = refreshed.accessToken;
+                  if (refreshed.refreshToken) {
+                    requestUser.integrations.jira.refreshToken = refreshed.refreshToken;
+                  }
+                  await requestUser.save();
+
+                  // Thử lại với token mới
+                  accessToken = refreshed.accessToken;
+                  projectInfo = await IntegrationService.fetchJiraProjectInfo({
+                    accessToken: accessToken,
+                    cloudId: jiraIntegration.cloudId,
+                    projectKey: project.jiraProjectKey
+                  });
+
+                  console.log('🔄 Lazy Sync: Đã refresh token Jira thành công');
+                } catch (refreshError) {
+                  // 400/401/404 = refresh token hết hạn hoặc bị thu hồi -> user cần reconnect Jira
+                  const refreshStatus = refreshError.status || refreshError.response?.status;
+                  console.warn('⚠️ Lazy Sync: Không thể refresh token Jira:', refreshError.message, refreshStatus ? `(HTTP ${refreshStatus})` : '');
+                  throw jiraError; // Throw lại lỗi gốc
                 }
-                await requestUser.save();
-                
-                // Thử lại với token mới
-                accessToken = refreshed.accessToken;
-                projectInfo = await IntegrationService.fetchJiraProjectInfo({
-                  accessToken: accessToken,
-                  cloudId: jiraIntegration.cloudId,
-                  projectKey: project.jiraProjectKey
-                });
-                
-                console.log('🔄 Lazy Sync: Đã refresh token Jira thành công');
-              } catch (refreshError) {
-                console.warn('⚠️ Lazy Sync: Không thể refresh token Jira:', refreshError.message);
-                throw jiraError; // Throw lại lỗi gốc
               }
             } else {
               throw jiraError; // Throw lại nếu không phải lỗi 401 hoặc không có refreshToken

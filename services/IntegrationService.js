@@ -91,14 +91,22 @@ function buildAtlassianAuthUrl({ clientId, redirectUri, scope, state }) {
   return url.toString();
 }
 
+// Atlassian token endpoint: chuẩn OAuth 2.0 dùng application/json (theo docs Atlassian)
+const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
+const ATLASSIAN_TOKEN_HEADERS = { 'Content-Type': 'application/json' };
+
 async function exchangeAtlassianCodeForTokens({ clientId, clientSecret, code, redirectUri }) {
-  const res = await axios.post('https://auth.atlassian.com/oauth/token', {
-    grant_type: 'authorization_code',
-    client_id: clientId,
-    client_secret: clientSecret,
-    code,
-    redirect_uri: redirectUri
-  });
+  const res = await axios.post(
+    ATLASSIAN_TOKEN_URL,
+    {
+      grant_type: 'authorization_code',
+      client_id: clientId,
+      client_secret: clientSecret,
+      code,
+      redirect_uri: redirectUri
+    },
+    { headers: ATLASSIAN_TOKEN_HEADERS }
+  );
   return {
     accessToken: res.data.access_token,
     refreshToken: res.data.refresh_token || null
@@ -106,17 +114,35 @@ async function exchangeAtlassianCodeForTokens({ clientId, clientSecret, code, re
 }
 
 async function refreshAtlassianAccessToken({ clientId, clientSecret, refreshToken }) {
-  // Comment VN: Jira/Atlassian dùng refresh_token để xin access_token mới khi hết hạn.
-  const res = await axios.post('https://auth.atlassian.com/oauth/token', {
-    grant_type: 'refresh_token',
-    client_id: clientId,
-    client_secret: clientSecret,
-    refresh_token: refreshToken
-  });
-  return {
-    accessToken: res.data.access_token,
-    refreshToken: res.data.refresh_token || refreshToken // đôi khi Atlassian trả refresh_token mới
-  };
+  if (!refreshToken || typeof refreshToken !== 'string') {
+    const err = new Error('refreshToken không hợp lệ hoặc thiếu');
+    err.code = 'INVALID_REFRESH_TOKEN';
+    throw err;
+  }
+  try {
+    const res = await axios.post(
+      ATLASSIAN_TOKEN_URL,
+      {
+        grant_type: 'refresh_token',
+        client_id: clientId,
+        client_secret: clientSecret,
+        refresh_token: refreshToken
+      },
+      { headers: ATLASSIAN_TOKEN_HEADERS, timeout: 15000 }
+    );
+    return {
+      accessToken: res.data.access_token,
+      refreshToken: res.data.refresh_token || refreshToken
+    };
+  } catch (err) {
+    const status = err.response?.status;
+    const data = err.response?.data;
+    const msg = data?.error_description || data?.error || err.message;
+    const e = new Error(msg || `Atlassian refresh token failed (${status || 'network'})`);
+    e.status = status;
+    e.responseData = data;
+    throw e;
+  }
 }
 
 async function fetchAtlassianAccessibleResources(accessToken) {
