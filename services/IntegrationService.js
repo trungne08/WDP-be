@@ -160,12 +160,14 @@ async function fetchAtlassianAccessibleResources(accessToken) {
 }
 
 async function fetchJiraMyself({ accessToken, cloudId }) {
-  const res = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/myself`, {
+  // UPDATED: Dùng User Identity API endpoint (scope: read:me)
+  // Thay vì Jira API endpoint cũ
+  const res = await axios.get('https://api.atlassian.com/me', {
     headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }
   });
   return {
-    jiraAccountId: res.data.accountId,
-    email: res.data.emailAddress || null
+    jiraAccountId: res.data.account_id,
+    email: res.data.email || null
   };
 }
 

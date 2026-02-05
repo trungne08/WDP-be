@@ -2,6 +2,8 @@ const models = require('../models');
 const IntegrationService = require('../services/IntegrationService');
 const GithubService = require('../services/GithubService');
 const JiraService = require('../services/JiraService');
+const JiraAuthService = require('../services/JiraAuthService');
+const JiraSyncService = require('../services/JiraSyncService');
 const mongoose = require('mongoose');
 
 function getClientBaseUrl(req) {
@@ -154,6 +156,12 @@ exports.githubCallback = async (req, res) => {
 
     const platform = decoded.platform || 'web';
     const { clientId, clientSecret, redirectUri } = getGithubConfig(req, platform);
+    
+    console.log('🔐 [GitHub Callback] Đang exchange code → token...');
+    console.log('   - Client ID:', clientId);
+    console.log('   - Platform:', platform);
+    console.log('   - Redirect URI:', redirectUri);
+    
     const accessToken = await IntegrationService.exchangeGithubCodeForToken({
       clientId,
       clientSecret,
@@ -187,45 +195,54 @@ exports.githubCallback = async (req, res) => {
     const frontendUrl = decoded.frontendRedirectUri || process.env.CLIENT_URL || 'http://localhost:3000';
     return res.redirect(`${frontendUrl}/callback/github?success=true&username=${encodeURIComponent(ghUser.username)}`);
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    // Log chi tiết lỗi từ GitHub API
+    console.error('❌ [GitHub Callback] Lỗi:', error.message);
+    if (error.response) {
+      console.error('   - Status:', error.response.status);
+      console.error('   - Data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    // Trả về lỗi chi tiết để dễ debug
+    const errorDetails = error.response?.data || error.message;
+    return res.status(error.response?.status || 500).json({ 
+      error: 'Lỗi kết nối GitHub',
+      details: errorDetails,
+      message: error.message
+    });
   }
 };
 
 // =========================
-// JIRA (ATLASSIAN): CONNECT + CALLBACK
+// JIRA (ATLASSIAN): CONNECT + CALLBACK (REFACTORED với JiraAuthService)
 // =========================
 exports.jiraConnect = async (req, res) => {
   try {
-    const { clientId, redirectUri } = getAtlassianConfig(req);
+    const { clientId } = getAtlassianConfig(req);
     
-    // Frontend có thể truyền redirect_uri để redirect về sau khi callback (cho dev local)
-    // Nếu không có thì dùng CLIENT_URL từ env
+    // Xác định platform: mobile hoặc web
+    const platform = (req.query.platform || req.headers['x-platform'] || 'web').toString().toLowerCase();
+    
+    // Frontend redirect URI (để redirect về sau khi callback thành công)
     const frontendRedirectUri = req.query.redirect_uri || process.env.CLIENT_URL || 'http://localhost:3000';
 
-    const state = IntegrationService.signOAuthState({
-      provider: 'jira',
+    console.log(`🔐 [Jira Connect] Platform: ${platform}, User: ${req.user?.email}`);
+
+    // Tạo Authorization URL với JiraAuthService (hỗ trợ Granular Scopes)
+    const authUrl = JiraAuthService.buildAuthorizationUrl({
+      clientId,
+      platform,
       userId: req.userId,
       role: req.role,
-      frontendRedirectUri // Lưu URL frontend để redirect về sau
+      frontendRedirectUri,
+      req
     });
-
-    // Granular Scopes mới cho Jira (Atlassian)
-    // Lưu ý: offline_access PHẢI đứng đầu để Atlassian trả về refresh_token
-    // Scope hợp lệ theo Atlassian OAuth 2.0:
-    // - offline_access: Để lấy refresh_token (bắt buộc cho mobile)
-    // - read:issue:jira: Đọc issues/tasks
-    // - write:issue:jira: Tạo/sửa issues (nếu cần)
-    // - read:project:jira: Đọc thông tin projects
-    // - read:user:jira: Đọc thông tin user (để lấy displayName, avatar của assignee) - QUAN TRỌNG
-    // 
-    // LƯU Ý: Đảm bảo trong Atlassian Developer Console, app của bạn đã được cấu hình với các scopes này
-    // Nếu chưa có, vào https://developer.atlassian.com/console/myapps/ → chọn app → Permissions → tick các scopes tương ứng
-    const scope = 'offline_access read:issue:jira read:project:jira read:user:jira';
-    const url = IntegrationService.buildAtlassianAuthUrl({ clientId, redirectUri, scope, state });
+    
+    console.log('✅ [Jira Connect] Authorization URL created');
     
     // Trả về JSON với URL thay vì redirect để frontend tự redirect (tránh lỗi CORS khi dùng XHR)
-    return res.json({ redirectUrl: url });
+    return res.json({ redirectUrl: authUrl });
   } catch (error) {
+    console.error('❌ [Jira Connect] Error:', error.message);
     return res.status(500).json({ error: error.message });
   }
 };
@@ -237,63 +254,71 @@ exports.jiraCallback = async (req, res) => {
       return res.status(400).json({ error: 'Thiếu code hoặc state từ Jira callback' });
     }
 
-    const decoded = IntegrationService.verifyOAuthState(state);
+    // Verify state JWT
+    const decoded = JiraAuthService.verifyOAuthState(state);
     if (decoded.provider !== 'jira') {
       return res.status(400).json({ error: 'State không hợp lệ (provider mismatch)' });
     }
 
-    const { clientId, clientSecret, redirectUri } = getAtlassianConfig(req);
-    const { accessToken, refreshToken } = await IntegrationService.exchangeAtlassianCodeForTokens({
+    const { clientId, clientSecret } = getAtlassianConfig(req);
+    
+    // QUAN TRỌNG: Dùng redirectUri từ state (phải giống lúc tạo auth URL)
+    const redirectUri = decoded.redirectUri || JiraAuthService.getRedirectUri(decoded.platform || 'web', req);
+    
+    console.log('🔐 [Jira Callback] Đang exchange code → token...');
+    console.log('   - Client ID:', clientId);
+    console.log('   - Platform:', decoded.platform || 'web');
+    console.log('   - Redirect URI:', redirectUri);
+    
+    // 1) Exchange code → tokens (sử dụng JiraAuthService)
+    const { accessToken, refreshToken } = await JiraAuthService.exchangeCodeForTokens({
       clientId,
       clientSecret,
       code,
-      redirectUri
+      redirectUri // PHẢI ĐÚNG với lúc tạo auth URL
     });
 
-    // 1) Lấy cloudId và jira_url từ accessible-resources
-    const resources = await IntegrationService.fetchAtlassianAccessibleResources(accessToken);
+    // 2) Lấy cloudId từ accessible-resources
+    const resources = await JiraAuthService.fetchAccessibleResources(accessToken);
     if (!resources.length) {
       return res.status(400).json({ error: 'Không lấy được accessible-resources từ Atlassian' });
     }
 
-    // Comment VN: Nếu user có nhiều site Jira, tạm lấy resource đầu tiên.
-    // Có thể nâng cấp: FE gửi cloudId mong muốn để chọn đúng site.
+    // Lấy resource đầu tiên (có thể nâng cấp: cho user chọn site)
     const selectedResource = resources[0];
     const cloudId = selectedResource.id;
-    // Lấy jira_url từ resource (có thể là url hoặc scopes)
-    const jiraUrl = selectedResource.url || `https://${selectedResource.id}.atlassian.net`;
+    const jiraUrl = selectedResource.url || `https://${selectedResource.name}.atlassian.net`;
 
-    // 2) Lấy accountId từ /myself
-    const me = await IntegrationService.fetchJiraMyself({ accessToken, cloudId });
+    console.log(`   - Jira Site: ${selectedResource.name}`);
+    console.log(`   - Cloud ID: ${cloudId}`);
+
+    // 3) Lấy thông tin user hiện tại
+    const me = await JiraAuthService.fetchCurrentUser(accessToken, cloudId);
+    
+    // 4) Tìm user trong DB
     const user = await loadUserByRole(decoded.role, decoded.userId);
     if (!user) return res.status(404).json({ error: 'Không tìm thấy user để lưu integration' });
 
-    // Đảm bảo jiraAccountId + cloudId không bị trùng với user khác (trừ chính user này)
-    await ensureJiraUnique(me.jiraAccountId, cloudId, decoded.role, user._id);
+    // 5) Đảm bảo jiraAccountId + cloudId không bị trùng với user khác
+    await ensureJiraUnique(me.accountId, cloudId, decoded.role, user._id);
 
-    // Đảm bảo integrations object tồn tại (có thể là {} hoặc có github nhưng không có jira)
+    // 6) Lưu integration vào DB
     user.integrations = user.integrations || {};
-    
-    // Overwrite hoặc tạo mới jira integration
-    // Nếu đã có jira từ trước (reconnect), sẽ overwrite với token mới
     user.integrations.jira = {
-      jiraAccountId: me.jiraAccountId,
+      jiraAccountId: me.accountId,
       cloudId,
-      jiraUrl, // Tự động lấy Jira URL
+      jiraUrl,
       email: me.email,
-      accessToken, // Token này sẽ được mã hóa trong pre-save hook
-      refreshToken, // Refresh token này cũng sẽ được mã hóa trong pre-save hook
+      displayName: me.displayName,
+      accessToken, // Sẽ được mã hóa trong pre-save hook
+      refreshToken, // Sẽ được mã hóa trong pre-save hook
       linkedAt: new Date()
     };
     
     await user.save();
 
-    // ==========================================
-    // Best-effort: auto map Jira accountId cho TeamMember của user này
-    // để assignee_id có thể resolve (TeamMember) khi sync/get tasks.
-    // ==========================================
+    // 7) Best-effort: auto map Jira accountId cho TeamMember
     try {
-      // Update tất cả TeamMember active của student này
       const updatedMembers = await models.TeamMember.find({
         student_id: user._id,
         is_active: true
@@ -302,10 +327,10 @@ exports.jiraCallback = async (req, res) => {
       if (updatedMembers.length > 0) {
         await models.TeamMember.updateMany(
           { student_id: user._id, is_active: true },
-          { jira_account_id: me.jiraAccountId }
+          { jira_account_id: me.accountId }
         );
 
-        // Backfill JiraTask.assignee_id cho các team/sprint hiện có (best-effort)
+        // Backfill JiraTask.assignee_id
         const { Sprint, JiraTask } = require('../models/JiraData');
         for (const tm of updatedMembers) {
           const sprintIds = await Sprint.find({ team_id: tm.team_id }).select('_id').lean();
@@ -313,26 +338,43 @@ exports.jiraCallback = async (req, res) => {
           if (ids.length === 0) continue;
 
           await JiraTask.updateMany(
-            { sprint_id: { $in: ids }, assignee_account_id: me.jiraAccountId },
+            { sprint_id: { $in: ids }, assignee_account_id: me.accountId },
             { assignee_id: tm._id }
           );
         }
       }
     } catch (e) {
-      // ignore - mapping chỉ là best-effort, không làm fail flow connect
+      console.warn('⚠️ [Jira Callback] Lỗi khi map TeamMember:', e.message);
     }
     
     console.log(`✅ [Jira Connect] Đã lưu integration cho user ${user.email}:`);
     console.log(`   - Jira URL: ${jiraUrl}`);
     console.log(`   - Cloud ID: ${cloudId}`);
-    console.log(`   - Account ID: ${me.jiraAccountId}`);
+    console.log(`   - Account ID: ${me.accountId}`);
 
-    // Redirect về frontend sau khi thành công
-    // Dùng frontendRedirectUri từ state (đã được frontend truyền khi connect) hoặc fallback về CLIENT_URL
-    const frontendUrl = decoded.frontendRedirectUri || process.env.CLIENT_URL || 'http://localhost:3000';
-    return res.redirect(`${frontendUrl}/callback/jira?success=true&accountId=${encodeURIComponent(me.jiraAccountId)}`);
+    // 8) Redirect về frontend
+    const frontendUrl = decoded.frontendRedirectUri?.trim() || process.env.CLIENT_URL || 'http://localhost:3000';
+    
+    // Xử lý mobile deep link
+    if (decoded.platform === 'mobile') {
+      return res.redirect(`syncapp://connections?success=true&accountId=${encodeURIComponent(me.accountId)}`);
+    }
+    
+    // Web callback
+    return res.redirect(`${frontendUrl}/callback/jira?success=true&accountId=${encodeURIComponent(me.accountId)}`);
   } catch (error) {
-    return res.status(500).json({ error: error.message });
+    console.error('❌ [Jira Callback] Lỗi:', error.message);
+    if (error.response) {
+      console.error('   - Status:', error.response.status);
+      console.error('   - Data:', JSON.stringify(error.response.data, null, 2));
+    }
+    
+    const errorDetails = error.response?.data || error.message;
+    return res.status(error.response?.status || 500).json({ 
+      error: 'Lỗi kết nối Jira',
+      details: errorDetails,
+      message: error.message
+    });
   }
 };
 
@@ -369,51 +411,33 @@ exports.getGithubRepos = async (req, res) => {
 
 exports.getJiraProjects = async (req, res) => {
   try {
-    const jira = req.user?.integrations?.jira;
-    if (!jira?.accessToken || !jira?.cloudId) {
-      return res.status(400).json({ error: 'Chưa kết nối Jira. Vui lòng link Jira trước.' });
-    }
-
     const { clientId, clientSecret } = getAtlassianConfig(req);
 
-    // Try 1 lần; nếu token hết hạn thì refresh và retry
-    try {
-      const projects = await IntegrationService.fetchJiraProjects({
-        accessToken: jira.accessToken,
-        cloudId: jira.cloudId
-      });
-      return res.json({ total: projects.length, projects });
-    } catch (err) {
-      const status = err.response?.status;
-      if ((status === 401 || status === 403) && jira.refreshToken) {
-        // Comment VN: access token hết hạn → dùng refresh token xin token mới
-        const refreshed = await IntegrationService.refreshAtlassianAccessToken({
-          clientId,
-          clientSecret,
-          refreshToken: jira.refreshToken
-        });
-
-        // Lưu token mới vào DB (best-effort)
-        req.user.integrations.jira.accessToken = refreshed.accessToken;
-        req.user.integrations.jira.refreshToken = refreshed.refreshToken;
-        await req.user.save();
-
-        const projects = await IntegrationService.fetchJiraProjects({
-          accessToken: refreshed.accessToken,
-          cloudId: jira.cloudId
-        });
-        return res.json({ total: projects.length, projects, refreshed: true });
+    // Sử dụng JiraSyncService với auto-refresh
+    const projects = await JiraSyncService.syncWithAutoRefresh({
+      user: req.user,
+      clientId,
+      clientSecret,
+      syncFunction: async (client) => {
+        return await JiraSyncService.fetchProjects(client);
       }
-      throw err;
-    }
+    });
+
+    return res.json({ total: projects.length, projects });
   } catch (error) {
-    const status = error?.response?.status;
-    if (status === 401 || status === 403) {
+    console.error('❌ [Get Jira Projects] Error:', error.message);
+    
+    // Kiểm tra lỗi refresh token hết hạn
+    if (error.code === 'REFRESH_TOKEN_EXPIRED') {
       return res.status(401).json({
-        error: 'Jira token không hợp lệ hoặc đã hết hạn. Vui lòng ngắt kết nối và kết nối lại Jira.'
+        error: 'Jira token đã hết hạn. Vui lòng ngắt kết nối và kết nối lại Jira.',
+        code: 'TOKEN_EXPIRED',
+        requiresReauth: true
       });
     }
-    return res.status(500).json({ error: error.message });
+
+    const status = error.response?.status || 500;
+    return res.status(status).json({ error: error.message });
   }
 };
 
@@ -423,26 +447,12 @@ exports.getJiraProjects = async (req, res) => {
  */
 exports.getJiraBoards = async (req, res) => {
   try {
-    const jira = req.user?.integrations?.jira;
-    if (!jira?.accessToken || !jira?.cloudId) {
-      return res.status(400).json({ error: 'Chưa kết nối Jira. Vui lòng link Jira trước.' });
-    }
-
     const { projectKey } = req.query;
     if (!projectKey) {
       return res.status(400).json({ error: 'Thiếu projectKey trong query params' });
     }
 
     // Sanitize project key
-    const sanitizeJiraProjectKey = (input) => {
-      if (!input || typeof input !== 'string') return '';
-      let cleaned = input.trim();
-      const bracketMatch = cleaned.match(/^\[([^\]]+)\]/);
-      if (bracketMatch) cleaned = bracketMatch[1];
-      cleaned = cleaned.trim().replace(/[^A-Za-z0-9_-]/g, '').toUpperCase();
-      return cleaned;
-    };
-    
     const cleanProjectKey = sanitizeJiraProjectKey(projectKey);
     if (!cleanProjectKey) {
       return res.status(400).json({ error: 'Project key không hợp lệ' });
@@ -450,53 +460,56 @@ exports.getJiraBoards = async (req, res) => {
 
     const { clientId, clientSecret } = getAtlassianConfig(req);
 
-    // Try 1 lần; nếu token hết hạn thì refresh và retry
-    try {
-      const boards = await IntegrationService.fetchJiraBoards({
-        accessToken: jira.accessToken,
-        cloudId: jira.cloudId,
-        projectKey: cleanProjectKey
-      });
-      return res.json({ 
-        projectKey: cleanProjectKey,
-        total: boards.length, 
-        boards 
-      });
-    } catch (err) {
-      const status = err.response?.status;
-      if ((status === 401 || status === 403) && jira.refreshToken) {
-        const refreshed = await IntegrationService.refreshAtlassianAccessToken({
-          clientId,
-          clientSecret,
-          refreshToken: jira.refreshToken
-        });
+    // Sử dụng JiraSyncService với auto-refresh
+    const boards = await JiraSyncService.syncWithAutoRefresh({
+      user: req.user,
+      clientId,
+      clientSecret,
+      syncFunction: async (client) => {
+        const jira = req.user.integrations.jira;
+        
+        // Callback để refresh token
+        const onTokenRefresh = async () => {
+          const { accessToken, refreshToken } = await JiraAuthService.refreshAccessToken({
+            clientId,
+            clientSecret,
+            refreshToken: jira.refreshToken
+          });
+          
+          req.user.integrations.jira.accessToken = accessToken;
+          req.user.integrations.jira.refreshToken = refreshToken;
+          await req.user.save();
+          
+          return accessToken;
+        };
 
-        req.user.integrations.jira.accessToken = refreshed.accessToken;
-        req.user.integrations.jira.refreshToken = refreshed.refreshToken;
-        await req.user.save();
-
-        const boards = await IntegrationService.fetchJiraBoards({
-          accessToken: refreshed.accessToken,
+        return await JiraSyncService.fetchBoards({
+          accessToken: jira.accessToken,
           cloudId: jira.cloudId,
-          projectKey: cleanProjectKey
-        });
-        return res.json({ 
           projectKey: cleanProjectKey,
-          total: boards.length, 
-          boards 
+          onTokenRefresh
         });
       }
-      throw err;
-    }
+    });
+
+    return res.json({ 
+      projectKey: cleanProjectKey,
+      total: boards.length, 
+      boards 
+    });
   } catch (error) {
-    console.error('Get Jira Boards Error:', error);
-    const status = error?.response?.status;
-    if (status === 401 || status === 403) {
+    console.error('❌ [Get Jira Boards] Error:', error.message);
+    
+    if (error.code === 'REFRESH_TOKEN_EXPIRED') {
       return res.status(401).json({
-        error: 'Jira token không hợp lệ hoặc đã hết hạn. Vui lòng ngắt kết nối và kết nối lại Jira.'
+        error: 'Jira token đã hết hạn. Vui lòng ngắt kết nối và kết nối lại Jira.',
+        code: 'TOKEN_EXPIRED',
+        requiresReauth: true
       });
     }
-    return res.status(500).json({ error: error.message });
+
+    const status = error.response?.status || 500;
+    return res.status(status).json({ error: error.message });
   }
 };
 
@@ -684,10 +697,9 @@ exports.syncMyProjectData = async (req, res) => {
     }
 
     // ==========================================
-    // SYNC JIRA (nếu có token và project key)
+    // SYNC JIRA (nếu có token và project key) - SỬ DỤNG JiraSyncService
     // ==========================================
     if (user.integrations?.jira?.accessToken && user.integrations?.jira?.cloudId && project.jiraProjectKey) {
-      // Sanitize projectKey: loại bỏ "[SCRUM]", trim, uppercase
       const cleanProjectKey = sanitizeJiraProjectKey(project.jiraProjectKey);
       
       if (!cleanProjectKey) {
@@ -698,84 +710,23 @@ exports.syncMyProjectData = async (req, res) => {
         });
       }
 
-      const cloudId = user.integrations.jira.cloudId;
-      const jiraApiUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search`;
+      console.log(`🔄 [Sync Jira] Đang sync dự án: "${cleanProjectKey}"`);
       
-      console.log(`🔄 [Sync Jira] Đang sync dự án: "${cleanProjectKey}" với CloudID: ${cloudId}`);
-      
-      // Hàm sync với pagination để lấy TẤT CẢ issues (không chỉ 100 đầu tiên)
-      const syncAllJiraIssues = async (token) => {
-        const allIssues = [];
-        let startAt = 0;
-        const maxResults = 100; // Jira API limit
-        let hasMore = true;
-
-        while (hasMore) {
-          const response = await axios.get(jiraApiUrl, {
-            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' },
-            params: {
-              jql: `project = "${cleanProjectKey}"`, // Dấu ngoặc kép để tránh lỗi JQL
-              startAt: startAt,
-              maxResults: maxResults,
-              fields: 'summary,status,assignee,created,updated,issuetype,storyPoints'
-            }
-          });
-
-          const issues = response.data?.issues || [];
-          allIssues.push(...issues);
-
-          // Kiểm tra còn issues không
-          const total = response.data?.total || 0;
-          hasMore = startAt + issues.length < total;
-          startAt += issues.length;
-
-          console.log(`   📥 [Sync Jira] Đã lấy ${allIssues.length}/${total} issues...`);
-        }
-
-        return { issues: allIssues, total: allIssues.length };
-      };
-
-      const doJiraSearch = (token) => syncAllJiraIssues(token);
-
-      let jiraResponse = null;
-      let accessToken = user.integrations.jira.accessToken;
       try {
-        jiraResponse = await doJiraSearch(accessToken);
-      } catch (jiraErr) {
-        const status = jiraErr.response?.status;
-        if ((status === 401 || status === 403) && user.integrations?.jira?.refreshToken) {
-          try {
-            const { clientId, clientSecret } = getAtlassianConfig(req);
-            const refreshed = await IntegrationService.refreshAtlassianAccessToken({
-              clientId,
-              clientSecret,
-              refreshToken: user.integrations.jira.refreshToken
-            });
-            user.integrations.jira.accessToken = refreshed.accessToken;
-            user.integrations.jira.refreshToken = refreshed.refreshToken ?? user.integrations.jira.refreshToken;
-            await user.save();
-            jiraResponse = await doJiraSearch(refreshed.accessToken);
-          } catch (refreshErr) {
-            console.error('Lỗi Sync Jira (refresh token thất bại):', refreshErr.message);
-            results.errors.push('Token Jira đã hết hạn. Vui lòng kết nối lại Jira.');
-          }
-        } else if (status === 404 || status === 410) {
-          // 404: Project không tồn tại (key sai hoặc không có quyền)
-          // 410: Project đã bị xóa
-          const message = status === 404 
-            ? `Không tìm thấy Jira Project có Key "${cleanProjectKey}". Kiểm tra lại Project Key trên Jira!`
-            : 'Jira project không còn tồn tại (410). GitHub đã đồng bộ bình thường.';
-          results.errors.push(message);
-          console.warn(`⚠️ [Sync Jira] ${status === 404 ? '404' : '410'}: Project Key "${cleanProjectKey}"`);
-        } else if (status === 401 || status === 403) {
-          results.errors.push('Token Jira đã hết hạn. Vui lòng kết nối lại Jira.');
-        } else {
-          results.errors.push(`Jira Error: ${jiraErr.message}`);
-        }
-      }
+        const { clientId, clientSecret } = getAtlassianConfig(req);
 
-      if (jiraResponse && jiraResponse.issues) {
-        const issues = jiraResponse.issues || [];
+        // Sử dụng JiraSyncService với auto-refresh
+        const issues = await JiraSyncService.syncWithAutoRefresh({
+          user,
+          clientId,
+          clientSecret,
+          syncFunction: async (client) => {
+            return await JiraSyncService.fetchAllProjectIssues({
+              client,
+              projectKey: cleanProjectKey
+            });
+          }
+        });
 
         // Tạo hoặc lấy sprint mặc định cho project (nếu có team)
         let defaultSprintId = null;
@@ -797,14 +748,10 @@ exports.syncMyProjectData = async (req, res) => {
 
         let syncedTasks = 0;
         for (const issue of issues) {
-          // Nếu không có sprint, bỏ qua task này (vì schema yêu cầu sprint_id)
           if (!defaultSprintId) {
             console.log('⚠️ Bỏ qua Jira task vì không có sprint cho project');
             continue;
           }
-          // Lưu ý: Không filter theo member ở bước sync nữa.
-          // Vì nếu member sync mà task được assign cho người khác, task sẽ không được update và UI sẽ bị stale
-          // (ví dụ assignee_name vẫn null dù Jira đã assign). Việc phân quyền/filter sẽ làm ở API GET tasks.
 
           let assigneeMemberId = null;
           if (issue.fields.assignee?.accountId && teamId) {
@@ -827,7 +774,7 @@ exports.syncMyProjectData = async (req, res) => {
               status_category: issue.fields.status?.statusCategory?.key || '',
               assignee_account_id: issue.fields.assignee?.accountId || null,
               assignee_name: issue.fields.assignee?.displayName || null,
-              story_point: issue.fields.storyPoints || null,
+              story_point: issue.fields.customfield_10026 || null, // Story Points
               created_at: issue.fields.created ? new Date(issue.fields.created) : undefined,
               updated_at: issue.fields.updated ? new Date(issue.fields.updated) : new Date()
             },
@@ -837,6 +784,23 @@ exports.syncMyProjectData = async (req, res) => {
         }
         results.jira = syncedTasks;
         console.log(`✅ [Sync Jira] Đã sync ${syncedTasks} tasks`);
+
+      } catch (jiraErr) {
+        console.error('❌ [Sync Jira] Lỗi:', jiraErr.message);
+        
+        if (jiraErr.code === 'REFRESH_TOKEN_EXPIRED') {
+          results.errors.push('Token Jira đã hết hạn. Vui lòng kết nối lại Jira.');
+        } else {
+          const status = jiraErr.response?.status;
+          if (status === 404 || status === 410) {
+            const message = status === 404 
+              ? `Không tìm thấy Jira Project có Key "${cleanProjectKey}". Kiểm tra lại Project Key trên Jira!`
+              : 'Jira project không còn tồn tại (410). GitHub đã đồng bộ bình thường.';
+            results.errors.push(message);
+          } else {
+            results.errors.push(`Jira Error: ${jiraErr.message}`);
+          }
+        }
       }
     } else {
       if (!user.integrations?.jira?.accessToken) {
