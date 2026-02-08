@@ -1283,8 +1283,13 @@ const addStudentToClass = async (req, res) => {
             const team = await findOrCreateTeam(classId, group);
 
             // 2. Check xem đã vào lớp chưa (thông qua bất kỳ team nào của lớp đó)
+            // NOTE: This check is CLASS-SCOPED - students can join teams in different classes
             const classTeams = await models.Team.find({ class_id: classId }).select('_id');
             const classTeamIds = classTeams.map(t => t._id);
+            
+            console.log(`   🔍 [AddStudent] Checking if student already in THIS class (class_id: ${classId})`);
+            console.log(`      - Found ${classTeams.length} team(s) in this class`);
+            console.log(`      - Student CAN be in teams in OTHER classes`);
             
             const existingMember = await models.TeamMember.findOne({
                 team_id: { $in: classTeamIds },
@@ -1293,6 +1298,7 @@ const addStudentToClass = async (req, res) => {
 
             if (existingMember) {
                 if (existingMember.is_active) {
+                    console.log(`   ❌ [AddStudent] Student is already in THIS class`);
                     return res.status(400).json({ error: 'Sinh viên này đã có trong lớp rồi!' });
                 }
                 // Đã xóa mềm trước đó -> Khôi phục (soft restore)

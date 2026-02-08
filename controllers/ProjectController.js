@@ -308,6 +308,7 @@ exports.createProject = async (req, res) => {
 
     // 4) Validate: Kiểm tra xem member có project ở CÙNG LỚP + CÙNG HỌC KỲ + CÙNG MÔN không (khác lớp/kỳ/môn thì OK)
     // QUAN TRỌNG: Nếu student đã chuyển nhóm hoặc không còn thuộc team của project cũ, tự động cleanup project cũ
+    // VALIDATION IS CLASS-SCOPED: Students can have projects in different classes
     const queryConditions = {
       class_id: currentClassId,
       semester_id: currentSemesterId,
@@ -318,6 +319,13 @@ exports.createProject = async (req, res) => {
     if (currentSubjectId) {
       queryConditions.subject_id = currentSubjectId;
     }
+    
+    console.log(`   🔍 [CreateProject] Validation Query (Class-Scoped):`);
+    console.log(`      - class_id: ${currentClassId}`);
+    console.log(`      - semester_id: ${currentSemesterId}`);
+    console.log(`      - subject_id: ${currentSubjectId || '(not specified)'}`);
+    console.log(`      - checking ${allStudentIds.length} student(s)`);
+    console.log(`   ✅ Students CAN join projects in OTHER classes - validation is PER CLASS only`);
     
     const existingProjectsInSameClass = await models.Project.find(queryConditions).lean();
 
@@ -458,22 +466,27 @@ exports.createProject = async (req, res) => {
 
 const IntegrationService = require('../services/IntegrationService');
 
-// GET /api/projects/my-project
+// GET /api/projects/my-project?class_id=xxx (optional)
 // Dành cho STUDENT: xem Project đầu tiên của mình (backward compatibility)
+// Nếu có class_id trong query, chỉ lấy project của class đó
 exports.getMyProject = async (req, res) => {
   try {
     const { role, userId } = req;
+    const { class_id } = req.query; // Query param optional
 
     if (role !== 'STUDENT') {
       return res.status(403).json({ error: 'Chỉ sinh viên mới dùng được API này.' });
     }
 
-    // Tìm TeamMember của sinh viên có project_id khác null
-    const teamMember = await models.TeamMember.findOne({
+    // Build query: tìm TeamMember của sinh viên có project_id khác null
+    const teamMemberQuery = {
       student_id: userId,
       is_active: true,
       project_id: { $ne: null }
-    })
+    };
+
+    // Tìm TeamMember và populate để có thông tin class
+    const teamMembers = await models.TeamMember.find(teamMemberQuery)
     .populate({
       path: 'team_id',
       select: 'class_id',
@@ -484,11 +497,29 @@ exports.getMyProject = async (req, res) => {
     })
     .lean();
 
-    if (!teamMember) {
+    if (!teamMembers || teamMembers.length === 0) {
       return res.json({ project: null });
     }
 
-    // Lấy project từ teamMember (backward compatibility)
+    // Nếu có class_id trong query, filter theo class đó
+    let teamMember = teamMembers[0]; // Default: lấy cái đầu tiên (backward compatibility)
+    
+    if (class_id) {
+      console.log(`🔍 [getMyProject] Filtering by class_id: ${class_id}`);
+      const filteredMember = teamMembers.find(tm => 
+        tm.team_id?.class_id?._id?.toString() === class_id
+      );
+      
+      if (!filteredMember) {
+        console.log(`   ℹ️  [getMyProject] No project found in class ${class_id}`);
+        return res.json({ project: null });
+      }
+      
+      teamMember = filteredMember;
+      console.log(`   ✅ [getMyProject] Found project in class ${class_id}`);
+    }
+
+    // Lấy project từ teamMember
     const project = await models.Project.findById(teamMember.project_id)
       .populate('leader_id', 'student_code email full_name avatar_url')
       .populate('lecturer_id', 'email full_name avatar_url')
@@ -632,6 +663,61 @@ exports.getMyProject = async (req, res) => {
     return res.json({ project });
   } catch (error) {
     console.error('getMyProject error:', error);
+    return res.status(500).json({ error: error.message });
+  }
+};
+
+// GET /api/projects/can-create?class_id=xxx
+// Dành cho STUDENT: check xem có thể tạo project trong class này không
+exports.canCreateProject = async (req, res) => {
+  try {
+    const { role, userId } = req;
+    const { class_id } = req.query;
+
+    if (role !== 'STUDENT') {
+      return res.status(403).json({ error: 'Chỉ sinh viên mới dùng được API này.' });
+    }
+
+    if (!class_id) {
+      return res.status(400).json({ error: 'class_id là bắt buộc trong query params.' });
+    }
+
+    // Lấy thông tin class để có semester_id và subject_id
+    const classInfo = await models.Class.findById(class_id).lean();
+    if (!classInfo) {
+      return res.status(404).json({ error: 'Không tìm thấy lớp học.' });
+    }
+
+    // Check xem sinh viên đã có project trong class này chưa
+    const queryConditions = {
+      class_id: class_id,
+      semester_id: classInfo.semester_id,
+      $or: [
+        { leader_id: userId },
+        { members: userId }
+      ]
+    };
+
+    if (classInfo.subject_id) {
+      queryConditions.subject_id = classInfo.subject_id;
+    }
+
+    const existingProject = await models.Project.findOne(queryConditions).lean();
+
+    return res.json({
+      can_create: !existingProject,
+      reason: existingProject 
+        ? 'Bạn đã có project trong lớp này rồi' 
+        : 'Bạn có thể tạo project trong lớp này',
+      existing_project: existingProject ? {
+        _id: existingProject._id,
+        name: existingProject.name,
+        class_id: existingProject.class_id
+      } : null
+    });
+
+  } catch (error) {
+    console.error('canCreateProject error:', error);
     return res.status(500).json({ error: error.message });
   }
 };

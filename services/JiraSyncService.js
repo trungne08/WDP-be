@@ -267,8 +267,17 @@ async function fetchUser(client, accountId) {
 async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction }) {
   const jira = user.integrations?.jira;
 
+  console.log('🔄 [Jira Sync] syncWithAutoRefresh called');
+  console.log('   - User:', user.email);
+  console.log('   - Has jira integration?', !!jira);
+  console.log('   - Has accessToken?', !!jira?.accessToken);
+  console.log('   - CloudId:', jira?.cloudId);
+
   if (!jira?.accessToken || !jira?.cloudId) {
-    throw new Error('User chưa kết nối Jira');
+    console.error('❌ [Jira Sync] User chưa kết nối Jira!');
+    const error = new Error('User chưa kết nối Jira');
+    error.code = 'JIRA_NOT_CONNECTED';
+    throw error;
   }
 
   let currentAccessToken = jira.accessToken;

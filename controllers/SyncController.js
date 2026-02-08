@@ -13,7 +13,16 @@ exports.syncTeamData = async (req, res) => {
         const results = { git: 0, jira_sprints: 0, jira_tasks: 0, errors: [] };
         if (team.api_token_github && team.github_repo_url) {
             try {
-                const commits = await GithubService.fetchCommits(team.github_repo_url, team.api_token_github);
+                // REFACTORED: Fetch commits từ TẤT CẢ branches
+                const commits = await GithubService.fetchCommits(
+                    team.github_repo_url, 
+                    team.api_token_github,
+                    {
+                        maxCommitsPerBranch: 100,
+                        includeBranchInfo: true
+                    }
+                );
+                
                 for (const commit of commits) {
                     const checkResult = await GithubCommit.processCommit(commit, teamId);
                     await GithubCommit.findOneAndUpdate(
@@ -23,8 +32,11 @@ exports.syncTeamData = async (req, res) => {
                         {
                             team_id: teamId,
                             author_email: commit.author_email,
+                            author_name: commit.author_name,
                             message: commit.message,
                             commit_date: commit.commit_date,
+                            url: commit.url,
+                            branches: commit.branches || [],
                             is_counted: checkResult.is_counted,
                             rejection_reason: checkResult.reason
                         },
@@ -32,8 +44,9 @@ exports.syncTeamData = async (req, res) => {
                     );
                 }
                 results.git = commits.length;
+                console.log(`✅ [Team Sync] Đã sync ${commits.length} commits từ tất cả branches`);
             } catch (err) {
-                console.error("Lỗi Sync Git:", err.message);
+                console.error("❌ Lỗi Sync Git:", err.message);
                 results.errors.push(`Git Error: ${err.message}`);
             }
         } else {

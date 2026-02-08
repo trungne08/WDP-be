@@ -191,6 +191,51 @@ module.exports = (app) => {
 
     /**
      * @swagger
+     * /api/projects/can-create:
+     *   get:
+     *     summary: Check xem sinh viên có thể tạo project trong class này không
+     *     tags: [Projects]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       Dành cho STUDENT. Check xem sinh viên đã có project trong class cụ thể chưa.
+     *       Trả về `can_create: true` nếu chưa có project trong class đó, `false` nếu đã có.
+     *       **QUAN TRỌNG**: Sinh viên có thể có nhiều project ở các class KHÁC NHAU.
+     *       API này chỉ check trong 1 class cụ thể (theo class_id trong query).
+     *     parameters:
+     *       - in: query
+     *         name: class_id
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID của lớp học cần check
+     *     responses:
+     *       200:
+     *         description: Thông tin có thể tạo project hay không
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 can_create:
+     *                   type: boolean
+     *                   description: true nếu có thể tạo, false nếu không
+     *                 reason:
+     *                   type: string
+     *                   description: Lý do (có thể tạo hoặc đã có project)
+     *                 existing_project:
+     *                   type: object
+     *                   nullable: true
+     *                   description: Thông tin project đã tồn tại (nếu có)
+     *       400:
+     *         description: Thiếu class_id trong query
+     *       403:
+     *         description: Không phải STUDENT
+     */
+    app.get('/api/projects/can-create', authenticateToken, ProjectController.canCreateProject);
+
+    /**
+     * @swagger
      * /api/projects/lecturer/classes/{classId}:
      *   get:
      *     summary: Giảng viên lấy danh sách Project theo classId

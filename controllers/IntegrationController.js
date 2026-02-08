@@ -411,6 +411,13 @@ exports.getGithubRepos = async (req, res) => {
 
 exports.getJiraProjects = async (req, res) => {
   try {
+    const user = req.user;
+    
+    console.log('🔍 [Get Jira Projects] Request from user:', user.email);
+    console.log('   - Has Jira integration?', !!user.integrations?.jira);
+    console.log('   - Has accessToken?', !!user.integrations?.jira?.accessToken);
+    console.log('   - Has cloudId?', user.integrations?.jira?.cloudId);
+    
     const { clientId, clientSecret } = getAtlassianConfig(req);
 
     // Sử dụng JiraSyncService với auto-refresh
@@ -423,9 +430,13 @@ exports.getJiraProjects = async (req, res) => {
       }
     });
 
+    console.log('✅ [Get Jira Projects] Success:', projects.length, 'projects');
     return res.json({ total: projects.length, projects });
   } catch (error) {
     console.error('❌ [Get Jira Projects] Error:', error.message);
+    console.error('   - Error code:', error.code);
+    console.error('   - Response status:', error.response?.status);
+    console.error('   - Response data:', error.response?.data);
     
     // Kiểm tra lỗi refresh token hết hạn
     if (error.code === 'REFRESH_TOKEN_EXPIRED') {
@@ -637,17 +648,22 @@ exports.syncMyProjectData = async (req, res) => {
     console.log(`   👤 User: ${user.email} (${user._id})`);
 
     // ==========================================
-    // SYNC GITHUB (nếu có token và repo URL)
+    // SYNC GITHUB (nếu có token và repo URL) - ALL BRANCHES
     // ==========================================
     if (user.integrations?.github?.accessToken && project.githubRepoUrl) {
       console.log(`🔄 [Sync GitHub] Đang sync repo: ${project.githubRepoUrl}`);
       try {
+        // REFACTORED: Fetch commits từ TẤT CẢ branches
         const commits = await GithubService.fetchCommits(
           project.githubRepoUrl, 
-          user.integrations.github.accessToken
+          user.integrations.github.accessToken,
+          {
+            maxCommitsPerBranch: 100, // Max commits per branch
+            includeBranchInfo: true   // Lưu thông tin branches vào DB
+          }
         );
         
-        // teamId đã được tìm ở trên (trong phần check quyền)
+        console.log(`   📊 Total unique commits: ${commits.length}`);
 
         let syncedCommits = 0;
         for (const commit of commits) {
@@ -666,8 +682,11 @@ exports.syncMyProjectData = async (req, res) => {
               {
                 team_id: teamId,
                 author_email: commit.author_email,
+                author_name: commit.author_name,
                 message: commit.message,
                 commit_date: commit.commit_date,
+                url: commit.url,
+                branches: commit.branches || [], // Lưu danh sách branches
                 is_counted: checkResult.is_counted,
                 rejection_reason: checkResult.reason
               },
@@ -680,10 +699,14 @@ exports.syncMyProjectData = async (req, res) => {
           }
         }
         results.github = syncedCommits;
-        console.log(`✅ [Sync GitHub] Đã sync ${syncedCommits} commits`);
+        console.log(`✅ [Sync GitHub] Đã sync ${syncedCommits} commits từ tất cả branches`);
       } catch (err) {
         console.error('❌ [Sync GitHub] Lỗi:', err.message);
-        results.errors.push(`GitHub Error: ${err.message}`);
+        if (err.message.includes('token không hợp lệ')) {
+          results.errors.push('GitHub token đã hết hạn. Vui lòng kết nối lại GitHub.');
+        } else {
+          results.errors.push(`GitHub Error: ${err.message}`);
+        }
       }
     } else {
       if (!user.integrations?.github?.accessToken) {

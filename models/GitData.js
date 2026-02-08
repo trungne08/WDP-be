@@ -4,17 +4,22 @@ const Schema = mongoose.Schema;
 const GithubCommitSchema = new Schema({
     team_id: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
     author_email: String, // Must match student email
+    author_name: String, // Tên author từ GitHub
     // Không để unique theo hash toàn hệ thống nữa, vì cùng 1 commit hash
     // có thể xuất hiện ở nhiều team/project khác nhau (fork, chia repo, v.v.)
     // Unique sẽ được đảm bảo bằng index compound bên dưới: (team_id + hash)
     hash: { type: String, required: true },
     message: String,
     commit_date: Date,
+    url: String, // Link đến commit trên GitHub
     
     // Stats Display Only (flat fields theo schema)
     additions: Number,
     deletions: Number,
     files_changed: Number,
+    
+    // BRANCH INFO (NEW - Multi-branch support)
+    branches: [String], // Danh sách branches chứa commit này (VD: ['main', 'dev', 'feature/login'])
     
     // LOGIC TÍNH ĐIỂM (QUALIFIED)
     is_counted: { type: Boolean, default: false },
