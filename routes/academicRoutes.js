@@ -11,7 +11,7 @@ module.exports = (app) => {
      * /api/academic/schedules:
      *   post:
      *     summary: Tạo lịch giảng dạy (Note lịch dạy) - Chỉ Giảng viên
-     *     tags: [Academic]
+     *     tags: [19. Teaching]
      *     security:
      *       - bearerAuth: []
      *     requestBody:
@@ -58,7 +58,7 @@ module.exports = (app) => {
      * /api/academic/classes/{classId}/schedules:
      *   get:
      *     summary: Lấy danh sách lịch dạy của một lớp
-     *     tags: [Academic]
+     *     tags: [19. Teaching]
      *     security:
      *       - bearerAuth: []
      *     parameters:
@@ -87,7 +87,7 @@ module.exports = (app) => {
      * /api/academic/assignments:
      *   post:
      *     summary: Tạo Bài tập (Assignment) hoặc Lab - Chỉ Giảng viên
-     *     tags: [Academic]
+     *     tags: [19. Teaching]
      *     security:
      *       - bearerAuth: []
      *     requestBody:
@@ -134,7 +134,7 @@ module.exports = (app) => {
      * /api/academic/classes/{classId}/assignments:
      *   get:
      *     summary: Lấy danh sách Bài tập & Lab của lớp
-     *     tags: [Academic]
+     *     tags: [19. Teaching]
      *     security:
      *       - bearerAuth: []
      *     parameters:

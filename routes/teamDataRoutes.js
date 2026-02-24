@@ -12,7 +12,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/dashboard:
      *   get:
      *     summary: Overview tổng quan (Task/Commit/Sprint)
-     *     tags: [Team Data]
+     *     tags: [9. Teams - Dashboard]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -39,7 +39,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/tasks:
      *   get:
      *     summary: Danh sách task (lọc theo sprintId/status)
-     *     tags: [Team Data]
+     *     tags: [9. Teams - Dashboard]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -79,7 +79,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/commits:
      *   get:
      *     summary: Nhặt commit gần nhất
-     *     tags: [Team Data]
+     *     tags: [9. Teams - Dashboard]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -114,7 +114,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/ranking:
      *   get:
      *     summary: Bảng đóng góp (Jira Done SP + counted commits)
-     *     tags: [Team Data]
+     *     tags: [9. Teams - Dashboard]
      *     parameters:
      *       - in: path
      *         name: teamId

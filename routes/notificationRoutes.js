@@ -12,7 +12,7 @@ module.exports = (app) => {
      * /api/notifications/send-class:
      *   post:
      *     summary: Gửi thông báo thủ công cho cả lớp (Giảng viên/Admin)
-     *     tags: [Notification]
+     *     tags: [20. Notifications]
      *     description: Dùng để thông báo nghỉ học, nhắc deadline, tin tức chung cho cả lớp.
      *     security:
      *       - bearerAuth: []
@@ -69,7 +69,7 @@ module.exports = (app) => {
      * /api/notifications/send-student:
      *   post:
      *     summary: Gửi tin nhắn riêng cho 1 sinh viên (Tùy chọn)
-     *     tags: [Notification]
+     *     tags: [20. Notifications]
      *     security:
      *       - bearerAuth: []
      *     requestBody:

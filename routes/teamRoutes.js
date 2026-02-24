@@ -12,7 +12,7 @@ module.exports = (app) => {
      * /api/teams:
      *   post:
      *     summary: Tạo nhóm dự án (Thay thế cho API seed-team cũ)
-     *     tags: [Team Management]
+     *     tags: [7. Teams - Management]
      *     requestBody:
      *       required: true
      *       content:
@@ -46,7 +46,7 @@ module.exports = (app) => {
      * /api/teams:
      *   get:
      *     summary: Lấy danh sách nhóm trong một lớp cụ thể
-     *     tags: [Team Management]
+     *     tags: [7. Teams - Management]
      *     parameters:
      *       - in: query
      *         name: class_id
@@ -75,7 +75,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}:
      *   get:
      *     summary: Xem thông tin chi tiết team (kèm thành viên, project, thống kê)
-     *     tags: [Team Management]
+     *     tags: [7. Teams - Management]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -117,7 +117,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/config:
      *   put:
      *     summary: Lưu cấu hình Jira/GitHub cho team
-     *     tags: [Team Configuration]
+     *     tags: [7. Teams - Management]
      *     parameters:
      *       - in: path
      *         name: teamId

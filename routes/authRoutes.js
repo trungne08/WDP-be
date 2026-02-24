@@ -12,7 +12,7 @@ module.exports = (app) => {
      * /api/auth/request-registration-otp:
      *   post:
      *     summary: Yêu cầu OTP để đăng ký (Bước 1)
-     *     tags: [Auth]
+     *     tags: [1. Auth - Login & Register]
      *     description: Chỉ cần nhập email để nhận OTP qua email. Sau đó gọi API `/api/auth/register` với OTP và đầy đủ thông tin để hoàn tất đăng ký.
      *     requestBody:
      *       required: true
@@ -53,7 +53,7 @@ module.exports = (app) => {
      * /api/auth/register:
      *   post:
      *     summary: Đăng ký tài khoản mới với OTP (Bước 2)
-     *     tags: [Auth]
+     *     tags: [1. Auth - Login & Register]
      *     description: Nhập đầy đủ thông tin + OTP đã nhận được qua email để hoàn tất đăng ký. Tài khoản sẽ được kích hoạt ngay sau khi đăng ký thành công.
      *     requestBody:
      *       required: true
@@ -141,7 +141,7 @@ module.exports = (app) => {
      * /api/auth/forgot-password:
      *   post:
      *     summary: Yêu cầu gửi OTP qua email để đặt lại mật khẩu
-     *     tags: [Auth]
+     *     tags: [1. Auth - Login & Register]
      *     description: Chỉ áp dụng cho LECTURER và STUDENT (không hỗ trợ ADMIN).
      *     requestBody:
      *       required: true
@@ -187,7 +187,7 @@ module.exports = (app) => {
      * /api/auth/verify-otp-reset-password:
      *   post:
      *     summary: Xác thực OTP và đặt lại mật khẩu mới
-     *     tags: [Auth]
+     *     tags: [1. Auth - Login & Register]
      *     description: Chỉ áp dụng cho LECTURER và STUDENT (không hỗ trợ ADMIN).
      *     requestBody:
      *       required: true
@@ -237,7 +237,7 @@ module.exports = (app) => {
      * /api/auth/login:
      *   post:
      *     summary: Đăng nhập vào hệ thống
-     *     tags: [Auth]
+     *     tags: [1. Auth - Login & Register]
      *     description: LECTURER và STUDENT sẽ được tự động xác minh email khi đăng ký thành công (API `/api/auth/register` đã verify OTP và set is_verified = true).
      *     requestBody:
      *       required: true
@@ -304,7 +304,7 @@ module.exports = (app) => {
      * /api/auth/refresh-token:
      *   post:
      *     summary: Làm mới access token bằng refresh token
-     *     tags: [Auth]
+     *     tags: [1. Auth - Login & Register]
      *     description: Khi access token hết hạn, dùng refresh token để lấy access token mới
      *     requestBody:
      *       required: true
@@ -346,7 +346,7 @@ module.exports = (app) => {
      * /api/auth/me:
      *   get:
      *     summary: Lấy thông tin profile của user hiện tại
-     *     tags: [Auth]
+     *     tags: [2. Auth - Profile]
      *     description: Lấy thông tin đầy đủ của user từ token (dùng cho trang profile)
      *     security:
      *       - bearerAuth: []
@@ -380,7 +380,7 @@ module.exports = (app) => {
      * /api/auth/me:
      *   put:
      *     summary: Cập nhật thông tin profile của user hiện tại
-     *     tags: [Auth]
+     *     tags: [2. Auth - Profile]
      *     description: Cập nhật thông tin profile (full_name, avatar_url, major, ent). Mỗi role có các trường có thể cập nhật khác nhau.
      *     security:
      *       - bearerAuth: []
@@ -493,7 +493,7 @@ module.exports = (app) => {
      * /api/auth/me/classes:
      *   get:
      *     summary: Lấy danh sách các lớp mà sinh viên tham gia (với role trong mỗi team)
-     *     tags: [Auth]
+     *     tags: [2. Auth - Profile]
      *     description: |
      *       API này chỉ dành cho STUDENT. Trả về danh sách các lớp mà sinh viên đang tham gia,
      *       kèm theo role của sinh viên trong mỗi team (Leader hoặc Member).
@@ -590,7 +590,7 @@ module.exports = (app) => {
      * /auth/google:
      *   get:
      *     summary: Đăng nhập bằng Google OAuth2
-     *     tags: [Auth]
+     *     tags: [5. OAuth - Google]
      *     description: |
      *       Redirect user đến Google OAuth consent screen để đăng nhập.
      *       Frontend có thể truyền `redirect_uri` query param để chỉ định URL redirect về sau khi đăng nhập thành công (hữu ích khi FE chạy local).
@@ -612,7 +612,7 @@ module.exports = (app) => {
      * /auth/google/token:
      *   post:
      *     summary: Đăng nhập Google bằng ID Token (cho Mobile)
-     *     tags: [Auth]
+     *     tags: [5. OAuth - Google]
      *     description: |
      *       Dành cho mobile app: FE dùng Google Sign-In SDK để lấy id_token.
      *       SDK hiển thị popup chọn tài khoản NGAY TRONG APP, không cần mở Chrome.
@@ -692,7 +692,7 @@ module.exports = (app) => {
      * /auth/google/callback:
      *   get:
      *     summary: Google OAuth callback
-     *     tags: [Auth]
+     *     tags: [5. OAuth - Google]
      *     description: Callback từ Google sau khi user xác thực. Tự động tạo JWT và redirect về frontend
      *     parameters:
      *       - in: query
@@ -721,7 +721,7 @@ module.exports = (app) => {
      * /api/users/fcm-token:
      *   post:
      *     summary: Cập nhật FCM Token (để nhận thông báo)
-     *     tags: [Auth]
+     *     tags: [2. Auth - Profile]
      *     security:
      *       - bearerAuth: []
      *     requestBody:

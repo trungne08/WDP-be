@@ -7,7 +7,7 @@ module.exports = (app) => {
      * /api/webhooks/jira:
      *   post:
      *     summary: Webhook endpoint để nhận real-time updates từ Jira
-     *     tags: [Webhooks]
+     *     tags: [21. Webhooks]
      *     description: |
      *       Jira sẽ gửi webhook đến endpoint này khi có thay đổi:
      *       - issue_created

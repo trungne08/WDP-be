@@ -12,8 +12,8 @@ module.exports = (app) => {
    * @swagger
    * /api/sprints/{teamId}:
    *   get:
-   *     summary: Get Sprints by Team
-   *     tags: [Jira Sprints]
+   *     summary: Lấy danh sách Sprints của team
+   *     tags: [11. Jira - Sprints]
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -38,8 +38,8 @@ module.exports = (app) => {
    * @swagger
    * /api/sprints/detail/{id}:
    *   get:
-   *     summary: Get Sprint details
-   *     tags: [Jira Sprints]
+   *     summary: Xem chi tiết một Sprint
+   *     tags: [11. Jira - Sprints]
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -62,8 +62,8 @@ module.exports = (app) => {
    * @swagger
    * /api/sprints:
    *   post:
-   *     summary: Create a new Sprint (Sync with Jira)
-   *     tags: [Jira Sprints]
+   *     summary: Tạo Sprint mới (Sync với Jira)
+     *     tags: [11. Jira - Sprints]
    *     security:
    *       - bearerAuth: []
    *     requestBody:
@@ -102,8 +102,8 @@ module.exports = (app) => {
    * @swagger
    * /api/sprints/{id}/start:
    *   post:
-   *     summary: Start Sprint
-   *     tags: [Jira Sprints]
+   *     summary: Bắt đầu Sprint
+   *     tags: [11. Jira - Sprints]
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -141,8 +141,8 @@ module.exports = (app) => {
    * @swagger
    * /api/sprints/{id}:
    *   put:
-   *     summary: Update Sprint
-   *     tags: [Jira Sprints]
+   *     summary: Cập nhật Sprint
+   *     tags: [11. Jira - Sprints]
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -184,8 +184,8 @@ module.exports = (app) => {
    * @swagger
    * /api/sprints/{id}:
    *   delete:
-   *     summary: Delete Sprint
-   *     tags: [Jira Sprints]
+   *     summary: Xóa Sprint
+   *     tags: [11. Jira - Sprints]
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -212,8 +212,8 @@ module.exports = (app) => {
    * @swagger
    * /api/tasks:
    *   get:
-   *     summary: Get Tasks (Filter)
-   *     tags: [Jira Tasks]
+   *     summary: Lấy danh sách Tasks (có thể filter)
+   *     tags: [12. Jira - Tasks]
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -239,8 +239,8 @@ module.exports = (app) => {
    * @swagger
    * /api/tasks/{id}:
    *   get:
-   *     summary: Get Task details
-   *     tags: [Jira Tasks]
+   *     summary: Xem chi tiết một Task
+   *     tags: [12. Jira - Tasks]
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -263,8 +263,8 @@ module.exports = (app) => {
    * @swagger
    * /api/tasks:
    *   post:
-   *     summary: Create a new Task
-   *     tags: [Jira Tasks]
+   *     summary: Tạo Task mới
+   *     tags: [12. Jira - Tasks]
    *     security:
    *       - bearerAuth: []
    *     requestBody:
@@ -313,8 +313,8 @@ module.exports = (app) => {
    * @swagger
    * /api/tasks/{id}:
    *   put:
-   *     summary: Update Task
-   *     tags: [Jira Tasks]
+   *     summary: Cập nhật Task
+   *     tags: [12. Jira - Tasks]
    *     security:
    *       - bearerAuth: []
    *     parameters:
@@ -367,8 +367,8 @@ module.exports = (app) => {
    * @swagger
    * /api/tasks/{id}:
    *   delete:
-   *     summary: Delete Task
-   *     tags: [Jira Tasks]
+   *     summary: Xóa Task
+   *     tags: [12. Jira - Tasks]
    *     security:
    *       - bearerAuth: []
    *     parameters:

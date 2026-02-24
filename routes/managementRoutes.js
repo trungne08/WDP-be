@@ -11,7 +11,7 @@ module.exports = (app) => {
      * /api/management/semesters:
      *   post:
      *     summary: "Tạo học kỳ mới (VD: Spring 2026)"
-     *     tags: [Management]
+     *     tags: [15. Admin - Semesters]
      *     requestBody:
      *       required: true
      *       content:
@@ -53,7 +53,7 @@ module.exports = (app) => {
      * /api/management/semesters:
      *   get:
      *     summary: Lấy danh sách học kỳ (Để hiển thị dropdown chọn kỳ)
-     *     tags: [Management]
+     *     tags: [15. Admin - Semesters]
      *     responses:
      *       200:
      *         description: Danh sách học kỳ
@@ -74,7 +74,7 @@ module.exports = (app) => {
      * /api/management/semesters/{semesterId}:
      *   get:
      *     summary: Lấy chi tiết học kỳ (kèm danh sách lớp)
-     *     tags: [Management]
+     *     tags: [15. Admin - Semesters]
      *     parameters:
      *       - in: path
      *         name: semesterId
@@ -108,7 +108,7 @@ module.exports = (app) => {
      * /api/management/subjects:
      *   post:
      *     summary: "Tạo môn học mới (VD: Software Engineering Project)"
-     *     tags: [Management]
+     *     tags: [16. Admin - Subjects]
      *     requestBody:
      *       required: true
      *       content:
@@ -149,7 +149,7 @@ module.exports = (app) => {
      * /api/management/subjects:
      *   get:
      *     summary: Lấy danh sách môn học (Để hiển thị dropdown chọn môn)
-     *     tags: [Management]
+     *     tags: [16. Admin - Subjects]
      *     parameters:
      *       - in: query
      *         name: status
@@ -193,7 +193,7 @@ module.exports = (app) => {
      * /api/management/subjects/{subjectId}:
      *   get:
      *     summary: Lấy chi tiết môn học (kèm danh sách lớp dạy môn này)
-     *     tags: [Management]
+     *     tags: [16. Admin - Subjects]
      *     parameters:
      *       - in: path
      *         name: subjectId
@@ -227,7 +227,7 @@ module.exports = (app) => {
      * /api/management/users:
      *   post:
      *     summary: Tạo User (Admin, Giảng viên, Mentor)
-     *     tags: [Management]
+     *     tags: [18. Admin - Users]
      *     requestBody:
      *       required: true
      *       content:
@@ -265,7 +265,7 @@ module.exports = (app) => {
      * /api/management/users:
      *   get:
      *     summary: Lấy danh sách User (Lọc ra giảng viên để gán vào lớp)
-     *     tags: [Management]
+     *     tags: [18. Admin - Users]
      *     parameters:
      *       - in: query
      *         name: role
@@ -294,7 +294,7 @@ module.exports = (app) => {
      * /api/management/classes:
      *   post:
      *     summary: Tạo Lớp học (Gắn lớp vào học kỳ & giảng viên)
-     *     tags: [Management]
+     *     tags: [17. Admin - Classes]
      *     requestBody:
      *       required: true
      *       content:
@@ -346,7 +346,7 @@ module.exports = (app) => {
      * /api/management/classes:
      *   get:
      *     summary: Lấy danh sách Lớp (Theo học kỳ và giảng viên)
-     *     tags: [Management]
+     *     tags: [17. Admin - Classes]
      *     parameters:
      *       - in: query
      *         name: semester_id
@@ -380,7 +380,7 @@ module.exports = (app) => {
      * /api/management/classes/{classId}:
      *   get:
      *     summary: Lấy chi tiết lớp học (kèm thông tin đầy đủ)
-     *     tags: [Management]
+     *     tags: [17. Admin - Classes]
      *     parameters:
      *       - in: path
      *         name: classId
@@ -414,7 +414,7 @@ module.exports = (app) => {
      * /api/management/lecturers/{lecturerId}/classes:
      *   get:
      *     summary: Lấy danh sách lớp giảng viên đang dạy
-     *     tags: [Management]
+     *     tags: [18. Admin - Users]
      *     parameters:
      *       - in: path
      *         name: lecturerId
@@ -448,7 +448,7 @@ module.exports = (app) => {
      * /api/management/classes/{classId}/grading-config:
      *   put:
      *     summary: Cấu hình trọng số điểm (Giảng viên)
-     *     tags: [Management]
+     *     tags: [17. Admin - Classes]
      *     description: |
      *       Giảng viên cấu hình các cột điểm (Grade Structure) và tỷ lệ tính điểm đóng góp (Contribution).
      *       - Tổng trọng số các cột điểm phải bằng 1 (100%).
@@ -527,7 +527,7 @@ module.exports = (app) => {
      * /api/management/classes/{classId}/import-students:
      *   post:
      *     summary: Import danh sách sinh viên vào lớp từ template
-     *     tags: [Management]
+     *     tags: [17. Admin - Classes]
      *     description: |
      *       Giảng viên có thể import nhiều sinh viên cùng lúc để enroll vào lớp.
      *       **Lưu ý:** Sinh viên phải tự đăng ký tài khoản trước khi import.
@@ -651,7 +651,7 @@ module.exports = (app) => {
      * /api/management/classes/{classId}/students:
      *   get:
      *     summary: Lấy danh sách sinh viên trong lớp (Enrolled + Pending)
-     *     tags: [Management]
+     *     tags: [17. Admin - Classes]
      *     description: |
      *       Trả về danh sách tất cả sinh viên trong lớp, bao gồm:
      *       - **Enrolled**: Sinh viên đã có tài khoản và đã được xếp nhóm.
@@ -718,7 +718,7 @@ module.exports = (app) => {
      * /api/management/classes/{classId}/students/add:
      *   post:
      *     summary: Thêm thủ công 1 sinh viên vào lớp
-     *     tags: [Management]
+     *     tags: [17. Admin - Classes]
      *     description: |
      *       - Nếu SV đã có tài khoản -> Tự động Enroll vào lớp ngay.
      *       - Nếu SV chưa có tài khoản -> Lưu vào danh sách chờ (Pending).
@@ -766,7 +766,7 @@ module.exports = (app) => {
      * /api/management/classes/{classId}/students/update:
      *   put:
      *     summary: Cập nhật thông tin sinh viên (Đổi nhóm, Đổi Role)
-     *     tags: [Management]
+     *     tags: [17. Admin - Classes]
      *     description: |
      *       Cập nhật cho cả sinh viên đã Enroll và Pending.
      *       - Nếu set là Leader, hệ thống tự động hạ Leader cũ của nhóm đó xuống Member.
@@ -808,7 +808,7 @@ module.exports = (app) => {
      * /api/management/classes/{classId}/students:
      *   delete:
      *     summary: Xóa sinh viên khỏi lớp
-     *     tags: [Management]
+     *     tags: [17. Admin - Classes]
      *     parameters:
      *       - in: path
      *         name: classId

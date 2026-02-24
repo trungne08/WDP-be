@@ -12,7 +12,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/seed-members:
      *   post:
      *     summary: Tạo SV giả + member trong team để test
-     *     tags: [Team Members]
+     *     tags: [8. Teams - Members]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -39,7 +39,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/members:
      *   get:
      *     summary: Lấy danh sách thành viên (kèm mapping Jira/Git)
-     *     tags: [Team Members]
+     *     tags: [8. Teams - Members]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -71,7 +71,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/jira-users:
      *   get:
      *     summary: Lấy DS user Jira (từ dữ liệu task đã sync)
-     *     tags: [Team Members]
+     *     tags: [8. Teams - Members]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -103,7 +103,7 @@ module.exports = (app) => {
      * /api/members/{memberId}/mapping:
      *   put:
      *     summary: Mapping Jira accountId và GitHub username cho member
-     *     tags: [Team Members]
+     *     tags: [8. Teams - Members]
      *     parameters:
      *       - in: path
      *         name: memberId
@@ -148,7 +148,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/my-role:
      *   get:
      *     summary: Kiểm tra role của user hiện tại trong team (Leader hoặc Member)
-     *     tags: [Team Members]
+     *     tags: [8. Teams - Members]
      *     description: |
      *       API này dùng để check quyền của sinh viên trong một team cụ thể.
      *       FE có thể dùng API này để hiển thị/ẩn các chức năng chỉ Leader mới có.

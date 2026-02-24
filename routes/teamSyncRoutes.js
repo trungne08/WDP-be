@@ -13,7 +13,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/sync-leader:
      *   post:
      *     summary: Đồng bộ Leader từ Jira Project về WDP
-     *     tags: [Team Sync]
+     *     tags: [7. Teams - Management]
      *     description: |
      *       Lấy thông tin Project Lead từ Jira và cập nhật role Leader cho thành viên tương ứng trong nhóm.
      *       Yêu cầu:
@@ -43,7 +43,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/sync:
      *   post:
      *     summary: Kích hoạt sync Jira/Sprint/Task và Git/Commit
-     *     tags: [Team Sync]
+     *     tags: [7. Teams - Management]
      *     parameters:
      *       - in: path
      *         name: teamId
@@ -64,7 +64,7 @@ module.exports = (app) => {
      * /api/teams/{teamId}/sync-history:
      *   get:
      *     summary: Xem lịch sử sync (tối đa 20 lần gần nhất)
-     *     tags: [Team Sync]
+     *     tags: [7. Teams - Management]
      *     parameters:
      *       - in: path
      *         name: teamId

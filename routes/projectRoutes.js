@@ -12,7 +12,7 @@ module.exports = (app) => {
      * /api/projects:
      *   post:
      *     summary: Leader tạo Project mới cho nhóm
-     *     tags: [Projects]
+     *     tags: [6. Projects]
      *     security:
      *       - bearerAuth: []
      *     description: |
@@ -175,7 +175,7 @@ module.exports = (app) => {
      * /api/projects/my-project:
      *   get:
      *     summary: Lấy Project hiện tại của sinh viên
-     *     tags: [Projects]
+     *     tags: [6. Projects]
      *     security:
      *       - bearerAuth: []
      *     description: |
@@ -194,7 +194,7 @@ module.exports = (app) => {
      * /api/projects/can-create:
      *   get:
      *     summary: Check xem sinh viên có thể tạo project trong class này không
-     *     tags: [Projects]
+     *     tags: [6. Projects]
      *     security:
      *       - bearerAuth: []
      *     description: |
@@ -239,7 +239,7 @@ module.exports = (app) => {
      * /api/projects/lecturer/classes/{classId}:
      *   get:
      *     summary: Giảng viên lấy danh sách Project theo classId
-     *     tags: [Projects]
+     *     tags: [6. Projects]
      *     security:
      *       - bearerAuth: []
      *     description: |
@@ -267,7 +267,7 @@ module.exports = (app) => {
      * /api/projects/my-projects:
      *   get:
      *     summary: Lấy TẤT CẢ projects của sinh viên (nhiều lớp)
-     *     tags: [Projects]
+     *     tags: [6. Projects]
      *     security:
      *       - bearerAuth: []
      *     description: |
@@ -307,7 +307,7 @@ module.exports = (app) => {
      * /api/projects/teams/{teamId}:
      *   get:
      *     summary: Lấy project của một team
-     *     tags: [Projects]
+     *     tags: [6. Projects]
      *     security:
      *       - bearerAuth: []
      *     description: |
@@ -336,7 +336,7 @@ module.exports = (app) => {
      * /api/projects/classes/{classId}:
      *   get:
      *     summary: Lấy tất cả projects của một lớp
-     *     tags: [Projects]
+     *     tags: [6. Projects]
      *     security:
      *       - bearerAuth: []
      *     description: |

@@ -12,11 +12,11 @@ module.exports = (app) => {
      * /api/integrations/github/connect:
      *   get:
      *     summary: Bắt đầu flow OAuth2 kết nối GitHub
-     *     tags: [Integrations]
+     *     tags: [3. OAuth - GitHub]
      *     security:
      *       - bearerAuth: []
      *     description: |
-     *       User đã đăng nhập gọi API này để lấy URL GitHub authorize.
+     *       **Bước 1 OAuth:** User đã đăng nhập gọi API này để lấy URL GitHub authorize.
      *       Frontend sẽ nhận được `redirectUrl` và tự redirect bằng `window.location.href = redirectUrl`.
      *       Scope: `repo`, `user`.
      *     parameters:
@@ -52,9 +52,9 @@ module.exports = (app) => {
      * /api/integrations/github/callback:
      *   get:
      *     summary: GitHub OAuth2 callback
-     *     tags: [Integrations]
+     *     tags: [3. OAuth - GitHub]
      *     description: |
-     *       GitHub redirect về đây với `code` và `state`.
+     *       **Bước 2 OAuth:** GitHub redirect về đây với `code` và `state`.
      *       Server sẽ exchange code lấy access token, gọi `/user` để lấy githubId/username và lưu vào DB.
      *     parameters:
      *       - in: query
@@ -79,11 +79,11 @@ module.exports = (app) => {
      * /api/integrations/jira/connect:
      *   get:
      *     summary: Bắt đầu flow OAuth2 kết nối Jira (Atlassian)
-     *     tags: [Integrations]
+     *     tags: [4. OAuth - Jira]
      *     security:
      *       - bearerAuth: []
      *     description: |
-     *       User đã đăng nhập gọi API này để lấy URL Atlassian authorize.
+     *       **Bước 1 OAuth:** User đã đăng nhập gọi API này để lấy URL Atlassian authorize.
      *       Frontend sẽ nhận được `redirectUrl` và tự redirect bằng `window.location.href = redirectUrl`.
      *       Scope: `read:jira-user`, `read:jira-work`, `offline_access`.
      *     parameters:
@@ -115,9 +115,9 @@ module.exports = (app) => {
      * /api/integrations/jira/callback:
      *   get:
      *     summary: Jira (Atlassian) OAuth2 callback
-     *     tags: [Integrations]
+     *     tags: [4. OAuth - Jira]
      *     description: |
-     *       Atlassian redirect về đây với `code` và `state`.
+     *       **Bước 2 OAuth:** Atlassian redirect về đây với `code` và `state`.
      *       Server sẽ:
      *       - Exchange code lấy access_token + refresh_token
      *       - Gọi `accessible-resources` để lấy `cloudId`
@@ -147,10 +147,12 @@ module.exports = (app) => {
      * /api/integrations/github/repos:
      *   get:
      *     summary: Lấy danh sách repo GitHub để chọn từ dropdown
-     *     tags: [Integrations]
+     *     tags: [13. GitHub - Repos]
      *     security:
      *       - bearerAuth: []
      *     description: |
+     *       **Dùng cho:** Dropdown chọn repo khi tạo project.
+     *       
      *       Lấy token GitHub đã lưu trong DB → gọi GitHub API `/user/repos` → trả về danh sách repo.
      *     responses:
      *       200:
@@ -169,10 +171,12 @@ module.exports = (app) => {
      * /api/integrations/jira/projects:
      *   get:
      *     summary: Lấy danh sách Jira project để chọn từ dropdown
-     *     tags: [Integrations]
+     *     tags: [10. Jira - External Data]
      *     security:
      *       - bearerAuth: []
      *     description: |
+     *       **Dùng cho:** Dropdown chọn Jira project khi tạo project.
+     *       
      *       Lấy token Jira + cloudId đã lưu trong DB → gọi Jira API `/rest/api/3/project/search` → trả về danh sách project.
      *       Nếu token hết hạn sẽ thử refresh bằng refreshToken (offline_access) rồi gọi lại.
      *     responses:
@@ -192,12 +196,14 @@ module.exports = (app) => {
      * /api/integrations/jira/boards:
      *   get:
      *     summary: Lấy danh sách boards của một Jira project
-     *     tags: [Integrations]
+     *     tags: [10. Jira - External Data]
      *     security:
      *       - bearerAuth: []
      *     description: |
-     *       Lấy danh sách boards (Scrum/Kanban) của một Jira project.
-     *       Dùng để lấy board_id khi tạo project.
+     *       **Dùng cho:** Dropdown chọn board khi tạo project.
+     *       
+     *       Lấy danh sách boards (Scrum/Kanban) của một Jira project từ Agile API.
+     *       **Lưu ý:** Cần có scope `read:board-scope:jira-software`.
      *     parameters:
      *       - in: query
      *         name: projectKey
@@ -222,11 +228,11 @@ module.exports = (app) => {
      * /api/integrations/github/disconnect:
      *   delete:
      *     summary: Ngắt kết nối tài khoản GitHub
-     *     tags: [Integrations]
+     *     tags: [3. OAuth - GitHub]
      *     security:
      *       - bearerAuth: []
      *     description: |
-     *       User đã đăng nhập có thể ngắt kết nối tài khoản GitHub đã liên kết.
+     *       **Disconnect OAuth:** User đã đăng nhập có thể ngắt kết nối tài khoản GitHub đã liên kết.
      *       Sau khi ngắt kết nối, user có thể kết nối với tài khoản GitHub khác.
      *     responses:
      *       200:
@@ -253,11 +259,11 @@ module.exports = (app) => {
      * /api/integrations/jira/disconnect:
      *   delete:
      *     summary: Ngắt kết nối tài khoản Jira (Atlassian)
-     *     tags: [Integrations]
+     *     tags: [4. OAuth - Jira]
      *     security:
      *       - bearerAuth: []
      *     description: |
-     *       User đã đăng nhập có thể ngắt kết nối tài khoản Jira đã liên kết.
+     *       **Disconnect OAuth:** User đã đăng nhập có thể ngắt kết nối tài khoản Jira đã liên kết.
      *       Sau khi ngắt kết nối, user có thể kết nối với tài khoản Jira khác.
      *     responses:
      *       200:
@@ -284,11 +290,11 @@ module.exports = (app) => {
      * /api/integrations/projects/{projectId}/sync:
      *   post:
      *     summary: User tự đồng bộ dữ liệu GitHub và Jira cho project của mình
-     *     tags: [Integrations]
+     *     tags: [6. Projects]
      *     security:
      *       - bearerAuth: []
      *     description: |
-     *       User (leader hoặc member) có thể tự sync dữ liệu GitHub commits và Jira tasks cho project của họ.
+     *       **Manual Sync:** User (leader hoặc member) có thể tự sync dữ liệu GitHub commits và Jira tasks cho project của họ.
      *       Sử dụng accessToken từ integrations của chính user (không cần token từ team config).
      *       Yêu cầu:
      *       - User phải là leader hoặc member của project
@@ -341,10 +347,12 @@ module.exports = (app) => {
      * /api/integrations/my-commits:
      *   get:
      *     summary: Member xem commits GitHub của chính mình
-     *     tags: [Integrations]
+     *     tags: [14. Contributions]
      *     security:
      *       - bearerAuth: []
      *     description: |
+     *       **Dùng cho:** Sinh viên xem đóng góp commits của mình.
+     *       
      *       Member có thể xem commits GitHub của chính họ.
      *       Dữ liệu được lấy từ project mà user đang tham gia.
      *     parameters:
@@ -365,10 +373,12 @@ module.exports = (app) => {
      * /api/integrations/my-tasks:
      *   get:
      *     summary: Member xem tasks Jira của chính mình
-     *     tags: [Integrations]
+     *     tags: [14. Contributions]
      *     security:
      *       - bearerAuth: []
      *     description: |
+     *       **Dùng cho:** Sinh viên xem đóng góp tasks của mình.
+     *       
      *       Member có thể xem tasks Jira của chính họ.
      *       Dữ liệu được lấy từ project mà user đang tham gia.
      *     parameters:
@@ -395,10 +405,12 @@ module.exports = (app) => {
      * /api/integrations/team/{teamId}/commits:
      *   get:
      *     summary: Leader xem commits GitHub của cả team (tất cả members)
-     *     tags: [Integrations]
+     *     tags: [14. Contributions]
      *     security:
      *       - bearerAuth: []
      *     description: |
+     *       **Dùng cho:** Leader xem đóng góp của cả team.
+     *       
      *       Chỉ Leader mới có quyền xem commits của cả team.
      *       Trả về commits của tất cả members trong team, phân loại theo từng member.
      *     parameters:
@@ -428,10 +440,12 @@ module.exports = (app) => {
      * /api/integrations/team/{teamId}/tasks:
      *   get:
      *     summary: Leader xem tasks Jira của cả team (tất cả members)
-     *     tags: [Integrations]
+     *     tags: [14. Contributions]
      *     security:
      *       - bearerAuth: []
      *     description: |
+     *       **Dùng cho:** Leader xem đóng góp tasks của cả team.
+     *       
      *       Chỉ Leader mới có quyền xem tasks của cả team.
      *       Trả về tasks của tất cả members trong team, phân loại theo từng member.
      *     parameters:
@@ -467,10 +481,12 @@ module.exports = (app) => {
      * /api/integrations/team/{teamId}/member/{memberId}/commits:
      *   get:
      *     summary: Leader xem commits GitHub của một member cụ thể
-     *     tags: [Integrations]
+     *     tags: [14. Contributions]
      *     security:
      *       - bearerAuth: []
      *     description: |
+     *       **Dùng cho:** Leader xem đóng góp chi tiết của 1 member.
+     *       
      *       Chỉ Leader mới có quyền xem commits của member khác.
      *       Trả về commits GitHub của member được chỉ định.
      *     parameters:
@@ -505,10 +521,12 @@ module.exports = (app) => {
      * /api/integrations/team/{teamId}/member/{memberId}/tasks:
      *   get:
      *     summary: Leader xem tasks Jira của một member cụ thể
-     *     tags: [Integrations]
+     *     tags: [14. Contributions]
      *     security:
      *       - bearerAuth: []
      *     description: |
+     *       **Dùng cho:** Leader xem đóng góp chi tiết của 1 member.
+     *       
      *       Chỉ Leader mới có quyền xem tasks của member khác.
      *       Trả về tasks Jira của member được chỉ định.
      *     parameters:
