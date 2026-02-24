@@ -42,8 +42,29 @@ module.exports = (app) => {
      * @swagger
      * /api/teams/{teamId}/sync:
      *   post:
-     *     summary: Kích hoạt sync Jira/Sprint/Task và Git/Commit
+     *     summary: ⚠️ Sync dữ liệu (Team Config - LEGACY)
      *     tags: [7. Teams - Management]
+     *     description: |
+     *       **⚠️ API CŨ - Legacy!**
+     *       
+     *       Sync dữ liệu dùng token được config trong team (manual config).
+     *       
+     *       **Điểm khác biệt:**
+     *       
+     *       | Feature | API MỚI (OAuth) ⭐ | API CŨ (này) |
+     *       |---------|-------------------|--------------|
+     *       | Endpoint | `POST /integrations/projects/:projectId/sync` | `POST /teams/:teamId/sync` |
+     *       | Token | OAuth (user token) | Team config (shared) |
+     *       | Setup | Chỉ OAuth connect | Config team |
+     *       | Recommended | ✅ YES | ⚠️ NO (legacy) |
+     *       
+     *       **Yêu cầu:**
+     *       - Team đã config tokens (`PUT /teams/:teamId/config`)
+     *       - Team có `api_token_github` và `api_token_jira`
+     *       
+     *       **Khuyến nghị:**
+     *       → **Dùng API mới:** `POST /integrations/projects/:projectId/sync` (OAuth)
+     *       → API này chỉ giữ lại để backward compatible
      *     parameters:
      *       - in: path
      *         name: teamId

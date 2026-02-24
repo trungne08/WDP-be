@@ -289,19 +289,40 @@ module.exports = (app) => {
      * @swagger
      * /api/integrations/projects/{projectId}/sync:
      *   post:
-     *     summary: User tự đồng bộ dữ liệu GitHub và Jira cho project của mình
+     *     summary: ⭐ Sync dữ liệu (OAuth - RECOMMENDED!)
      *     tags: [6. Projects]
      *     security:
      *       - bearerAuth: []
      *     description: |
-     *       **Manual Sync:** User (leader hoặc member) có thể tự sync dữ liệu GitHub commits và Jira tasks cho project của họ.
-     *       Sử dụng accessToken từ integrations của chính user (không cần token từ team config).
-     *       Yêu cầu:
-     *       - User phải là leader hoặc member của project
-     *       - User phải đã kết nối GitHub (nếu muốn sync GitHub)
-     *       - User phải đã kết nối Jira (nếu muốn sync Jira)
-     *       - Project phải có githubRepoUrl (nếu muốn sync GitHub)
-     *       - Project phải có jiraProjectKey (nếu muốn sync Jira)
+     *       **🆕 API MỚI - Dùng OAuth Token!**
+     *       
+     *       User (Leader/Member) tự sync dữ liệu GitHub + Jira cho project của mình.
+     *       
+     *       **Điểm khác biệt với API cũ (`POST /teams/:teamId/sync`):**
+     *       
+     *       | Feature | API MỚI (OAuth) ⭐ | API CŨ (Team Config) |
+     *       |---------|-------------------|---------------------|
+     *       | Token | `user.integrations` (OAuth) | `team.api_token` (Manual) |
+     *       | Setup | Chỉ cần OAuth connect | Cần config team |
+     *       | Ai sync được | Mọi member | Chỉ leader config team |
+     *       | Security | Token riêng mỗi user ✅ | Shared token ❌ |
+     *       | Recommended | ✅ YES | ⚠️ Legacy |
+     *       
+     *       **Yêu cầu:**
+     *       - ✅ User phải là leader/member của project
+     *       - ✅ User đã OAuth connect GitHub (tag "3. OAuth - GitHub")
+     *       - ✅ User đã OAuth connect Jira (tag "4. OAuth - Jira")
+     *       - ✅ Project có `githubRepoUrl` và `jiraProjectKey`
+     *       
+     *       **Không cần:**
+     *       - ❌ KHÔNG CẦN config team (`PUT /teams/:teamId/config`)
+     *       - ❌ KHÔNG CẦN shared tokens
+     *       
+     *       **Flow:**
+     *       1. User OAuth connect GitHub & Jira (1 lần duy nhất)
+     *       2. Leader tạo project với githubRepoUrl & jiraProjectKey
+     *       3. Bất kỳ member nào cũng có thể click "Sync" → Gọi API này!
+     *       4. Backend dùng OAuth token của user để sync → Done! ✅
      *     parameters:
      *       - in: path
      *         name: projectId
