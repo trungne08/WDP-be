@@ -1,4 +1,5 @@
 const NotificationService = require('../services/NotificationService');
+const Notification = require('../models/Notification');
 const TeamMember = require('../models/TeamMember');
 const Class = require('../models/Class');
 const Team = require('../models/Team');
