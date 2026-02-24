@@ -99,7 +99,163 @@ const sendStudentNotification = async (req, res) => {
     }
 };
 
+/**
+ * Lấy danh sách notifications của user hiện tại (cho notification bell)
+ */
+const getMyNotifications = async (req, res) => {
+    try {
+        const { role, userId } = req;
+        const { limit = 20, skip = 0, unread_only = false } = req.query;
+
+        // Build query
+        const query = {
+            user_id: userId,
+            user_role: role
+        };
+
+        // Filter chỉ lấy unread nếu cần
+        if (unread_only === 'true' || unread_only === true) {
+            query.is_read = false;
+        }
+
+        // Lấy notifications
+        const notifications = await Notification.find(query)
+            .sort({ created_at: -1 }) // Mới nhất lên đầu
+            .limit(parseInt(limit))
+            .skip(parseInt(skip))
+            .lean();
+
+        // Count total và unread
+        const total = await Notification.countDocuments({ user_id: userId, user_role: role });
+        const unread = await Notification.countDocuments({ user_id: userId, user_role: role, is_read: false });
+
+        return res.json({
+            total,
+            unread,
+            notifications
+        });
+
+    } catch (error) {
+        console.error('Get Notifications Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * Đánh dấu notification đã đọc
+ */
+const markAsRead = async (req, res) => {
+    try {
+        const { role, userId } = req;
+        const { notificationId } = req.params;
+
+        const notification = await Notification.findOne({
+            _id: notificationId,
+            user_id: userId,
+            user_role: role
+        });
+
+        if (!notification) {
+            return res.status(404).json({ error: 'Không tìm thấy notification' });
+        }
+
+        notification.is_read = true;
+        await notification.save();
+
+        return res.json({ 
+            message: '✅ Đã đánh dấu đã đọc',
+            notification
+        });
+
+    } catch (error) {
+        console.error('Mark as Read Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * Đánh dấu TẤT CẢ notifications đã đọc
+ */
+const markAllAsRead = async (req, res) => {
+    try {
+        const { role, userId } = req;
+
+        const result = await Notification.updateMany(
+            {
+                user_id: userId,
+                user_role: role,
+                is_read: false
+            },
+            { is_read: true }
+        );
+
+        return res.json({ 
+            message: '✅ Đã đánh dấu tất cả đã đọc',
+            updated: result.modifiedCount
+        });
+
+    } catch (error) {
+        console.error('Mark All as Read Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * Xóa notification
+ */
+const deleteNotification = async (req, res) => {
+    try {
+        const { role, userId } = req;
+        const { notificationId } = req.params;
+
+        const result = await Notification.deleteOne({
+            _id: notificationId,
+            user_id: userId,
+            user_role: role
+        });
+
+        if (result.deletedCount === 0) {
+            return res.status(404).json({ error: 'Không tìm thấy notification' });
+        }
+
+        return res.json({ message: '✅ Đã xóa notification' });
+
+    } catch (error) {
+        console.error('Delete Notification Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
+};
+
+/**
+ * Xóa TẤT CẢ notifications đã đọc
+ */
+const clearRead = async (req, res) => {
+    try {
+        const { role, userId } = req;
+
+        const result = await Notification.deleteMany({
+            user_id: userId,
+            user_role: role,
+            is_read: true
+        });
+
+        return res.json({ 
+            message: '✅ Đã xóa tất cả notifications đã đọc',
+            deleted: result.deletedCount
+        });
+
+    } catch (error) {
+        console.error('Clear Read Error:', error);
+        return res.status(500).json({ error: error.message });
+    }
+};
+
 module.exports = {
     sendManualNotification,
-    sendStudentNotification
+    sendStudentNotification,
+    getMyNotifications,
+    markAsRead,
+    markAllAsRead,
+    deleteNotification,
+    clearRead
 };
