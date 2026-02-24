@@ -15,7 +15,9 @@ const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 const ATLASSIAN_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessible-resources';
 
 /**
- * SCOPES MỚI - Granular Scopes (BẮT BUỘC)
+ * GRANULAR SCOPES - Jira Platform + Jira Software (Agile)
+ * 
+ * Jira Platform API:
  * - offline_access: Để lấy refresh_token (BẮT BUỘC)
  * - read:issue:jira: Đọc issues
  * - write:issue:jira: Tạo/sửa issues
@@ -24,8 +26,13 @@ const ATLASSIAN_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessibl
  * - write:project:jira: Tạo/sửa projects
  * - read:user:jira: Đọc thông tin users
  * - read:me: Đọc thông tin user hiện tại
+ * 
+ * Jira Software API (AGILE - BẮT BUỘC cho /boards và /sprints):
+ * - read:board-scope:jira-software: Đọc boards (Scrum/Kanban)
+ * - read:sprint:jira-software: Đọc sprints
+ * - write:board-scope:jira-software: Tạo/sửa boards (optional)
  */
-const JIRA_SCOPES = 'offline_access read:issue:jira write:issue:jira delete:issue:jira read:project:jira write:project:jira read:user:jira read:me';
+const JIRA_SCOPES = 'offline_access read:issue:jira write:issue:jira delete:issue:jira read:project:jira write:project:jira read:user:jira read:me read:board-scope:jira-software read:sprint:jira-software write:board-scope:jira-software';
 
 // =========================
 // 2. HELPER FUNCTIONS
@@ -253,14 +260,35 @@ async function fetchCurrentUser(accessToken, cloudId) {
  * @returns {Promise<{accessToken: string, refreshToken: string}>}
  */
 async function refreshAccessToken({ clientId, clientSecret, refreshToken }) {
+  console.log('🔄 [Jira Auth] refreshAccessToken called');
+  console.log('   - Has refreshToken?', !!refreshToken);
+  console.log('   - RefreshToken type:', typeof refreshToken);
+  console.log('   - RefreshToken length:', refreshToken?.length || 0);
+  
   if (!refreshToken || typeof refreshToken !== 'string') {
+    console.error('❌ [Jira Auth] Invalid refreshToken!');
+    console.error('   - Value:', refreshToken);
+    console.error('   - Type:', typeof refreshToken);
+    
     const error = new Error('refreshToken không hợp lệ hoặc thiếu');
     error.code = 'INVALID_REFRESH_TOKEN';
     throw error;
   }
 
+  if (!clientId || !clientSecret) {
+    console.error('❌ [Jira Auth] Missing Client ID or Secret!');
+    console.error('   - ClientId:', clientId ? 'OK' : 'MISSING');
+    console.error('   - ClientSecret:', clientSecret ? 'OK' : 'MISSING');
+    
+    const error = new Error('Thiếu ATLASSIAN_CLIENT_ID hoặc ATLASSIAN_CLIENT_SECRET');
+    error.code = 'MISSING_CLIENT_CREDENTIALS';
+    throw error;
+  }
+
   try {
-    console.log('🔄 [Jira Auth] Refreshing access token...');
+    console.log('🔄 [Jira Auth] Calling Atlassian token endpoint...');
+    console.log('   - URL:', ATLASSIAN_TOKEN_URL);
+    console.log('   - Grant type: refresh_token');
 
     const body = buildTokenRequestBody({
       grant_type: 'refresh_token',
@@ -268,6 +296,8 @@ async function refreshAccessToken({ clientId, clientSecret, refreshToken }) {
       client_secret: clientSecret,
       refresh_token: refreshToken
     });
+
+    console.log('   - Request body prepared (length:', body.length, 'chars)');
 
     const response = await axios.post(ATLASSIAN_TOKEN_URL, body, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -277,6 +307,8 @@ async function refreshAccessToken({ clientId, clientSecret, refreshToken }) {
     const { access_token, refresh_token } = response.data;
 
     console.log('✅ [Jira Auth] Refresh token thành công!');
+    console.log('   - New accessToken received?', !!access_token);
+    console.log('   - New refreshToken received?', !!refresh_token);
 
     return {
       accessToken: access_token,
@@ -289,14 +321,24 @@ async function refreshAccessToken({ clientId, clientSecret, refreshToken }) {
     console.error('❌ [Jira Auth] Lỗi refresh token:', {
       status,
       error: data?.error,
-      description: data?.error_description
+      description: data?.error_description,
+      fullResponse: data
     });
+
+    // Log chi tiết request để debug
+    console.error('📋 [Jira Auth] Request details:');
+    console.error('   - Endpoint:', ATLASSIAN_TOKEN_URL);
+    console.error('   - Method: POST');
+    console.error('   - Client ID:', clientId ? clientId.substring(0, 10) + '...' : 'MISSING');
+    console.error('   - RefreshToken (first 20 chars):', refreshToken ? refreshToken.substring(0, 20) + '...' : 'MISSING');
 
     // Phân loại lỗi
     if (status === 400 || status === 401 || status === 404) {
       const err = new Error('Refresh token hết hạn hoặc bị thu hồi. Vui lòng đăng nhập lại.');
       err.code = 'REFRESH_TOKEN_EXPIRED';
       err.status = status;
+      err.atlassianError = data?.error;
+      err.atlassianDescription = data?.error_description;
       throw err;
     }
 

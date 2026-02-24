@@ -284,9 +284,24 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
 
   // Callback để refresh token khi cần
   const onTokenRefresh = async () => {
+    console.log('🔄 [Jira Sync] onTokenRefresh called');
+    console.log('   - Has refreshToken?', !!jira.refreshToken);
+    console.log('   - RefreshToken type:', typeof jira.refreshToken);
+    
     if (!jira.refreshToken) {
-      throw new Error('Không có refresh_token. Vui lòng đăng nhập lại Jira.');
+      console.error('❌ [Jira Sync] RefreshToken is NULL or UNDEFINED!');
+      console.error('   - This means offline_access scope was NOT granted');
+      console.error('   - User MUST reconnect Jira with offline_access scope');
+      
+      const error = new Error('Không có refresh_token. Vui lòng đăng nhập lại Jira.');
+      error.code = 'REFRESH_TOKEN_MISSING';
+      throw error;
     }
+
+    console.log('🔄 [Jira Sync] Calling JiraAuthService.refreshAccessToken...');
+    console.log('   - ClientId:', clientId ? '✅' : '❌');
+    console.log('   - ClientSecret:', clientSecret ? '✅' : '❌');
+    console.log('   - RefreshToken length:', jira.refreshToken.length);
 
     const { accessToken, refreshToken } = await JiraAuthService.refreshAccessToken({
       clientId,
@@ -294,10 +309,16 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
       refreshToken: jira.refreshToken
     });
 
+    console.log('✅ [Jira Sync] Got new tokens from Atlassian');
+    console.log('   - New accessToken?', !!accessToken);
+    console.log('   - New refreshToken?', !!refreshToken);
+
     // Cập nhật token mới vào DB
     user.integrations.jira.accessToken = accessToken;
     user.integrations.jira.refreshToken = refreshToken;
     await user.save();
+
+    console.log('✅ [Jira Sync] Saved new tokens to DB');
 
     currentAccessToken = accessToken;
     return accessToken;

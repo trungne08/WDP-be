@@ -412,11 +412,21 @@ exports.getGithubRepos = async (req, res) => {
 exports.getJiraProjects = async (req, res) => {
   try {
     const user = req.user;
+    const jira = user.integrations?.jira;
     
     console.log('🔍 [Get Jira Projects] Request from user:', user.email);
-    console.log('   - Has Jira integration?', !!user.integrations?.jira);
-    console.log('   - Has accessToken?', !!user.integrations?.jira?.accessToken);
-    console.log('   - Has cloudId?', user.integrations?.jira?.cloudId);
+    console.log('   - Has Jira integration?', !!jira);
+    console.log('   - Has accessToken?', !!jira?.accessToken);
+    console.log('   - Has refreshToken?', !!jira?.refreshToken);
+    console.log('   - Has cloudId?', jira?.cloudId);
+    
+    if (!jira?.accessToken || !jira?.cloudId) {
+      console.log('   ❌ [Get Jira Projects] Missing Jira integration');
+      return res.status(400).json({ 
+        error: 'Chưa kết nối Jira. Vui lòng kết nối Jira trước.',
+        code: 'JIRA_NOT_CONNECTED'
+      });
+    }
     
     const { clientId, clientSecret } = getAtlassianConfig(req);
 
@@ -436,19 +446,61 @@ exports.getJiraProjects = async (req, res) => {
     console.error('❌ [Get Jira Projects] Error:', error.message);
     console.error('   - Error code:', error.code);
     console.error('   - Response status:', error.response?.status);
-    console.error('   - Response data:', error.response?.data);
+    console.error('   - Response data:', JSON.stringify(error.response?.data, null, 2));
+    console.error('   - Atlassian error:', error.atlassianError);
+    console.error('   - Atlassian description:', error.atlassianDescription);
     
-    // Kiểm tra lỗi refresh token hết hạn
+    // Phân loại lỗi chi tiết
     if (error.code === 'REFRESH_TOKEN_EXPIRED') {
+      console.log('🔴 [Get Jira Projects] Refresh token hết hạn - YÊU CẦU REAUTH');
       return res.status(401).json({
         error: 'Jira token đã hết hạn. Vui lòng ngắt kết nối và kết nối lại Jira.',
         code: 'TOKEN_EXPIRED',
         requiresReauth: true
       });
     }
+    
+    if (error.code === 'REFRESH_TOKEN_MISSING' || error.code === 'INVALID_REFRESH_TOKEN') {
+      console.log('🔴 [Get Jira Projects] Refresh token thiếu hoặc invalid - YÊU CẦU REAUTH');
+      return res.status(401).json({
+        error: 'Jira refresh token không hợp lệ. Vui lòng kết nối lại Jira với scope "offline_access".',
+        code: 'REFRESH_TOKEN_INVALID',
+        requiresReauth: true
+      });
+    }
 
+    // Lỗi 401 nhưng không phải refresh token issue
+    if (error.response?.status === 401) {
+      const responseData = error.response?.data;
+      
+      // Check nếu là lỗi scope
+      if (responseData?.message?.includes('scope')) {
+        console.log('🔴 [Get Jira Projects] Token THIẾU SCOPES - YÊU CẦU RECONNECT');
+        return res.status(401).json({
+          error: 'Jira token thiếu quyền (scopes). Vui lòng ngắt kết nối và kết nối lại Jira.',
+          code: 'INSUFFICIENT_SCOPES',
+          requiresReauth: true,
+          details: responseData?.message
+        });
+      }
+      
+      // Lỗi 401 khác
+      console.log('🔴 [Get Jira Projects] Unauthorized - YÊU CẦU REAUTH');
+      return res.status(401).json({
+        error: 'Jira token không hợp lệ. Vui lòng kết nối lại Jira.',
+        code: 'UNAUTHORIZED',
+        requiresReauth: true
+      });
+    }
+
+    // Lỗi khác (không phải 401) - KHÔNG NÊN LOGOUT USER!
     const status = error.response?.status || 500;
-    return res.status(status).json({ error: error.message });
+    console.log(`⚠️ [Get Jira Projects] Lỗi ${status} - KHÔNG YÊU CẦU LOGOUT`);
+    
+    return res.status(status).json({ 
+      error: error.message || 'Lỗi khi lấy danh sách Jira projects',
+      code: error.code || 'UNKNOWN_ERROR'
+    });
   }
 };
 
@@ -459,6 +511,9 @@ exports.getJiraProjects = async (req, res) => {
 exports.getJiraBoards = async (req, res) => {
   try {
     const { projectKey } = req.query;
+    const user = req.user;
+    const jira = user.integrations?.jira;
+    
     if (!projectKey) {
       return res.status(400).json({ error: 'Thiếu projectKey trong query params' });
     }
@@ -469,6 +524,21 @@ exports.getJiraBoards = async (req, res) => {
       return res.status(400).json({ error: 'Project key không hợp lệ' });
     }
 
+    console.log('🔍 [Get Jira Boards] Request from user:', user.email);
+    console.log('   - Project key:', cleanProjectKey);
+    console.log('   - Has Jira integration?', !!jira);
+    console.log('   - Has accessToken?', !!jira?.accessToken);
+    console.log('   - Has refreshToken?', !!jira?.refreshToken);
+    console.log('   - Has cloudId?', jira?.cloudId);
+
+    if (!jira?.accessToken || !jira?.cloudId) {
+      console.log('   ❌ [Get Jira Boards] Missing Jira integration');
+      return res.status(400).json({ 
+        error: 'Chưa kết nối Jira. Vui lòng kết nối Jira trước.',
+        code: 'JIRA_NOT_CONNECTED'
+      });
+    }
+
     const { clientId, clientSecret } = getAtlassianConfig(req);
 
     // Sử dụng JiraSyncService với auto-refresh
@@ -477,10 +547,17 @@ exports.getJiraBoards = async (req, res) => {
       clientId,
       clientSecret,
       syncFunction: async (client) => {
-        const jira = req.user.integrations.jira;
-        
         // Callback để refresh token
         const onTokenRefresh = async () => {
+          console.log('🔄 [Get Jira Boards] onTokenRefresh triggered');
+          
+          if (!jira.refreshToken) {
+            console.error('❌ [Get Jira Boards] No refreshToken available!');
+            const error = new Error('Không có refresh_token. Vui lòng kết nối lại Jira.');
+            error.code = 'REFRESH_TOKEN_MISSING';
+            throw error;
+          }
+          
           const { accessToken, refreshToken } = await JiraAuthService.refreshAccessToken({
             clientId,
             clientSecret,
@@ -503,6 +580,7 @@ exports.getJiraBoards = async (req, res) => {
       }
     });
 
+    console.log('✅ [Get Jira Boards] Success:', boards.length, 'boards');
     return res.json({ 
       projectKey: cleanProjectKey,
       total: boards.length, 
@@ -510,17 +588,63 @@ exports.getJiraBoards = async (req, res) => {
     });
   } catch (error) {
     console.error('❌ [Get Jira Boards] Error:', error.message);
+    console.error('   - Error code:', error.code);
+    console.error('   - Response status:', error.response?.status);
+    console.error('   - Response data:', JSON.stringify(error.response?.data, null, 2));
     
+    // Phân loại lỗi chi tiết
     if (error.code === 'REFRESH_TOKEN_EXPIRED') {
+      console.log('🔴 [Get Jira Boards] Refresh token hết hạn - YÊU CẦU REAUTH');
       return res.status(401).json({
         error: 'Jira token đã hết hạn. Vui lòng ngắt kết nối và kết nối lại Jira.',
         code: 'TOKEN_EXPIRED',
         requiresReauth: true
       });
     }
+    
+    if (error.code === 'REFRESH_TOKEN_MISSING' || error.code === 'INVALID_REFRESH_TOKEN') {
+      console.log('🔴 [Get Jira Boards] Refresh token thiếu hoặc invalid - YÊU CẦU REAUTH');
+      return res.status(401).json({
+        error: 'Jira refresh token không hợp lệ. Vui lòng kết nối lại Jira với scope "offline_access".',
+        code: 'REFRESH_TOKEN_INVALID',
+        requiresReauth: true
+      });
+    }
 
+    // Lỗi 401 nhưng không phải refresh token issue
+    if (error.response?.status === 401) {
+      const responseData = error.response?.data;
+      
+      // Check nếu là lỗi scope (ĐẶC BIỆT CHO JIRA SOFTWARE!)
+      if (responseData?.message?.includes('scope')) {
+        console.log('🔴 [Get Jira Boards] Token THIẾU SCOPES - YÊU CẦU RECONNECT');
+        console.log('   ⚠️  Có thể thiếu: read:board-scope:jira-software');
+        return res.status(401).json({
+          error: 'Jira token thiếu quyền truy cập boards (Agile API). Vui lòng ngắt kết nối và kết nối lại Jira.',
+          code: 'INSUFFICIENT_SCOPES',
+          requiresReauth: true,
+          details: 'Thiếu scope: read:board-scope:jira-software hoặc read:sprint:jira-software',
+          hint: 'Vào Atlassian Console → Permissions → Jira Software → Tick "View boards and sprints"'
+        });
+      }
+      
+      // Lỗi 401 khác
+      console.log('🔴 [Get Jira Boards] Unauthorized - YÊU CẦU REAUTH');
+      return res.status(401).json({
+        error: 'Jira token không hợp lệ. Vui lòng kết nối lại Jira.',
+        code: 'UNAUTHORIZED',
+        requiresReauth: true
+      });
+    }
+
+    // Lỗi khác (không phải 401) - KHÔNG NÊN LOGOUT USER!
     const status = error.response?.status || 500;
-    return res.status(status).json({ error: error.message });
+    console.log(`⚠️ [Get Jira Boards] Lỗi ${status} - KHÔNG YÊU CẦU LOGOUT`);
+    
+    return res.status(status).json({ 
+      error: error.message || 'Lỗi khi lấy danh sách boards',
+      code: error.code || 'UNKNOWN_ERROR'
+    });
   }
 };
 
