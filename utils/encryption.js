@@ -133,16 +133,22 @@ function encryptIntegrations(integrations) {
   
   const encrypted = { ...integrations };
   
-  // Mã hóa GitHub token (chỉ khi github tồn tại và có accessToken)
-  if (encrypted.github && typeof encrypted.github === 'object' && encrypted.github.accessToken) {
+  // FIX: Remove undefined values để tránh Mongoose CastError
+  if (encrypted.github === undefined) {
+    delete encrypted.github;
+  } else if (encrypted.github && typeof encrypted.github === 'object' && encrypted.github.accessToken) {
+    // Mã hóa GitHub token (chỉ khi github tồn tại và có accessToken)
     encrypted.github = {
       ...encrypted.github,
       accessToken: encrypt(encrypted.github.accessToken)
     };
   }
   
-  // Mã hóa Jira tokens (chỉ khi jira tồn tại và là object)
-  if (encrypted.jira && typeof encrypted.jira === 'object') {
+  // FIX: Remove undefined values
+  if (encrypted.jira === undefined) {
+    delete encrypted.jira;
+  } else if (encrypted.jira && typeof encrypted.jira === 'object') {
+    // Mã hóa Jira tokens (chỉ khi jira tồn tại và là object)
     encrypted.jira = { ...encrypted.jira };
     if (encrypted.jira.accessToken) {
       encrypted.jira.accessToken = encrypt(encrypted.jira.accessToken);
@@ -165,16 +171,23 @@ function decryptIntegrations(integrations) {
   
   const decrypted = { ...integrations };
   
-  // Giải mã GitHub token (chỉ khi github tồn tại và có accessToken)
-  if (decrypted.github && typeof decrypted.github === 'object' && decrypted.github.accessToken) {
+  // FIX: Remove undefined values để tránh Mongoose CastError
+  // Mongoose không chấp nhận undefined cho nested object fields
+  if (decrypted.github === undefined) {
+    delete decrypted.github;
+  } else if (decrypted.github && typeof decrypted.github === 'object' && decrypted.github.accessToken) {
+    // Giải mã GitHub token (chỉ khi github tồn tại và có accessToken)
     decrypted.github = {
       ...decrypted.github,
       accessToken: decrypt(decrypted.github.accessToken)
     };
   }
   
-  // Giải mã Jira tokens (chỉ khi jira tồn tại và là object)
-  if (decrypted.jira && typeof decrypted.jira === 'object') {
+  // FIX: Remove undefined values
+  if (decrypted.jira === undefined) {
+    delete decrypted.jira;
+  } else if (decrypted.jira && typeof decrypted.jira === 'object') {
+    // Giải mã Jira tokens (chỉ khi jira tồn tại và là object)
     decrypted.jira = { ...decrypted.jira };
     if (decrypted.jira.accessToken) {
       decrypted.jira.accessToken = decrypt(decrypted.jira.accessToken);

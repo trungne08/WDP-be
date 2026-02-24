@@ -7,24 +7,12 @@ const AdminSchema = new Schema({
     full_name: String,
     // ==================================================
     // TÍCH HỢP TÀI KHOẢN (Account Integration)
-    // (Admin có thể không dùng, nhưng thêm để đồng nhất)
+    // FIX: Dùng Mixed + default {} để tránh lỗi "Cast to Object failed for value 'undefined'"
+    // Tương tự Student/Lecturer để đồng nhất và tránh validation errors
     // ==================================================
     integrations: {
-        github: {
-            githubId: { type: String },
-            username: { type: String },
-            accessToken: { type: String },
-            linkedAt: { type: Date }
-        },
-        jira: {
-            jiraAccountId: { type: String },
-            cloudId: { type: String },
-            jiraUrl: { type: String },       // URL của Jira instance (tự động lấy khi connect)
-            email: { type: String },
-            accessToken: { type: String },
-            refreshToken: { type: String },
-            linkedAt: { type: Date }
-        }
+        type: Schema.Types.Mixed,
+        default: {}
     },
     
     password: { type: String, required: true },
@@ -32,6 +20,9 @@ const AdminSchema = new Schema({
     googleId: { type: String, sparse: true, unique: true },
     
     role: { type: String, default: 'ADMIN', immutable: true },
+    // Firebase Cloud Messaging Token
+    fcm_token: { type: String, default: null },
+    is_verified: { type: Boolean, default: false }, // Email đã được xác minh chưa
     created_at: { type: Date, default: Date.now }
 });
 
