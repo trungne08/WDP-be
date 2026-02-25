@@ -177,7 +177,7 @@ module.exports = (app) => {
      *     description: |
      *       **Dùng cho:** Dropdown chọn Jira project khi tạo project.
      *       
-     *       Lấy token Jira + cloudId đã lưu trong DB → gọi Jira API `/rest/api/3/project/search` → trả về danh sách project.
+     *       Lấy token Jira + cloudId đã lưu trong DB → gọi Jira API `/rest/api/3/project` → trả về danh sách project.
      *       Nếu token hết hạn sẽ thử refresh bằng refreshToken (offline_access) rồi gọi lại.
      *     responses:
      *       200:

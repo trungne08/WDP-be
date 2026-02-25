@@ -172,12 +172,13 @@ async function fetchJiraMyself({ accessToken, cloudId }) {
 }
 
 async function fetchJiraProjects({ accessToken, cloudId }) {
-  const res = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/project/search`, {
-    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' },
-    params: { maxResults: 50 }
+  // NOTE: Kept for backward-compatibility / future use.
+  // Prefer using JiraSyncService.fetchProjects where possible.
+  const res = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/project`, {
+    headers: { Authorization: `Bearer ${accessToken}`, Accept: 'application/json' }
   });
-  const values = res.data?.values || [];
-  return values.map(p => ({
+  const list = Array.isArray(res.data) ? res.data : [];
+  return list.map(p => ({
     id: p.id,
     key: p.key,
     name: p.name

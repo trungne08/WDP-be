@@ -208,11 +208,15 @@ async function fetchAllProjectIssues({ client, projectKey }) {
  */
 async function fetchProjects(client) {
   try {
-    const response = await client.get('/project/search', {
-      params: { maxResults: 50 }
-    });
+    // NOTE:
+    // - Trước đây dùng /project/search (trả về { values: [...] }) nhưng endpoint này
+    //   yêu cầu thêm nhiều granular scopes và dễ bị 401/\"scope does not match\".
+    // - Đổi sang /project (trả về trực tiếp một mảng Project) → ít khắt khe hơn.
+    const response = await client.get('/project');
 
-    const projects = (response.data.values || []).map(p => ({
+    const list = Array.isArray(response.data) ? response.data : [];
+
+    const projects = list.map(p => ({
       id: p.id,
       key: p.key,
       name: p.name
