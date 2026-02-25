@@ -640,7 +640,7 @@ exports.getJiraBoards = async (req, res) => {
             throw error;
           }
           
-          const { accessToken, refreshToken } = await JiraAuthService.refreshAccessToken({
+          const { accessToken, refreshToken, cloudId: newCloudId } = await JiraAuthService.refreshAccessToken({
             clientId,
             clientSecret,
             refreshToken: jira.refreshToken
@@ -648,6 +648,10 @@ exports.getJiraBoards = async (req, res) => {
           
           req.user.integrations.jira.accessToken = accessToken;
           req.user.integrations.jira.refreshToken = refreshToken;
+          if (newCloudId) {
+            console.log('🔄 [Get Jira Boards] Updating cloudId in DB to:', newCloudId);
+            req.user.integrations.jira.cloudId = newCloudId;
+          }
           await req.user.save();
           
           return accessToken;

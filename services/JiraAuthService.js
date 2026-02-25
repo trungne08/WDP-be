@@ -257,7 +257,7 @@ async function fetchCurrentUser(accessToken, cloudId) {
  * @param {string} options.clientId
  * @param {string} options.clientSecret
  * @param {string} options.refreshToken
- * @returns {Promise<{accessToken: string, refreshToken: string}>}
+ * @returns {Promise<{accessToken: string, refreshToken: string, cloudId?: string}>}
  */
 async function refreshAccessToken({ clientId, clientSecret, refreshToken }) {
   console.log('🔄 [Jira Auth] refreshAccessToken called');
@@ -309,10 +309,28 @@ async function refreshAccessToken({ clientId, clientSecret, refreshToken }) {
     console.log('✅ [Jira Auth] Refresh token thành công!');
     console.log('   - New accessToken received?', !!access_token);
     console.log('   - New refreshToken received?', !!refresh_token);
+    
+    // Sau khi có access_token mới, BẮT BUỘC lấy lại accessible-resources
+    // để đảm bảo cloudId luôn khớp với token hiện tại.
+    let newCloudId = null;
+    try {
+      console.log('🌐 [Jira Auth] Fetching accessible resources after refresh...');
+      const resources = await fetchAccessibleResources(access_token);
+      if (Array.isArray(resources) && resources.length > 0) {
+        newCloudId = resources[0].id;
+        console.log('✅ [Jira Auth] New Cloud ID from refreshed token:', newCloudId);
+      } else {
+        console.warn('⚠️ [Jira Auth] No accessible resources found after refresh. Keeping existing cloudId.');
+      }
+    } catch (e) {
+      console.warn('⚠️ [Jira Auth] Could not refresh accessible-resources after token refresh:', e.message);
+      console.warn('   → Sẽ giữ nguyên cloudId cũ trong DB.');
+    }
 
     return {
       accessToken: access_token,
-      refreshToken: refresh_token || refreshToken // Giữ refresh_token cũ nếu không có mới
+      refreshToken: refresh_token || refreshToken, // Giữ refresh_token cũ nếu không có mới
+      cloudId: newCloudId || undefined
     };
   } catch (error) {
     const status = error.response?.status;

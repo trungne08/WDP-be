@@ -785,7 +785,7 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
     console.log('   - ClientSecret:', clientSecret ? '✅' : '❌');
     console.log('   - RefreshToken length:', jira.refreshToken.length);
 
-    const { accessToken, refreshToken } = await JiraAuthService.refreshAccessToken({
+    const { accessToken, refreshToken, cloudId: newCloudId } = await JiraAuthService.refreshAccessToken({
       clientId,
       clientSecret,
       refreshToken: jira.refreshToken
@@ -794,10 +794,15 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
     console.log('✅ [Jira Sync] Got new tokens from Atlassian');
     console.log('   - New accessToken?', !!accessToken);
     console.log('   - New refreshToken?', !!refreshToken);
+    console.log('   - New cloudId?', !!newCloudId);
 
-    // Cập nhật token mới vào DB
+    // Cập nhật token mới (và cloudId nếu có) vào DB
     user.integrations.jira.accessToken = accessToken;
     user.integrations.jira.refreshToken = refreshToken;
+    if (newCloudId) {
+      console.log('🔄 [Jira Sync] Updating cloudId in DB to:', newCloudId);
+      user.integrations.jira.cloudId = newCloudId;
+    }
     await user.save();
 
     console.log('✅ [Jira Sync] Saved new tokens to DB');

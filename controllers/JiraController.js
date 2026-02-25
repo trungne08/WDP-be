@@ -40,7 +40,7 @@ async function getJiraOAuthConfig(req) {
       throw error;
     }
 
-    const { accessToken, refreshToken } = await JiraAuthService.refreshAccessToken({
+    const { accessToken, refreshToken, cloudId: newCloudId } = await JiraAuthService.refreshAccessToken({
       clientId,
       clientSecret,
       refreshToken: jira.refreshToken
@@ -48,6 +48,10 @@ async function getJiraOAuthConfig(req) {
 
     user.integrations.jira.accessToken = accessToken;
     user.integrations.jira.refreshToken = refreshToken;
+    if (newCloudId) {
+      console.log('🔄 [Jira Controller] Updating cloudId in DB to:', newCloudId);
+      user.integrations.jira.cloudId = newCloudId;
+    }
     await user.save();
 
     return accessToken;

@@ -110,7 +110,7 @@ exports.syncTeamData = async (req, res) => {
                             throw new Error('Không có refresh_token');
                         }
 
-                        const { accessToken, refreshToken } = await JiraAuthService.refreshAccessToken({
+                        const { accessToken, refreshToken, cloudId: newCloudId } = await JiraAuthService.refreshAccessToken({
                             clientId,
                             clientSecret,
                             refreshToken: jira.refreshToken
@@ -118,6 +118,10 @@ exports.syncTeamData = async (req, res) => {
 
                         currentUser.integrations.jira.accessToken = accessToken;
                         currentUser.integrations.jira.refreshToken = refreshToken;
+                        if (newCloudId) {
+                            console.log('🔄 [Team Sync] Updating cloudId in DB to:', newCloudId);
+                            currentUser.integrations.jira.cloudId = newCloudId;
+                        }
                         await currentUser.save();
 
                         return accessToken;
