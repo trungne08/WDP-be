@@ -15,33 +15,28 @@ const ATLASSIAN_TOKEN_URL = 'https://auth.atlassian.com/oauth/token';
 const ATLASSIAN_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessible-resources';
 
 /**
- * GRANULAR SCOPES - Jira Platform + Jira Software (Agile)
- * 
- * Jira Platform API:
+ * SCOPES - Jira Platform (Classic) + Jira Software (Agile)
+ *
+ * Jira Platform (CLASSIC SCOPES):
  * - offline_access: Để lấy refresh_token (BẮT BUỘC)
- * - read:issue:jira: Đọc issues
- * - write:issue:jira: Tạo/sửa issues
- * - delete:issue:jira: Xóa issues
- * - read:project:jira: Đọc projects
- * - write:project:jira: Tạo/sửa projects
- * - read:user:jira: Đọc thông tin users
+ * - read:jira-work: Đọc projects/issues/worklogs... (classic)
+ * - write:jira-work: Tạo/sửa projects/issues... (classic)
+ * - read:jira-user: Đọc thông tin users (classic)
  * - read:me: Đọc thông tin user hiện tại
- * - read:issue-type:jira: Đọc issue types
- * - read:project.property:jira: Đọc project properties
- * - read:application-role:jira: Đọc application roles
- * 
+ *
  * Jira Software API (AGILE - BẮT BUỘC cho /boards và /sprints):
  * - read:board-scope:jira-software: Đọc boards (Scrum/Kanban)
  * - read:sprint:jira-software: Đọc sprints
  * - write:board-scope:jira-software: Tạo/sửa boards (optional)
+ *
+ * Strategy:
+ * - Dùng CLASSIC SCOPES cho Jira Platform (/rest/api/3/project, /issue, /user...)
+ * - Giữ GRANULAR SCOPES cho Jira Software (Agile API: /rest/agile/1.0/board...)
  */
 const JIRA_SCOPES =
-  'offline_access ' +
-  'read:issue:jira write:issue:jira delete:issue:jira ' +
-  'read:project:jira write:project:jira ' +
-  'read:user:jira read:me ' +
-  'read:issue-type:jira read:project.property:jira read:application-role:jira ' +
-  'read:board-scope:jira-software read:sprint:jira-software write:board-scope:jira-software';
+  'offline_access ' + // Refresh Token
+  'read:jira-work write:jira-work read:jira-user read:me ' + // Classic scopes cho Project/Issue/User
+  'read:board-scope:jira-software read:sprint:jira-software write:board-scope:jira-software'; // Agile scopes cho Board/Sprint
 
 // =========================
 // 2. HELPER FUNCTIONS
