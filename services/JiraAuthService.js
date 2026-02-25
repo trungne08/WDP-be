@@ -26,13 +26,22 @@ const ATLASSIAN_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessibl
  * - write:project:jira: Tạo/sửa projects
  * - read:user:jira: Đọc thông tin users
  * - read:me: Đọc thông tin user hiện tại
+ * - read:issue-type:jira: Đọc issue types
+ * - read:project.property:jira: Đọc project properties
+ * - read:application-role:jira: Đọc application roles
  * 
  * Jira Software API (AGILE - BẮT BUỘC cho /boards và /sprints):
  * - read:board-scope:jira-software: Đọc boards (Scrum/Kanban)
  * - read:sprint:jira-software: Đọc sprints
  * - write:board-scope:jira-software: Tạo/sửa boards (optional)
  */
-const JIRA_SCOPES = 'offline_access read:issue:jira write:issue:jira delete:issue:jira read:project:jira write:project:jira read:user:jira read:me read:board-scope:jira-software read:sprint:jira-software write:board-scope:jira-software';
+const JIRA_SCOPES =
+  'offline_access ' +
+  'read:issue:jira write:issue:jira delete:issue:jira ' +
+  'read:project:jira write:project:jira ' +
+  'read:user:jira read:me ' +
+  'read:issue-type:jira read:project.property:jira read:application-role:jira ' +
+  'read:board-scope:jira-software read:sprint:jira-software write:board-scope:jira-software';
 
 // =========================
 // 2. HELPER FUNCTIONS
