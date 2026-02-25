@@ -131,7 +131,6 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
  * @param {Object} options
  * @param {AxiosInstance} options.client - Jira API client
  * @param {string} options.jql - JQL query
- * @param {number} options.startAt - Offset (pagination)
  * @param {number} options.maxResults - Số lượng kết quả tối đa
  * @param {Array<string>} options.fields - Danh sách fields cần lấy
  * @returns {Promise<{issues: Array, total: number}>}
@@ -148,13 +147,17 @@ async function searchIssues({ client, jql, startAt = 0, maxResults = 100, fields
       'customfield_10026' // Story Points (có thể thay đổi tùy Jira instance)
     ];
 
-    // NOTE: Jira đã deprecate /rest/api/3/search và yêu cầu dùng /search/jql
-    const response = await client.post('/search/jql', {
+    // NOTE:
+    // - Jira đã deprecate /rest/api/3/search và yêu cầu dùng /search/jql
+    // - Endpoint mới KHÔNG nhận startAt/validationMode trong payload, nếu gửi sẽ 400.
+    // - Payload hợp lệ: { jql, maxResults, fields }
+    const payload = {
       jql,
-      startAt,
       maxResults,
       fields: fields.length > 0 ? fields : defaultFields
-    });
+    };
+
+    const response = await client.post('/search/jql', payload);
 
     return {
       issues: response.data.issues || [],
@@ -174,32 +177,21 @@ async function searchIssues({ client, jql, startAt = 0, maxResults = 100, fields
  * @returns {Promise<Array>}
  */
 async function fetchAllProjectIssues({ client, projectKey }) {
-  const allIssues = [];
-  let startAt = 0;
-  const maxResults = 100;
-  let hasMore = true;
-
   console.log(`📦 [Jira Sync] Fetching issues for project: ${projectKey}`);
+  // NOTE:
+  // - API /search/jql hiện tại dùng cơ chế phân trang mới (nextPageToken).
+  // - Để đơn giản, tạm thời chỉ gọi 1 lần với maxResults cố định.
+  const maxResults = 100; // Có thể tăng nếu cần, nhưng nên tránh quá lớn.
 
-  while (hasMore) {
-    const { issues, total } = await searchIssues({
-      client,
-      jql: `project = "${projectKey}"`,
-      startAt,
-      maxResults
-    });
+  const { issues, total } = await searchIssues({
+    client,
+    jql: `project = "${projectKey}"`,
+    maxResults
+  });
 
-    allIssues.push(...issues);
+  console.log(`✅ [Jira Sync] Hoàn tất: ${issues.length}/${total} issues (no pagination, maxResults=${maxResults}).`);
 
-    hasMore = startAt + issues.length < total;
-    startAt += issues.length;
-
-    console.log(`   - Đã lấy ${allIssues.length}/${total} issues...`);
-  }
-
-  console.log(`✅ [Jira Sync] Hoàn tất: ${allIssues.length} issues`);
-
-  return allIssues;
+  return issues;
 }
 
 /**
