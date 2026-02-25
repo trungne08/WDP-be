@@ -20,12 +20,41 @@ if (ENCRYPTION_KEY.length > 64) {
 const ALGORITHM = 'aes-256-gcm';
 
 /**
+ * Check nếu text đã được mã hóa chưa
+ * @param {string} text
+ * @returns {boolean}
+ */
+function isEncrypted(text) {
+  if (!text || typeof text !== 'string') return false;
+  
+  // Format encrypted: iv:authTag:encryptedData (3 phần, all hex)
+  const parts = text.split(':');
+  if (parts.length !== 3) return false;
+  
+  const [ivHex, authTagHex, encrypted] = parts;
+  
+  // Validate hex format
+  return ivHex && authTagHex && encrypted &&
+         /^[0-9a-f]+$/i.test(ivHex) &&
+         /^[0-9a-f]+$/i.test(authTagHex) &&
+         /^[0-9a-f]+$/i.test(encrypted) &&
+         ivHex.length === 32 &&      // 16 bytes = 32 hex chars
+         authTagHex.length === 32;   // 16 bytes = 32 hex chars
+}
+
+/**
  * Mã hóa một chuỗi (dùng cho token Jira/GitHub)
  * @param {string} text - Text cần mã hóa
  * @returns {string} - Encrypted text (format: iv:authTag:encryptedData)
  */
 function encrypt(text) {
   if (!text) return null;
+  
+  // ⚠️ IMPORTANT: Kiểm tra nếu đã encrypted rồi → trả về nguyên bản (tránh double encryption)
+  if (isEncrypted(text)) {
+    console.log('🔍 [Encrypt] Text đã được mã hóa rồi, skip encryption');
+    return text;
+  }
   
   try {
     // Tạo IV (Initialization Vector) ngẫu nhiên
@@ -203,6 +232,7 @@ function decryptIntegrations(integrations) {
 module.exports = {
   encrypt,
   decrypt,
+  isEncrypted,
   encryptIntegrations,
   decryptIntegrations
 };

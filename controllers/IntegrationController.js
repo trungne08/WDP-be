@@ -452,10 +452,30 @@ exports.getJiraProjects = async (req, res) => {
     const jira = user.integrations?.jira;
     
     console.log('🔍 [Get Jira Projects] Request from user:', user.email);
+    console.log('   - User ID:', user._id);
     console.log('   - Has Jira integration?', !!jira);
     console.log('   - Has accessToken?', !!jira?.accessToken);
     console.log('   - Has refreshToken?', !!jira?.refreshToken);
-    console.log('   - Has cloudId?', jira?.cloudId);
+    console.log('   - Has cloudId?', !!jira?.cloudId);
+    
+    // Detailed debug info
+    if (jira) {
+      console.log('   📊 Jira Integration Details:');
+      console.log('      - CloudId:', jira.cloudId);
+      console.log('      - CloudId type:', typeof jira.cloudId);
+      console.log('      - CloudId length:', jira.cloudId?.length || 0);
+      console.log('      - Jira URL:', jira.jiraUrl);
+      console.log('      - Account ID:', jira.jiraAccountId);
+      console.log('      - Email:', jira.email);
+      console.log('      - Display Name:', jira.displayName);
+      console.log('      - Linked At:', jira.linkedAt);
+      console.log('      - AccessToken type:', typeof jira.accessToken);
+      console.log('      - AccessToken length:', jira.accessToken?.length || 0);
+      console.log('      - AccessToken prefix (20 chars):', jira.accessToken ? jira.accessToken.substring(0, 20) + '...' : 'NULL');
+      console.log('      - RefreshToken type:', typeof jira.refreshToken);
+      console.log('      - RefreshToken length:', jira.refreshToken?.length || 0);
+      console.log('      - Expected API URL:', `https://api.atlassian.com/ex/jira/${jira.cloudId}/rest/api/3/project/search`);
+    }
     
     if (!jira?.accessToken || !jira?.cloudId) {
       console.log('   ❌ [Get Jira Projects] Missing Jira integration');
@@ -465,7 +485,32 @@ exports.getJiraProjects = async (req, res) => {
       });
     }
     
+    // Validate cloudId format
+    if (typeof jira.cloudId !== 'string' || jira.cloudId.trim() === '') {
+      console.error('   ❌ [Get Jira Projects] Invalid cloudId format!');
+      console.error('      - CloudId value:', jira.cloudId);
+      console.error('      - CloudId type:', typeof jira.cloudId);
+      return res.status(400).json({
+        error: 'CloudId không hợp lệ. Vui lòng reconnect Jira.',
+        code: 'INVALID_CLOUD_ID'
+      });
+    }
+    
+    // Validate accessToken format
+    if (typeof jira.accessToken !== 'string' || jira.accessToken.trim() === '') {
+      console.error('   ❌ [Get Jira Projects] Invalid accessToken format!');
+      console.error('      - AccessToken type:', typeof jira.accessToken);
+      return res.status(400).json({
+        error: 'AccessToken không hợp lệ. Vui lòng reconnect Jira.',
+        code: 'INVALID_ACCESS_TOKEN'
+      });
+    }
+    
     const { clientId, clientSecret } = getAtlassianConfig(req);
+    
+    console.log('   🔑 OAuth Config:');
+    console.log('      - Client ID:', clientId ? clientId.substring(0, 10) + '...' : 'MISSING');
+    console.log('      - Client Secret:', clientSecret ? '✅ Present' : '❌ MISSING');
 
     // Sử dụng JiraSyncService với auto-refresh
     const projects = await JiraSyncService.syncWithAutoRefresh({

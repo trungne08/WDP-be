@@ -19,6 +19,28 @@ const JiraAuthService = require('./JiraAuthService');
  * @returns {AxiosInstance}
  */
 function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
+  // Debug logging
+  console.log('🔧 [Jira API Client] Creating client...');
+  console.log('   - CloudId:', cloudId);
+  console.log('   - CloudId type:', typeof cloudId);
+  console.log('   - CloudId length:', cloudId?.length || 0);
+  console.log('   - AccessToken present?', !!accessToken);
+  console.log('   - AccessToken type:', typeof accessToken);
+  console.log('   - AccessToken length:', accessToken?.length || 0);
+  console.log('   - AccessToken prefix (first 20):', accessToken ? accessToken.substring(0, 20) + '...' : 'NULL');
+  console.log('   - Base URL:', `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`);
+  
+  // Validate inputs
+  if (!cloudId || typeof cloudId !== 'string' || cloudId.trim() === '') {
+    console.error('❌ [Jira API Client] Invalid cloudId!');
+    throw new Error('cloudId không hợp lệ. Vui lòng reconnect Jira.');
+  }
+  
+  if (!accessToken || typeof accessToken !== 'string' || accessToken.trim() === '') {
+    console.error('❌ [Jira API Client] Invalid accessToken!');
+    throw new Error('accessToken không hợp lệ. Vui lòng reconnect Jira.');
+  }
+  
   const client = axios.create({
     baseURL: `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`,
     headers: {
@@ -29,21 +51,54 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
     timeout: 30000
   });
 
+  // Request Interceptor: Log outgoing requests
+  client.interceptors.request.use(
+    (config) => {
+      console.log('📤 [Jira API] Outgoing Request:');
+      console.log('   - Method:', config.method?.toUpperCase());
+      console.log('   - URL:', config.baseURL + config.url);
+      console.log('   - Full URL:', `${config.baseURL}${config.url}`);
+      console.log('   - Headers:', JSON.stringify(config.headers, null, 2));
+      console.log('   - Has Authorization?', !!config.headers.Authorization);
+      console.log('   - Auth header:', config.headers.Authorization ? config.headers.Authorization.substring(0, 30) + '...' : 'MISSING');
+      return config;
+    },
+    (error) => {
+      console.error('❌ [Jira API] Request error:', error.message);
+      return Promise.reject(error);
+    }
+  );
+
   // Response Interceptor: Auto-refresh on 401
   client.interceptors.response.use(
-    (response) => response, // Success: trả về response bình thường
+    (response) => {
+      console.log('📥 [Jira API] Response received:');
+      console.log('   - Status:', response.status);
+      console.log('   - URL:', response.config.url);
+      return response;
+    },
     async (error) => {
       const originalRequest = error.config;
 
+      // Log error details
+      console.error('❌ [Jira API] Response Error:');
+      console.error('   - Status:', error.response?.status);
+      console.error('   - URL:', originalRequest.url);
+      console.error('   - Full URL:', originalRequest.baseURL + originalRequest.url);
+      console.error('   - Response data:', JSON.stringify(error.response?.data, null, 2));
+
       // Nếu lỗi 401 và chưa retry
       if (error.response?.status === 401 && !originalRequest._retry) {
-        originalRequest._retry = true; // Đánh dấu đã retry
+        originalRequest._retry = true;
 
         console.log('🔄 [Jira Sync] Token hết hạn (401). Đang refresh...');
+        console.log('   - Original token (first 20):', originalRequest.headers.Authorization?.substring(0, 27) || 'MISSING');
 
         try {
           // Gọi callback để refresh token
           const newAccessToken = await onTokenRefresh();
+
+          console.log('✅ [Jira Sync] Got new token (first 20):', newAccessToken ? newAccessToken.substring(0, 20) + '...' : 'NULL');
 
           // Cập nhật token mới vào header
           originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
@@ -55,7 +110,7 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
           return client(originalRequest);
         } catch (refreshError) {
           console.error('❌ [Jira Sync] Refresh token thất bại:', refreshError.message);
-          throw refreshError; // Throw lỗi để caller xử lý (yêu cầu login lại)
+          throw refreshError;
         }
       }
 
