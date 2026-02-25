@@ -148,7 +148,8 @@ async function searchIssues({ client, jql, startAt = 0, maxResults = 100, fields
       'customfield_10026' // Story Points (có thể thay đổi tùy Jira instance)
     ];
 
-    const response = await client.post('/search', {
+    // NOTE: Jira đã deprecate /rest/api/3/search và yêu cầu dùng /search/jql
+    const response = await client.post('/search/jql', {
       jql,
       startAt,
       maxResults,
