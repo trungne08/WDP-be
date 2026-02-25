@@ -252,6 +252,433 @@ async function fetchUser(client, accountId) {
 }
 
 // =========================
+// 4. JIRA AGILE API (SPRINTS & BOARDS) - OAuth Version
+// =========================
+
+/**
+ * Tạo Agile API client (khác với REST API v3)
+ * @param {Object} options
+ * @param {string} options.accessToken
+ * @param {string} options.cloudId
+ * @param {Function} options.onTokenRefresh
+ * @returns {AxiosInstance}
+ */
+function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
+  const client = axios.create({
+    baseURL: `https://api.atlassian.com/ex/jira/${cloudId}/rest/agile/1.0`,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    timeout: 30000
+  });
+
+  // Add interceptor tương tự
+  client.interceptors.response.use(
+    (response) => response,
+    async (error) => {
+      const originalRequest = error.config;
+      if (error.response?.status === 401 && !originalRequest._retry) {
+        originalRequest._retry = true;
+        const newAccessToken = await onTokenRefresh();
+        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+        client.defaults.headers.Authorization = `Bearer ${newAccessToken}`;
+        return client(originalRequest);
+      }
+      return Promise.reject(error);
+    }
+  );
+
+  return client;
+}
+
+/**
+ * Lấy danh sách Sprints của Board
+ * @param {Object} options
+ * @param {string} options.accessToken
+ * @param {string} options.cloudId
+ * @param {number} options.boardId
+ * @param {Function} options.onTokenRefresh
+ * @returns {Promise<Array>}
+ */
+async function fetchSprints({ accessToken, cloudId, boardId, onTokenRefresh }) {
+  try {
+    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+    
+    const response = await client.get(`/board/${boardId}/sprint`, {
+      params: { state: 'active,future' }
+    });
+
+    return response.data.values || [];
+  } catch (error) {
+    console.error('❌ [Jira Agile] Lỗi fetch sprints:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Tạo Sprint mới
+ * @param {Object} options
+ * @param {string} options.accessToken
+ * @param {string} options.cloudId
+ * @param {number} options.boardId
+ * @param {string} options.name
+ * @param {string} options.startDate - ISO format
+ * @param {string} options.endDate - ISO format
+ * @param {Function} options.onTokenRefresh
+ * @returns {Promise<Object>}
+ */
+async function createSprint({ accessToken, cloudId, boardId, name, startDate, endDate, onTokenRefresh }) {
+  try {
+    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+    
+    const payload = {
+      name,
+      originBoardId: boardId,
+      startDate,
+      endDate
+    };
+
+    const response = await client.post('/sprint', payload);
+    return response.data;
+  } catch (error) {
+    console.error('❌ [Jira Agile] Lỗi create sprint:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Start Sprint
+ * @param {Object} options
+ * @param {string} options.accessToken
+ * @param {string} options.cloudId
+ * @param {number} options.sprintId
+ * @param {string} options.startDate
+ * @param {string} options.endDate
+ * @param {Function} options.onTokenRefresh
+ * @returns {Promise<Object>}
+ */
+async function startSprint({ accessToken, cloudId, sprintId, startDate, endDate, onTokenRefresh }) {
+  try {
+    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+    
+    const payload = {
+      state: 'active',
+      startDate,
+      endDate
+    };
+
+    const response = await client.post(`/sprint/${sprintId}`, payload);
+    return response.data;
+  } catch (error) {
+    console.error('❌ [Jira Agile] Lỗi start sprint:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Update Sprint
+ * @param {Object} options
+ * @param {string} options.accessToken
+ * @param {string} options.cloudId
+ * @param {number} options.sprintId
+ * @param {Object} options.data - {name, state, startDate, endDate}
+ * @param {Function} options.onTokenRefresh
+ * @returns {Promise<Object>}
+ */
+async function updateSprint({ accessToken, cloudId, sprintId, data, onTokenRefresh }) {
+  try {
+    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+    
+    const response = await client.put(`/sprint/${sprintId}`, data);
+    return response.data;
+  } catch (error) {
+    console.error('❌ [Jira Agile] Lỗi update sprint:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Lấy tất cả Issues của Board (Sprint + Backlog)
+ * @param {Object} options
+ * @param {string} options.accessToken
+ * @param {string} options.cloudId
+ * @param {number} options.boardId
+ * @param {Function} options.onTokenRefresh
+ * @returns {Promise<Array>}
+ */
+async function fetchAllBoardIssues({ accessToken, cloudId, boardId, onTokenRefresh }) {
+  try {
+    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+    
+    let allIssues = [];
+    let startAt = 0;
+    let isLast = false;
+
+    while (!isLast) {
+      const response = await client.get(`/board/${boardId}/issue`, {
+        params: {
+          startAt,
+          maxResults: 50,
+          fields: 'summary,status,assignee,description,duedate,reporter,customfield_10026,customfield_10020'
+        }
+      });
+
+      const issues = response.data.issues || [];
+      
+      // Map issues với sprint info
+      const mappedIssues = issues.map(issue => {
+        let currentSprintId = null;
+        const sprintsData = issue.fields.customfield_10020; // Sprint field
+
+        if (sprintsData && Array.isArray(sprintsData) && sprintsData.length > 0) {
+          const lastSprint = sprintsData[sprintsData.length - 1];
+          
+          if (lastSprint && lastSprint.id) {
+            currentSprintId = lastSprint.id;
+          } else if (typeof lastSprint === 'string') {
+            const match = lastSprint.match(/id=(\d+)/);
+            if (match) currentSprintId = Number(match[1]);
+          }
+        }
+
+        return {
+          issue_key: issue.key,
+          issue_id: issue.id,
+          summary: issue.fields.summary,
+          description: issue.fields.description || '',
+          status_name: issue.fields.status.name,
+          status_category: issue.fields.status.statusCategory.name,
+          assignee_account_id: issue.fields.assignee ? issue.fields.assignee.accountId : null,
+          reporter_account_id: issue.fields.reporter ? issue.fields.reporter.accountId : null,
+          due_date: issue.fields.duedate,
+          story_point: issue.fields.customfield_10026 || 0,
+          jira_sprint_id: currentSprintId
+        };
+      });
+
+      allIssues.push(...mappedIssues);
+
+      if (issues.length < 50) isLast = true;
+      else startAt += 50;
+    }
+
+    console.log(`📦 [Jira Agile] Fetched ${allIssues.length} issues from board ${boardId}`);
+    return allIssues;
+
+  } catch (error) {
+    console.error('❌ [Jira Agile] Lỗi fetch board issues:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Thêm Issue vào Sprint
+ * @param {Object} options
+ * @param {string} options.accessToken
+ * @param {string} options.cloudId
+ * @param {number} options.sprintId
+ * @param {string} options.issueKey - Jira issue key (VD: SCRUM-123)
+ * @param {Function} options.onTokenRefresh
+ * @returns {Promise<boolean>}
+ */
+async function addIssueToSprint({ accessToken, cloudId, sprintId, issueKey, onTokenRefresh }) {
+  try {
+    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+    
+    await client.post(`/sprint/${sprintId}/issue`, {
+      issues: [issueKey]
+    });
+
+    return true;
+  } catch (error) {
+    console.error('❌ [Jira Agile] Lỗi add issue to sprint:', error.message);
+    return false;
+  }
+}
+
+/**
+ * Move Issue về Backlog
+ * @param {Object} options
+ * @param {string} options.accessToken
+ * @param {string} options.cloudId
+ * @param {string} options.issueKey
+ * @param {Function} options.onTokenRefresh
+ * @returns {Promise<boolean>}
+ */
+async function moveIssueToBacklog({ accessToken, cloudId, issueKey, onTokenRefresh }) {
+  try {
+    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+    
+    await client.post('/backlog/issue', {
+      issues: [issueKey]
+    });
+
+    return true;
+  } catch (error) {
+    console.error('❌ [Jira Agile] Lỗi move issue to backlog:', error.message);
+    return false;
+  }
+}
+
+// =========================
+// 5. JIRA ISSUE OPERATIONS (REST API v3) - OAuth Version
+// =========================
+
+/**
+ * Helper: Convert text to ADF format
+ */
+function textToADF(text) {
+  if (!text) return null;
+  return {
+    type: 'doc',
+    version: 1,
+    content: [{
+      type: 'paragraph',
+      content: [{ type: 'text', text }]
+    }]
+  };
+}
+
+/**
+ * Tạo Issue mới
+ * @param {Object} options
+ * @param {AxiosInstance} options.client - REST API client (v3)
+ * @param {string} options.projectKey
+ * @param {Object} options.data - Issue data
+ * @returns {Promise<Object>}
+ */
+async function createIssue({ client, projectKey, data }) {
+  try {
+    const payload = {
+      fields: {
+        project: { key: projectKey },
+        issuetype: { name: 'Task' },
+        summary: data.summary,
+        description: textToADF(data.description || ''),
+        
+        ...(data.assigneeAccountId && { assignee: { accountId: data.assigneeAccountId } }),
+        ...(data.reporterAccountId && { reporter: { accountId: data.reporterAccountId } }),
+        ...(data.duedate && { duedate: data.duedate }),
+        
+        // Custom fields
+        ...(data.storyPoint && data.storyPointFieldId && { 
+          [data.storyPointFieldId]: Number(data.storyPoint) 
+        }),
+        ...(data.startDate && data.startDateFieldId && { 
+          [data.startDateFieldId]: data.startDate 
+        })
+      }
+    };
+
+    const response = await client.post('/issue', payload);
+    return response.data;
+  } catch (error) {
+    console.error('❌ [Jira API] Lỗi create issue:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+/**
+ * Update Issue
+ * @param {Object} options
+ * @param {AxiosInstance} options.client
+ * @param {string} options.issueKey
+ * @param {Object} options.data
+ * @returns {Promise<boolean>}
+ */
+async function updateIssue({ client, issueKey, data }) {
+  try {
+    const fields = {};
+
+    if (data.summary) fields.summary = data.summary;
+    if (data.description) fields.description = textToADF(data.description);
+    if (data.assigneeAccountId) fields.assignee = { accountId: data.assigneeAccountId };
+    if (data.reporterAccountId) fields.reporter = { accountId: data.reporterAccountId };
+    if (data.duedate) fields.duedate = data.duedate;
+
+    if (data.storyPoint !== undefined && data.storyPointFieldId) {
+      fields[data.storyPointFieldId] = Number(data.storyPoint);
+    }
+    if (data.startDate && data.startDateFieldId) {
+      fields[data.startDateFieldId] = data.startDate;
+    }
+
+    if (Object.keys(fields).length === 0) return true;
+
+    await client.put(`/issue/${issueKey}`, { fields });
+    return true;
+  } catch (error) {
+    console.error('❌ [Jira API] Lỗi update issue:', error.response?.data || error.message);
+    throw error;
+  }
+}
+
+/**
+ * Delete Issue
+ * @param {Object} options
+ * @param {AxiosInstance} options.client
+ * @param {string} options.issueKey
+ * @returns {Promise<boolean>}
+ */
+async function deleteIssue({ client, issueKey }) {
+  try {
+    await client.delete(`/issue/${issueKey}`);
+    return true;
+  } catch (error) {
+    console.error('❌ [Jira API] Lỗi delete issue:', error.message);
+    throw error;
+  }
+}
+
+/**
+ * Transition Issue (change status)
+ * @param {Object} options
+ * @param {AxiosInstance} options.client
+ * @param {string} options.issueKey
+ * @param {string} options.targetStatusName
+ * @returns {Promise<boolean>}
+ */
+async function transitionIssue({ client, issueKey, targetStatusName }) {
+  try {
+    const transitionsRes = await client.get(`/issue/${issueKey}/transitions`);
+    
+    const transition = transitionsRes.data.transitions.find(
+      t => t.name.toLowerCase() === targetStatusName.toLowerCase()
+    );
+
+    if (!transition) return false;
+
+    await client.post(`/issue/${issueKey}/transitions`, {
+      transition: { id: transition.id }
+    });
+
+    return true;
+  } catch (error) {
+    console.error('❌ [Jira API] Lỗi transition issue:', error.message);
+    return false;
+  }
+}
+
+/**
+ * Lấy Custom Field ID theo tên
+ * @param {AxiosInstance} client
+ * @param {string} fieldName
+ * @returns {Promise<string|null>}
+ */
+async function getCustomFieldId(client, fieldName) {
+  try {
+    const response = await client.get('/field');
+    const field = response.data.find(f => f.name.toLowerCase() === fieldName.toLowerCase());
+    return field ? field.id : null;
+  } catch (error) {
+    console.error(`❌ [Jira API] Lỗi get custom field "${fieldName}":`, error.message);
+    return null;
+  }
+}
+
+// =========================
 // 3. WRAPPER: SYNC VỚI AUTO-REFRESH
 // =========================
 
@@ -336,18 +763,35 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
 }
 
 // =========================
-// 4. EXPORTS
+// 6. EXPORTS
 // =========================
 
 module.exports = {
   // Core
   createJiraApiClient,
+  createJiraAgileClient,
   syncWithAutoRefresh,
 
-  // API Calls
+  // Search & Fetch (REST API)
   searchIssues,
   fetchAllProjectIssues,
   fetchProjects,
   fetchBoards,
-  fetchUser
+  fetchUser,
+
+  // Agile API (Sprints & Boards)
+  fetchSprints,
+  createSprint,
+  startSprint,
+  updateSprint,
+  fetchAllBoardIssues,
+  addIssueToSprint,
+  moveIssueToBacklog,
+
+  // Issue Operations (REST API v3)
+  createIssue,
+  updateIssue,
+  deleteIssue,
+  transitionIssue,
+  getCustomFieldId
 };

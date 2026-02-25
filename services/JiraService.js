@@ -1,19 +1,47 @@
 const axios = require('axios');
 
 // ==================================================================
-// 1. HELPER FUNCTIONS
+// ⚠️ DEPRECATION NOTICE
+// ==================================================================
+// 
+// JiraService (Basic Auth) đã DEPRECATED!
+// 
+// Lý do:
+// - Bảo mật thấp hơn OAuth 2.0
+// - Không tự động refresh token
+// - Không có granular permissions
+// - User phải manually tạo API token
+// 
+// Thay thế:
+// - Dùng JiraSyncService (OAuth 2.0) cho tất cả Jira operations
+// - Dùng JiraAuthService cho authentication flow
+// 
+// Migration guide:
+// 1. User connect Jira qua OAuth: POST /api/integrations/jira/connect
+// 2. Dùng JiraSyncService.syncWithAutoRefresh() cho tất cả API calls
+// 3. Xóa team.api_token_jira, team.jira_url khỏi DB
+// 
 // ==================================================================
 
-const getJiraHeaders = (token) => ({
-    'Authorization': `Basic ${token}`,
-    'Accept': 'application/json',
-    'Content-Type': 'application/json'
-});
+// ==================================================================
+// 1. HELPER FUNCTIONS (LEGACY)
+// ==================================================================
+
+const getJiraHeaders = (token) => {
+    console.warn('⚠️ [DEPRECATED] getJiraHeaders() - Please use JiraSyncService with OAuth 2.0');
+    return {
+        'Authorization': `Basic ${token}`,
+        'Accept': 'application/json',
+        'Content-Type': 'application/json'
+    };
+};
 
 /**
  * Chuyển đổi String thường -> Jira ADF (Dùng cho Description)
+ * @deprecated Use JiraSyncService instead
  */
 const textToADF = (text) => {
+    console.warn('⚠️ [DEPRECATED] textToADF() - Please use JiraSyncService with OAuth 2.0');
     if (!text) return null;
     return {
         type: "doc",
@@ -346,6 +374,7 @@ module.exports = {
     },
 
     moveIssueToBacklog: async (jiraUrl, tokenBase64, issueKey) => {
+        console.warn('⚠️ [DEPRECATED] moveIssueToBacklog() - Please use JiraSyncService with OAuth 2.0');
         try {
             const cleanUrl = jiraUrl.replace(/\/$/, "");
             await axios.post(
@@ -359,3 +388,20 @@ module.exports = {
         }
     }
 };
+
+// ==================================================================
+// ⚠️ FINAL WARNING
+// ==================================================================
+// 
+// Nếu bạn đang thấy file này, có nghĩa là:
+// 
+// 1. Code của bạn đang dùng Basic Auth (KHÔNG AN TOÀN)
+// 2. Token có thể hết hạn mà không tự refresh
+// 3. Bạn đang miss out các tính năng OAuth 2.0
+// 
+// HÀNH ĐỘNG NGAY:
+// → Migrate sang JiraSyncService + JiraAuthService
+// → Xem IntegrationController để hiểu OAuth flow
+// → Xem JiraController (refactored) để hiểu cách dùng
+// 
+// ==================================================================

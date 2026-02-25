@@ -111,6 +111,43 @@ async function ensureJiraUnique(jiraAccountId, cloudId, currentRole, currentId) 
 }
 
 // =========================
+// HELPER: Lấy Jira OAuth Config từ User (Dùng cho các Controller khác)
+// =========================
+
+/**
+ * Lấy Jira OAuth config và client từ user đã connect
+ * @param {Object} req - Express request (phải có req.user)
+ * @returns {Promise<{user, jira, clientId, clientSecret, client}>}
+ * @throws {Error} Nếu user chưa connect Jira hoặc thiếu config
+ */
+async function getJiraOAuthConfig(req) {
+  const user = req.user;
+  const jira = user?.integrations?.jira;
+  
+  if (!jira?.accessToken || !jira?.cloudId) {
+    const error = new Error('Chưa kết nối Jira. Vui lòng kết nối Jira trước.');
+    error.code = 'JIRA_NOT_CONNECTED';
+    error.status = 400;
+    throw error;
+  }
+  
+  const { clientId, clientSecret } = getAtlassianConfig(req);
+  
+  // Tạo Jira API client với auto-refresh
+  const client = await JiraSyncService.syncWithAutoRefresh({
+    user,
+    clientId,
+    clientSecret,
+    syncFunction: async (client) => client
+  });
+  
+  return { user, jira, clientId, clientSecret, client };
+}
+
+// Export helper để các controller khác dùng
+module.exports.getJiraOAuthConfig = getJiraOAuthConfig;
+
+// =========================
 // GITHUB: CONNECT + CALLBACK
 // =========================
 exports.githubConnect = async (req, res) => {
