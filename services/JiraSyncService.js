@@ -146,7 +146,11 @@ async function searchIssues({ client, jql, startAt = 0, maxResults = 100, fields
       'created',
       'updated',
       'issuetype',
-      'customfield_10026' // Story Points
+      'description',
+      'duedate',
+      'reporter',
+      'customfield_10026', // Story Points
+      'customfield_10020'  // Sprint (array of {id, name, state, ...})
     ];
 
     const payload = {
@@ -802,7 +806,250 @@ async function getCustomFieldId(client, fieldName) {
 }
 
 // =========================
-// 3. WRAPPER: SYNC VỚI AUTO-REFRESH
+// 3. HELPER: MAP ISSUE -> SPRINT
+// =========================
+
+/**
+ * Bóc tách jira_sprint_id từ issue.fields (customfield_10020 hoặc field có cấu trúc Sprint).
+ * Sprint trong Jira thường là Array với item có { id, name, state, boardId }.
+ * @param {Object} issue - Issue từ Jira API
+ * @returns {number|null} jira_sprint_id hoặc null (Backlog)
+ */
+function extractJiraSprintIdFromIssue(issue) {
+  const fields = issue?.fields || {};
+  const sprintFields = ['customfield_10020', 'customfield_10021', 'sprint'];
+  for (const key of sprintFields) {
+    const val = fields[key];
+    if (val == null) continue;
+    const arr = Array.isArray(val) ? val : (val && (val.id != null || val.sprintId != null) ? [val] : null);
+    if (!arr || arr.length === 0) continue;
+    const last = arr[arr.length - 1];
+    const id = last?.id ?? last?.sprintId;
+    if (id != null) return Number(id);
+  }
+  for (const [key, val] of Object.entries(fields)) {
+    if (!val || typeof val !== 'object') continue;
+    const arr = Array.isArray(val) ? val : (val && (val.id != null || val.sprintId != null) ? [val] : null);
+    if (!arr || arr.length === 0) continue;
+    const last = arr[arr.length - 1];
+    if (last && (last.id != null || last.sprintId != null) && (typeof last.name === 'string' || last.state != null)) {
+      return Number(last.id ?? last.sprintId);
+    }
+  }
+  return null;
+}
+
+// =========================
+// 4. LUỒNG SYNC PROJECT: PROJECT -> BOARD -> SPRINTS -> ISSUES
+// =========================
+
+const { Sprint, JiraTask } = require('../models/JiraData');
+const models = require('../models');
+
+/**
+ * Sync dữ liệu Jira cho Project theo đúng thứ tự: Board -> Sprints -> Issues.
+ * B1: Lấy boardId từ projectKey
+ * B2: Fetch & upsert Sprints (trước khi fetch Issues)
+ * B3: Fetch Issues qua search/jql
+ * B4: Map Task vào đúng Sprint (chỉ dùng Default Sprint cho Backlog)
+ * @param {Object} options
+ * @param {Object} options.user - User có integrations.jira
+ * @param {string} options.clientId - Atlassian Client ID
+ * @param {string} options.clientSecret - Atlassian Client Secret
+ * @param {string} options.projectKey - Jira Project Key (VD: SCRUM)
+ * @param {Object} options.teamId - MongoDB ObjectId của Team
+ * @returns {Promise<{syncedTasks: number, activeIssueIds: string[]}>}
+ */
+async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, teamId }) {
+  const jira = user.integrations?.jira;
+  if (!jira?.accessToken || !jira?.cloudId) {
+    const err = new Error('User chưa kết nối Jira');
+    err.code = 'JIRA_NOT_CONNECTED';
+    throw err;
+  }
+
+  const key = typeof projectKey === 'string' ? projectKey.trim() : String(projectKey || '').trim();
+  if (!key) {
+    const err = new Error('Project Key rỗng');
+    err.code = 'INVALID_PROJECT_KEY';
+    throw err;
+  }
+
+  let currentAccessToken = jira.accessToken;
+  const onTokenRefresh = async () => {
+    if (!jira.refreshToken) {
+      const err = new Error('Không có refresh_token. Vui lòng đăng nhập lại Jira.');
+      err.code = 'REFRESH_TOKEN_MISSING';
+      throw err;
+    }
+    const { accessToken, refreshToken, cloudId: newCloudId } = await JiraAuthService.refreshAccessToken({
+      clientId,
+      clientSecret,
+      refreshToken: jira.refreshToken
+    });
+    user.integrations.jira.accessToken = accessToken;
+    user.integrations.jira.refreshToken = refreshToken;
+    if (newCloudId) user.integrations.jira.cloudId = newCloudId;
+    await user.save();
+    currentAccessToken = accessToken;
+    return accessToken;
+  };
+
+  const cloudId = jira.cloudId;
+
+  // ==================== BƯỚC 1: LẤY BOARD ID ====================
+  console.log('📌 [Jira Sync] B1: Lấy board theo projectKey:', key);
+  const boards = await fetchBoards({ accessToken: currentAccessToken, cloudId, projectKey: key, onTokenRefresh });
+  const boardId = boards?.[0]?.id ?? null;
+
+  if (!boardId) {
+    console.log('⚠️ [Jira Sync] Không có board cho project. Skip Sprint sync, chỉ fetch Issues (Backlog).');
+  }
+
+  // ==================== BƯỚC 2: FETCH & UPSERT SPRINTS ====================
+  const sprintMap = new Map(); // jira_sprint_id -> Mongo _id
+  const activeJiraSprintIds = [];
+
+  if (boardId) {
+    console.log('📌 [Jira Sync] B2: Fetch Sprints cho board:', boardId);
+    const sprints = await fetchSprints({
+      accessToken: currentAccessToken,
+      cloudId,
+      boardId,
+      onTokenRefresh
+    });
+
+    for (const s of sprints) {
+      const jiraSprintId = s.id != null ? Number(s.id) : null;
+      if (jiraSprintId == null) continue;
+
+      const saved = await Sprint.findOneAndUpdate(
+        { team_id: teamId, jira_sprint_id: jiraSprintId },
+        {
+          $set: {
+            team_id: teamId,
+            jira_sprint_id: jiraSprintId,
+            name: s.name || `Sprint ${jiraSprintId}`,
+            state: (() => {
+              const st = ((s.state || 'future') + '').toLowerCase();
+              return ['active', 'closed', 'future'].includes(st) ? st : 'future';
+            })(),
+            start_date: s.startDate ? new Date(s.startDate) : null,
+            end_date: s.endDate ? new Date(s.endDate) : null,
+            goal: s.goal || null
+          }
+        },
+        { upsert: true, new: true }
+      );
+      sprintMap.set(jiraSprintId, saved._id);
+      activeJiraSprintIds.push(jiraSprintId);
+    }
+
+    try {
+      const deleted = await Sprint.deleteMany({
+        team_id: teamId,
+        jira_sprint_id: { $nin: activeJiraSprintIds }
+      });
+      if (deleted.deletedCount > 0) {
+        console.log('🧹 [Jira Sync] Đã xóa', deleted.deletedCount, 'Sprint orphan');
+      }
+    } catch (e) {
+      console.warn('⚠️ [Jira Sync] Cleanup Sprint thất bại:', e.message);
+    }
+  }
+
+  // Tạo Default Sprint cho Backlog (issue không thuộc sprint nào)
+  const defaultSprint = await Sprint.findOneAndUpdate(
+    { team_id: teamId, jira_sprint_id: 0 },
+    {
+      $set: {
+        team_id: teamId,
+        jira_sprint_id: 0,
+        name: 'Default Sprint',
+        state: 'active',
+        start_date: new Date(),
+        end_date: null
+      }
+    },
+    { upsert: true, new: true }
+  );
+  const defaultSprintId = defaultSprint._id;
+
+  // ==================== BƯỚC 3: FETCH ISSUES ====================
+  console.log('📌 [Jira Sync] B3: Fetch Issues (project =', key, ')');
+  const restClient = createJiraApiClient({ accessToken: currentAccessToken, cloudId, onTokenRefresh });
+  const issues = await fetchAllProjectIssues({ client: restClient, projectKey: key });
+
+  // ==================== BƯỚC 4: MAP TASK VÀO ĐÚNG SPRINT ====================
+  let syncedTasks = 0;
+  const activeIssueIds = [];
+
+  for (const issue of issues) {
+    const jiraSprintId = extractJiraSprintIdFromIssue(issue);
+    let dbSprintId = null;
+    if (jiraSprintId != null && sprintMap.has(jiraSprintId)) {
+      dbSprintId = sprintMap.get(jiraSprintId);
+    } else {
+      dbSprintId = defaultSprintId; // Backlog -> Default Sprint
+    }
+
+    let assigneeMemberId = null;
+    const assigneeAccountId = issue.fields?.assignee?.accountId;
+    if (assigneeAccountId && teamId) {
+      const m = await models.TeamMember.findOne({
+        team_id: teamId,
+        jira_account_id: assigneeAccountId,
+        is_active: true
+      }).select('_id').lean();
+      assigneeMemberId = m ? m._id : null;
+    }
+
+    await JiraTask.findOneAndUpdate(
+      { issue_id: String(issue.id) },
+      {
+        $set: {
+          team_id: teamId,
+          sprint_id: dbSprintId,
+          issue_id: String(issue.id),
+          issue_key: issue.key,
+          summary: issue.fields?.summary ?? '',
+          description: issue.fields?.description ?? '',
+          status_name: issue.fields?.status?.name ?? '',
+          status_category: issue.fields?.status?.statusCategory?.key ?? '',
+          story_point: issue.fields?.customfield_10026 ?? 0,
+          assignee_account_id: assigneeAccountId ?? null,
+          assignee_name: issue.fields?.assignee?.displayName ?? null,
+          assignee_id: assigneeMemberId,
+          reporter_account_id: issue.fields?.reporter?.accountId ?? null,
+          reporter_name: issue.fields?.reporter?.displayName ?? null,
+          start_date: issue.fields?.customfield_10015 ? new Date(issue.fields.customfield_10015) : null,
+          due_date: issue.fields?.duedate ? new Date(issue.fields.duedate) : null,
+          updated_at: new Date()
+        }
+      },
+      { upsert: true, new: true }
+    );
+
+    syncedTasks++;
+    activeIssueIds.push(String(issue.id));
+  }
+
+  // Cleanup JiraTask rác (không còn trên Jira)
+  try {
+    await JiraTask.deleteMany({
+      team_id: teamId,
+      issue_id: { $nin: activeIssueIds }
+    });
+  } catch (e) {
+    console.warn('⚠️ [Jira Sync] Cleanup JiraTask thất bại:', e.message);
+  }
+
+  console.log('✅ [Jira Sync] Hoàn tất:', syncedTasks, 'tasks, sprintMap size:', sprintMap.size);
+  return { syncedTasks, activeIssueIds };
+}
+
+// =========================
+// 5. WRAPPER: SYNC VỚI AUTO-REFRESH
 // =========================
 
 /**
@@ -899,6 +1146,8 @@ module.exports = {
   createJiraApiClient,
   createJiraAgileClient,
   syncWithAutoRefresh,
+  syncProjectJiraData,
+  extractJiraSprintIdFromIssue,
 
   // Search & Fetch (REST API)
   searchIssues,

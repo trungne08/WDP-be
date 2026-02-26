@@ -948,91 +948,22 @@ exports.syncMyProjectData = async (req, res) => {
       try {
         const { clientId, clientSecret } = getAtlassianConfig(req);
 
-        // Sử dụng JiraSyncService với auto-refresh
-        const issues = await JiraSyncService.syncWithAutoRefresh({
-          user,
-          clientId,
-          clientSecret,
-          syncFunction: async (client) => {
-            return await JiraSyncService.fetchAllProjectIssues({
-              client,
-              projectKey: cleanProjectKey
-            });
-          }
-        });
+        // Luồng: Project -> Board -> Sprints -> Issues (syncProjectJiraData)
+        const projectTeamId = project.team_id || teamId;
+        if (!projectTeamId) {
+          results.errors.push('Project chưa có team. Không thể sync Jira.');
+          console.log('⚠️ [Sync Jira] Project chưa có team');
+        } else {
+          const { syncedTasks } = await JiraSyncService.syncProjectJiraData({
+            user,
+            clientId,
+            clientSecret,
+            projectKey: cleanProjectKey,
+            teamId: projectTeamId
+          });
 
-        // Tạo hoặc lấy "Default Sprint" (jira_sprint_id: 0) chỉ cho luồng sync project này.
-        // Luồng này KHÔNG kéo danh sách Sprint từ Jira; sprint thật (Sprint 1, 2...) cần sync qua Team Sync.
-        // Khi chạy Team Sync (POST /api/teams/:teamId/sync), các sprint từ Jira sẽ được upsert và Default Sprint sẽ bị cleanup.
-        let defaultSprintId = null;
-        if (teamId) {
-          const defaultSprint = await Sprint.findOneAndUpdate(
-            { team_id: teamId, jira_sprint_id: 0 },
-            {
-              team_id: teamId,
-              jira_sprint_id: 0,
-              name: 'Default Sprint',
-              state: 'active',
-              start_date: new Date(),
-              end_date: null
-            },
-            { upsert: true, new: true }
-          );
-          defaultSprintId = defaultSprint._id;
-        }
-
-        let syncedTasks = 0;
-        const activeIssueIds = [];
-        for (const issue of issues) {
-          if (!defaultSprintId) {
-            console.log('⚠️ Bỏ qua Jira task vì không có sprint cho project');
-            continue;
-          }
-
-          let assigneeMemberId = null;
-          if (issue.fields.assignee?.accountId && teamId) {
-            const member = await TeamMember.findOne({
-              team_id: teamId,
-              jira_account_id: issue.fields.assignee.accountId
-            }).select('_id');
-            assigneeMemberId = member ? member._id : null;
-          }
-
-          await JiraTask.findOneAndUpdate(
-            { issue_id: issue.id },
-            {
-              sprint_id: defaultSprintId,
-              assignee_id: assigneeMemberId,
-              issue_key: issue.key,
-              issue_id: issue.id,
-              summary: issue.fields.summary || '',
-              status_name: issue.fields.status?.name || '',
-              status_category: issue.fields.status?.statusCategory?.key || '',
-              assignee_account_id: issue.fields.assignee?.accountId || null,
-              assignee_name: issue.fields.assignee?.displayName || null,
-              story_point: issue.fields.customfield_10026 || null, // Story Points
-              created_at: issue.fields.created ? new Date(issue.fields.created) : undefined,
-              updated_at: issue.fields.updated ? new Date(issue.fields.updated) : new Date()
-            },
-            { upsert: true, new: true }
-          );
-          syncedTasks++;
-          activeIssueIds.push(issue.id);
-        }
-        results.jira = syncedTasks;
-        console.log(`✅ [Sync Jira] Đã sync ${syncedTasks} tasks`);
-
-        // Cleanup JiraTask rác: Xóa các task thuộc sprint mặc định này nhưng không còn trên Jira
-        if (defaultSprintId) {
-          try {
-            await JiraTask.deleteMany({
-              sprint_id: defaultSprintId,
-              issue_id: { $nin: activeIssueIds }
-            });
-            console.log('🧹 [Sync Jira] Cleanup JiraTask orphan cho default sprint', defaultSprintId.toString());
-          } catch (cleanupErr) {
-            console.warn('⚠️ [Sync Jira] Cleanup JiraTask orphan thất bại:', cleanupErr.message);
-          }
+          results.jira = syncedTasks;
+          console.log(`✅ [Sync Jira] Đã sync ${syncedTasks} tasks`);
         }
 
       } catch (jiraErr) {
