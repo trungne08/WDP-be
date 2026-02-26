@@ -4,14 +4,20 @@ const JiraAuthService = require('./JiraAuthService');
 /**
  * JiraSyncService - Sync dữ liệu từ Jira với Auto-Refresh Token
  * Tự động retry khi gặp lỗi 401 Unauthorized
+ *
+ * QUAN TRỌNG: Phân tách 2 Base URL
+ * - Platform API (.../rest/api/3): Issues, search/jql
+ * - Agile API (.../rest/agile/1.0): Board, Sprint
  */
 
 // =========================
-// 1. AXIOS INSTANCE VỚI RETRY
+// 1. PLATFORM API CLIENT (Issues)
+// Base URL: https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3
+// Dùng cho: /search/jql, /issue, /project, ...
 // =========================
 
 /**
- * Tạo Axios instance với interceptor auto-refresh
+ * Tạo Axios instance cho Platform API (REST API v3)
  * @param {Object} options
  * @param {string} options.accessToken - Access token hiện tại
  * @param {string} options.cloudId - Jira Cloud ID
@@ -41,8 +47,9 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
     throw new Error('accessToken không hợp lệ. Vui lòng reconnect Jira.');
   }
   
+  const baseURL = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`;
   const client = axios.create({
-    baseURL: `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`,
+    baseURL,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/json',
@@ -51,10 +58,10 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
     timeout: 30000
   });
 
-  // Request Interceptor: Log outgoing requests
+  // Request Interceptor: Log outgoing requests (Platform API)
   client.interceptors.request.use(
     (config) => {
-      console.log('📤 [Jira API] Outgoing Request:');
+      console.log('📤 [Jira Platform API] Outgoing Request (base: .../rest/api/3)');
       console.log('   - Method:', config.method?.toUpperCase());
       console.log('   - URL:', config.baseURL + config.url);
       console.log('   - Full URL:', `${config.baseURL}${config.url}`);
@@ -265,6 +272,7 @@ async function fetchProjects(client) {
 
 /**
  * Lấy danh sách Boards của một project
+ * BẮT BUỘC dùng Agile API: baseURL .../rest/agile/1.0 (KHÔNG dùng Platform API)
  * @param {Object} options
  * @param {string} options.accessToken
  * @param {string} options.cloudId
@@ -274,32 +282,7 @@ async function fetchProjects(client) {
  */
 async function fetchBoards({ accessToken, cloudId, projectKey, onTokenRefresh }) {
   try {
-    // Dùng Agile API (khác với REST API v3)
-    const client = axios.create({
-      baseURL: `https://api.atlassian.com/ex/jira/${cloudId}/rest/agile/1.0`,
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json'
-      },
-      timeout: 15000
-    });
-
-    // Add interceptor tương tự
-    client.interceptors.response.use(
-      (response) => response,
-      async (error) => {
-        const originalRequest = error.config;
-        if (error.response?.status === 401 && !originalRequest._retry) {
-          originalRequest._retry = true;
-          const newAccessToken = await onTokenRefresh();
-          originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
-          client.defaults.headers.Authorization = `Bearer ${newAccessToken}`;
-          return client(originalRequest);
-        }
-        return Promise.reject(error);
-      }
-    );
-
+    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
     const response = await client.get('/board', {
       params: {
         projectKeyOrId: projectKey,
@@ -345,20 +328,20 @@ async function fetchUser(client, accountId) {
 }
 
 // =========================
-// 4. JIRA AGILE API (SPRINTS & BOARDS) - OAuth Version
+// 4. AGILE API CLIENT (Board, Sprint)
+// Base URL: https://api.atlassian.com/ex/jira/${cloudId}/rest/agile/1.0
+// Dùng cho: /board, /board/{boardId}/sprint, /sprint, ...
+// KHÔNG dùng cho /search/jql (Platform API)
 // =========================
 
 /**
- * Tạo Agile API client (khác với REST API v3)
- * @param {Object} options
- * @param {string} options.accessToken
- * @param {string} options.cloudId
- * @param {Function} options.onTokenRefresh
- * @returns {AxiosInstance}
+ * Tạo Axios instance cho Agile API (Board, Sprint)
+ * Base URL: .../rest/agile/1.0
  */
 function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
+  const baseURL = `https://api.atlassian.com/ex/jira/${cloudId}/rest/agile/1.0`;
   const client = axios.create({
-    baseURL: `https://api.atlassian.com/ex/jira/${cloudId}/rest/agile/1.0`,
+    baseURL,
     headers: {
       Authorization: `Bearer ${accessToken}`,
       Accept: 'application/json',
@@ -367,7 +350,11 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
     timeout: 30000
   });
 
-  // Add interceptor tương tự
+  client.interceptors.request.use((config) => {
+    console.log('📤 [Jira Agile API] Outgoing Request (base: .../rest/agile/1.0)', config.url);
+    return config;
+  });
+
   client.interceptors.response.use(
     (response) => response,
     async (error) => {
