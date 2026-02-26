@@ -359,7 +359,10 @@ async function fetchSprints({ accessToken, cloudId, boardId, onTokenRefresh }) {
     const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
     
     const response = await client.get(`/board/${boardId}/sprint`, {
-      params: { state: 'active,future' }
+      // Lấy cả active, future, closed để:
+      // - Đồng bộ đầy đủ trạng thái
+      // - Phát hiện Sprint đã bị xóa (không còn trong bất kỳ state nào)
+      params: { state: 'active,future,closed' }
     });
 
     return response.data.values || [];

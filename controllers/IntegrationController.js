@@ -980,6 +980,7 @@ exports.syncMyProjectData = async (req, res) => {
         }
 
         let syncedTasks = 0;
+        const activeIssueIds = [];
         for (const issue of issues) {
           if (!defaultSprintId) {
             console.log('⚠️ Bỏ qua Jira task vì không có sprint cho project');
@@ -1014,9 +1015,23 @@ exports.syncMyProjectData = async (req, res) => {
             { upsert: true, new: true }
           );
           syncedTasks++;
+          activeIssueIds.push(issue.id);
         }
         results.jira = syncedTasks;
         console.log(`✅ [Sync Jira] Đã sync ${syncedTasks} tasks`);
+
+        // Cleanup JiraTask rác: Xóa các task thuộc sprint mặc định này nhưng không còn trên Jira
+        if (defaultSprintId) {
+          try {
+            await JiraTask.deleteMany({
+              sprint_id: defaultSprintId,
+              issue_id: { $nin: activeIssueIds }
+            });
+            console.log('🧹 [Sync Jira] Cleanup JiraTask orphan cho default sprint', defaultSprintId.toString());
+          } catch (cleanupErr) {
+            console.warn('⚠️ [Sync Jira] Cleanup JiraTask orphan thất bại:', cleanupErr.message);
+          }
+        }
 
       } catch (jiraErr) {
         console.error('❌ [Sync Jira] Lỗi:', jiraErr.message);

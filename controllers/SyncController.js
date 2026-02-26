@@ -139,6 +139,7 @@ exports.syncTeamData = async (req, res) => {
                     
                     // Tạo Map để tra cứu nhanh: JiraID -> MongoDB_ID
                     const sprintMap = new Map();
+                    const activeJiraSprintIds = [];
 
                     for (const s of sprints) {
                         const savedSprint = await Sprint.findOneAndUpdate(
@@ -153,7 +154,19 @@ exports.syncTeamData = async (req, res) => {
                             { upsert: true, new: true }
                         );
                         sprintMap.set(s.id, savedSprint._id);
+                        activeJiraSprintIds.push(s.id);
                         results.jira_sprints++;
+                    }
+
+                    // Cleanup Sprint rác: mọi Sprint của team này không còn tồn tại trên Jira
+                    try {
+                        await Sprint.deleteMany({
+                            team_id: teamId,
+                            jira_sprint_id: { $nin: activeJiraSprintIds }
+                        });
+                        console.log('🧹 [Team Sync] Cleanup Sprint orphan thành công cho team', teamId.toString());
+                    } catch (cleanupErr) {
+                        console.warn('⚠️ [Team Sync] Cleanup Sprint orphan thất bại:', cleanupErr.message);
                     }
 
                     // ==========================================
@@ -166,6 +179,8 @@ exports.syncTeamData = async (req, res) => {
                         boardId: team.jira_board_id,
                         onTokenRefresh
                     });
+
+                    const activeIssueIds = [];
 
                     for (const task of allTasks) {
                         // Tìm xem task này thuộc Sprint nào trong DB
@@ -192,7 +207,19 @@ exports.syncTeamData = async (req, res) => {
                             },
                             { upsert: true }
                         );
+                        activeIssueIds.push(task.issue_id);
                         results.jira_tasks++;
+                    }
+
+                    // Cleanup Task rác: mọi Task thuộc team này nhưng không còn trên board Jira
+                    try {
+                        await JiraTask.deleteMany({
+                            team_id: teamId,
+                            issue_id: { $nin: activeIssueIds }
+                        });
+                        console.log('🧹 [Team Sync] Cleanup JiraTask orphan thành công cho team', teamId.toString());
+                    } catch (cleanupErr) {
+                        console.warn('⚠️ [Team Sync] Cleanup JiraTask orphan thất bại:', cleanupErr.message);
                     }
                     
                     console.log(`✅ [Team Sync] Jira sync hoàn tất: ${results.jira_sprints} sprints, ${results.jira_tasks} tasks`);
