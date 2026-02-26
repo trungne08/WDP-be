@@ -128,7 +128,9 @@ exports.syncTeamData = async (req, res) => {
                     };
 
                     // ==========================================
-                    // BƯỚC 1: SYNC TẤT CẢ SPRINTS
+                    // BƯỚC 1: SYNC TẤT CẢ SPRINTS (active, future, closed từ Jira)
+                    // "Default Sprint" (jira_sprint_id: 0) được tạo ở IntegrationController/WebhookController,
+                    // không có trên Jira → sẽ bị xóa ở bước cleanup bên dưới; chỉ giữ sprint thật từ Jira.
                     // ==========================================
                     const sprints = await JiraSyncService.fetchSprints({
                         accessToken: jira.accessToken,
@@ -136,14 +138,13 @@ exports.syncTeamData = async (req, res) => {
                         boardId: team.jira_board_id,
                         onTokenRefresh
                     });
-                    
-                    // Tạo Map để tra cứu nhanh: JiraID -> MongoDB_ID
+
                     const sprintMap = new Map();
                     const activeJiraSprintIds = [];
 
                     for (const s of sprints) {
                         const jiraSprintId = s.id != null ? Number(s.id) : null;
-                        if (jiraSprintId == null) continue;
+                        if (jiraSprintId == null) continue; // bỏ qua item không có id (giữ id=0 nếu Jira trả về)
 
                         const savedSprint = await Sprint.findOneAndUpdate(
                             { team_id: teamId, jira_sprint_id: jiraSprintId },

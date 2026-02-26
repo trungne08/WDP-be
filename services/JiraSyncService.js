@@ -127,15 +127,17 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
 // =========================
 
 /**
- * Tìm kiếm Issues theo JQL
+ * Tìm kiếm Issues theo JQL (POST /rest/api/3/search/jql)
+ * Hỗ trợ phân trang nextPageToken của Jira Cloud.
  * @param {Object} options
  * @param {AxiosInstance} options.client - Jira API client
- * @param {string} options.jql - JQL query
- * @param {number} options.maxResults - Số lượng kết quả tối đa
+ * @param {string} options.jql - JQL query (chỉ nên lọc theo project, VD: project = SCRUM)
+ * @param {number} options.maxResults - Số lượng kết quả mỗi trang
  * @param {Array<string>} options.fields - Danh sách fields cần lấy
- * @returns {Promise<{issues: Array, total: number}>}
+ * @param {string} [options.nextPageToken] - Token trang tiếp (pagination)
+ * @returns {Promise<{issues: Array, total: number, nextPageToken?: string, isLast?: boolean}>}
  */
-async function searchIssues({ client, jql, startAt = 0, maxResults = 100, fields = [] }) {
+async function searchIssues({ client, jql, startAt = 0, maxResults = 100, fields = [], nextPageToken }) {
   try {
     const defaultFields = [
       'summary',
@@ -144,24 +146,34 @@ async function searchIssues({ client, jql, startAt = 0, maxResults = 100, fields
       'created',
       'updated',
       'issuetype',
-      'customfield_10026' // Story Points (có thể thay đổi tùy Jira instance)
+      'customfield_10026' // Story Points
     ];
 
-    // NOTE:
-    // - Jira đã deprecate /rest/api/3/search và yêu cầu dùng /search/jql
-    // - Endpoint mới KHÔNG nhận startAt/validationMode trong payload, nếu gửi sẽ 400.
-    // - Payload hợp lệ: { jql, maxResults, fields }
     const payload = {
       jql,
       maxResults,
       fields: fields.length > 0 ? fields : defaultFields
     };
+    if (nextPageToken) payload.nextPageToken = nextPageToken;
+
+    console.log('📤 [Jira Sync] POST /search/jql — JQL:', jql);
+    console.log('📤 [Jira Sync] Request body:', JSON.stringify(payload, null, 2));
 
     const response = await client.post('/search/jql', payload);
 
+    const issues = response.data.issues || [];
+    const total = response.data.totalIssueCount ?? response.data.total ?? issues.length;
+
+    if (!nextPageToken && Object.keys(response.data).length) {
+      console.log('📥 [Jira Sync] Response keys:', Object.keys(response.data));
+    }
+    console.log('📥 [Jira Sync] Page: issues=', issues.length, 'totalIssueCount/total=', total, 'isLast=', response.data.isLast);
+
     return {
-      issues: response.data.issues || [],
-      total: response.data.total || 0
+      issues,
+      total,
+      nextPageToken: response.data.nextPageToken,
+      isLast: response.data.isLast !== false
     };
   } catch (error) {
     console.error('❌ [Jira Sync] Lỗi search issues:', error.message);
@@ -170,28 +182,53 @@ async function searchIssues({ client, jql, startAt = 0, maxResults = 100, fields
 }
 
 /**
- * Lấy tất cả Issues của một project (với pagination)
+ * Lấy tất cả Issues của một project (chỉ lọc theo Project Key, không lọc status/assignee).
+ * Dùng JQL: project = KEY và phân trang nextPageToken đến khi isLast.
  * @param {Object} options
  * @param {AxiosInstance} options.client
  * @param {string} options.projectKey - Jira project key (VD: SCRUM)
  * @returns {Promise<Array>}
  */
 async function fetchAllProjectIssues({ client, projectKey }) {
-  console.log(`📦 [Jira Sync] Fetching issues for project: ${projectKey}`);
-  // NOTE:
-  // - API /search/jql hiện tại dùng cơ chế phân trang mới (nextPageToken).
-  // - Để đơn giản, tạm thời chỉ gọi 1 lần với maxResults cố định.
-  const maxResults = 100; // Có thể tăng nếu cần, nhưng nên tránh quá lớn.
+  const key = typeof projectKey === 'string' ? projectKey.trim() : String(projectKey || '').trim();
+  if (!key) {
+    console.warn('⚠️ [Jira Sync] fetchAllProjectIssues: projectKey rỗng');
+    return [];
+  }
 
-  const { issues, total } = await searchIssues({
-    client,
-    jql: `project = "${projectKey}"`,
-    maxResults
-  });
+  // JQL chỉ lọc theo project — KHÔNG thêm điều kiện status, assignee, v.v. để lấy đủ mọi issue.
+  const safeKey = key.replace(/"/g, '');
+  const jql = `project = "${safeKey}"`;
+  console.log(`📦 [Jira Sync] Fetching all issues for project: "${safeKey}" (JQL: ${jql})`);
 
-  console.log(`✅ [Jira Sync] Hoàn tất: ${issues.length}/${total} issues (no pagination, maxResults=${maxResults}).`);
+  const maxResults = 50;
+  const allIssues = [];
+  let nextPageToken = null;
+  let pageNum = 0;
+  let totalReported = 0;
 
-  return issues;
+  do {
+    pageNum++;
+    const result = await searchIssues({
+      client,
+      jql,
+      maxResults,
+      nextPageToken: nextPageToken || undefined
+    });
+
+    allIssues.push(...(result.issues || []));
+    if (result.total != null) totalReported = result.total;
+    nextPageToken = result.nextPageToken || null;
+
+    if (!result.isLast && nextPageToken) {
+      console.log(`📦 [Jira Sync] Fetching next page (${pageNum + 1}), nextPageToken=...`);
+    }
+  } while (nextPageToken);
+
+  const total = totalReported || allIssues.length;
+  console.log(`✅ [Jira Sync] Hoàn tất: ${allIssues.length}/${total} issues (${pageNum} page(s), JQL: ${jql}).`);
+
+  return allIssues;
 }
 
 /**
@@ -363,7 +400,7 @@ async function fetchSprints({ accessToken, cloudId, boardId, onTokenRefresh }) {
     const maxResults = 50;
     let isLast = false;
 
-    // Lấy đủ 3 state để đồng bộ 2 chiều (sprint mới + xóa sprint đã xóa trên Jira)
+    // Lấy đủ 3 state để không bỏ sót sprint mới tạo (future), đang chạy (active), đã đóng (closed)
     const stateParam = 'active,future,closed';
 
     while (!isLast) {
@@ -374,6 +411,12 @@ async function fetchSprints({ accessToken, cloudId, boardId, onTokenRefresh }) {
       const values = response.data.values || (Array.isArray(response.data) ? response.data : []);
       allSprints.push(...values);
 
+      // Log cấu trúc response lần đầu (để debug nếu Jira trả format khác)
+      if (startAt === 0 && values.length > 0) {
+        const first = values[0];
+        console.log('📦 [Jira Agile] Sprint response sample keys:', Object.keys(first || {}));
+      }
+
       const total = response.data.total != null ? response.data.total : values.length;
       if (values.length < maxResults || startAt + values.length >= total) {
         isLast = true;
@@ -382,7 +425,14 @@ async function fetchSprints({ accessToken, cloudId, boardId, onTokenRefresh }) {
       }
     }
 
-    console.log(`📦 [Jira Agile] Fetched ${allSprints.length} sprints for board ${boardId}`);
+    console.log(`📦 [Jira Agile] Fetched ${allSprints.length} sprints for board ${boardId} (state=${stateParam})`);
+    if (allSprints.length > 0) {
+      allSprints.forEach((s, i) => {
+        console.log(`   [${i + 1}] id=${s.id}, name="${s.name || '(no name)'}", state=${s.state ?? 'n/a'}`);
+      });
+    } else {
+      console.warn('⚠️ [Jira Agile] Không lấy được sprint nào. Kiểm tra boardId và quyền scope read:sprint:jira-software.');
+    }
     return allSprints;
   } catch (error) {
     console.error('❌ [Jira Agile] Lỗi fetch sprints:', error.message);

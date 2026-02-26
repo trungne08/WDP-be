@@ -961,11 +961,13 @@ exports.syncMyProjectData = async (req, res) => {
           }
         });
 
-        // Tạo hoặc lấy sprint mặc định cho project (nếu có team)
+        // Tạo hoặc lấy "Default Sprint" (jira_sprint_id: 0) chỉ cho luồng sync project này.
+        // Luồng này KHÔNG kéo danh sách Sprint từ Jira; sprint thật (Sprint 1, 2...) cần sync qua Team Sync.
+        // Khi chạy Team Sync (POST /api/teams/:teamId/sync), các sprint từ Jira sẽ được upsert và Default Sprint sẽ bị cleanup.
         let defaultSprintId = null;
         if (teamId) {
           const defaultSprint = await Sprint.findOneAndUpdate(
-            { team_id: teamId, name: 'Default Sprint' },
+            { team_id: teamId, jira_sprint_id: 0 },
             {
               team_id: teamId,
               jira_sprint_id: 0,
