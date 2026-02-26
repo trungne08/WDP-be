@@ -142,29 +142,38 @@ exports.syncTeamData = async (req, res) => {
                     const activeJiraSprintIds = [];
 
                     for (const s of sprints) {
+                        const jiraSprintId = s.id != null ? Number(s.id) : null;
+                        if (jiraSprintId == null) continue;
+
                         const savedSprint = await Sprint.findOneAndUpdate(
-                            { jira_sprint_id: s.id },
+                            { team_id: teamId, jira_sprint_id: jiraSprintId },
                             {
-                                team_id: teamId,
-                                name: s.name,
-                                state: s.state,
-                                start_date: s.startDate,
-                                end_date: s.endDate
+                                $set: {
+                                    team_id: teamId,
+                                    jira_sprint_id: jiraSprintId,
+                                    name: s.name || `Sprint ${jiraSprintId}`,
+                                    state: (s.state || 'future').toLowerCase(),
+                                    start_date: s.startDate ? new Date(s.startDate) : null,
+                                    end_date: s.endDate ? new Date(s.endDate) : null,
+                                    goal: s.goal || null
+                                }
                             },
                             { upsert: true, new: true }
                         );
-                        sprintMap.set(s.id, savedSprint._id);
-                        activeJiraSprintIds.push(s.id);
+                        sprintMap.set(jiraSprintId, savedSprint._id);
+                        activeJiraSprintIds.push(jiraSprintId);
                         results.jira_sprints++;
                     }
 
-                    // Cleanup Sprint rác: mọi Sprint của team này không còn tồn tại trên Jira
+                    // Cleanup Sprint rác: xóa mọi Sprint của team không còn tồn tại trên Jira
                     try {
-                        await Sprint.deleteMany({
+                        const deleted = await Sprint.deleteMany({
                             team_id: teamId,
                             jira_sprint_id: { $nin: activeJiraSprintIds }
                         });
-                        console.log('🧹 [Team Sync] Cleanup Sprint orphan thành công cho team', teamId.toString());
+                        if (deleted.deletedCount > 0) {
+                            console.log('🧹 [Team Sync] Đã xóa', deleted.deletedCount, 'Sprint orphan cho team', teamId.toString());
+                        }
                     } catch (cleanupErr) {
                         console.warn('⚠️ [Team Sync] Cleanup Sprint orphan thất bại:', cleanupErr.message);
                     }

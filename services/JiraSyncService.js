@@ -346,26 +346,44 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
 }
 
 /**
- * Lấy danh sách Sprints của Board
+ * Lấy TOÀN BỘ Sprints của Board (có phân trang)
+ * GET .../rest/agile/1.0/board/{boardId}/sprint
  * @param {Object} options
  * @param {string} options.accessToken
  * @param {string} options.cloudId
  * @param {number} options.boardId
  * @param {Function} options.onTokenRefresh
- * @returns {Promise<Array>}
+ * @returns {Promise<Array<{id: number, name: string, state: string, startDate?: string, endDate?: string}>>}
  */
 async function fetchSprints({ accessToken, cloudId, boardId, onTokenRefresh }) {
   try {
     const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
-    
-    const response = await client.get(`/board/${boardId}/sprint`, {
-      // Lấy cả active, future, closed để:
-      // - Đồng bộ đầy đủ trạng thái
-      // - Phát hiện Sprint đã bị xóa (không còn trong bất kỳ state nào)
-      params: { state: 'active,future,closed' }
-    });
+    const allSprints = [];
+    let startAt = 0;
+    const maxResults = 50;
+    let isLast = false;
 
-    return response.data.values || [];
+    // Lấy đủ 3 state để đồng bộ 2 chiều (sprint mới + xóa sprint đã xóa trên Jira)
+    const stateParam = 'active,future,closed';
+
+    while (!isLast) {
+      const response = await client.get(`/board/${boardId}/sprint`, {
+        params: { state: stateParam, startAt, maxResults }
+      });
+
+      const values = response.data.values || (Array.isArray(response.data) ? response.data : []);
+      allSprints.push(...values);
+
+      const total = response.data.total != null ? response.data.total : values.length;
+      if (values.length < maxResults || startAt + values.length >= total) {
+        isLast = true;
+      } else {
+        startAt += values.length;
+      }
+    }
+
+    console.log(`📦 [Jira Agile] Fetched ${allSprints.length} sprints for board ${boardId}`);
+    return allSprints;
   } catch (error) {
     console.error('❌ [Jira Agile] Lỗi fetch sprints:', error.message);
     throw error;
