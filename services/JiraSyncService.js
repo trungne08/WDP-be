@@ -339,6 +339,10 @@ async function fetchUser(client, accountId) {
  * Base URL: .../rest/agile/1.0
  */
 function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
+  if (!accessToken || typeof accessToken !== 'string' || !accessToken.trim()) {
+    console.error('❌ [Jira Agile Client] accessToken thiếu hoặc rỗng');
+    throw new Error('accessToken không hợp lệ. Vui lòng reconnect Jira.');
+  }
   const baseURL = `https://api.atlassian.com/ex/jira/${cloudId}/rest/agile/1.0`;
   const client = axios.create({
     baseURL,
@@ -351,7 +355,10 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
   });
 
   client.interceptors.request.use((config) => {
-    console.log('📤 [Jira Agile API] Outgoing Request (base: .../rest/agile/1.0)', config.url);
+    config.headers = config.headers || {};
+    config.headers.Authorization = config.headers.Authorization || `Bearer ${accessToken}`;
+    config.headers.Accept = config.headers.Accept || 'application/json';
+    console.log('📤 [Jira Agile API] Outgoing Request (base: .../rest/agile/1.0)', config.url, '| Auth:', !!config.headers.Authorization);
     return config;
   });
 
