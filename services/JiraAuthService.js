@@ -36,7 +36,7 @@ const ATLASSIAN_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessibl
 const JIRA_SCOPES =
   'offline_access ' + // Refresh Token
   'read:jira-work write:jira-work read:jira-user read:me ' + // Classic scopes cho Project/Issue/User
-  'read:board-scope:jira-software read:sprint:jira-software write:board-scope:jira-software'; // Agile scopes cho Board/Sprint
+  'read:board-scope:jira-software read:sprint:jira-software write:board-scope:jira-software read:project:jira'; // Agile scopes cho Board/Sprint
 
 // =========================
 // 2. HELPER FUNCTIONS
