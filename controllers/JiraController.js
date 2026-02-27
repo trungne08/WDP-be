@@ -319,33 +319,12 @@ exports.createTask = async (req, res) => {
         // Lấy OAuth config
         const { accessToken, cloudId, jira, onTokenRefresh } = await getJiraOAuthConfig(req);
 
-        // Tạo REST API client
-        const client = await JiraSyncService.syncWithAutoRefresh({
-            user: currentUser,
-            clientId: process.env.ATLASSIAN_CLIENT_ID,
-            clientSecret: process.env.ATLASSIAN_CLIENT_SECRET,
-            syncFunction: async (client) => client
-        });
-
-        // Lấy custom field IDs
-        const spFieldId = await JiraSyncService.getCustomFieldId(client, 'Story Points') || 'customfield_10026';
-        const startDateFieldId = await JiraSyncService.getCustomFieldId(client, 'Start date') || 'customfield_10015';
-
-        // Tạo Issue trên Jira
-        const jiraResp = await JiraSyncService.createIssue({
-            client,
+        // Dùng API v2 (plain text description) — Đồng bộ 1.5 chiều
+        const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
+        const jiraResp = await JiraSyncService.createIssueV2({
+            client: clientV2,
             projectKey: team.jira_project_key,
-            data: {
-                summary,
-                description,
-                assigneeAccountId: assignee_account_id,
-                reporterAccountId: reporter_account_id || jira.jiraAccountId,
-                storyPoint: story_point,
-                storyPointFieldId: spFieldId,
-                duedate: due_date,
-                startDate: start_date,
-                startDateFieldId
-            }
+            data: { summary, description: description || '' }
         });
 
         // Xử lý Sprint
@@ -429,43 +408,29 @@ exports.updateTask = async (req, res) => {
         // Lấy OAuth config
         const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
 
-        // Tạo REST API client
-        const client = await JiraSyncService.syncWithAutoRefresh({
-            user: currentUser,
-            clientId: process.env.ATLASSIAN_CLIENT_ID,
-            clientSecret: process.env.ATLASSIAN_CLIENT_SECRET,
-            syncFunction: async (client) => client
-        });
+        // Dùng API v2 (plain text description) — Đồng bộ 1.5 chiều
+        const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
 
-        // Lấy custom field IDs
-        const spFieldId = await JiraSyncService.getCustomFieldId(client, 'Story Points') || 'customfield_10026';
-        const startDateFieldId = await JiraSyncService.getCustomFieldId(client, 'Start date') || 'customfield_10015';
-
-        // 1. Update Issue trên Jira
+        // 1. Update Issue trên Jira (summary, description)
         try {
-            await JiraSyncService.updateIssue({
-                client,
-                issueKey: task.issue_key,
-                data: {
-                    summary,
-                    description,
-                    storyPoint: story_point,
-                    storyPointFieldId: spFieldId,
-                    assigneeAccountId: assignee_account_id,
-                    reporterAccountId: reporter_account_id,
-                    startDate: start_date,
-                    startDateFieldId,
-                    duedate: due_date
-                }
-            });
+            const updateFields = {};
+            if (summary !== undefined) updateFields.summary = summary;
+            if (description !== undefined) updateFields.description = description;
+            if (Object.keys(updateFields).length > 0) {
+                await JiraSyncService.updateIssueV2({
+                    client: clientV2,
+                    issueIdOrKey: task.issue_key,
+                    data: updateFields
+                });
+            }
         } catch (jiraErr) {
             return res.status(500).json({ error: 'Lỗi Sync Jira: ' + jiraErr.message });
         }
 
-        // 2. Xử lý Status Transition
+        // 2. Xử lý Status Transition (dùng v2 client)
         if (status && status !== task.status_name) {
             const ok = await JiraSyncService.transitionIssue({
-                client,
+                client: clientV2,
                 issueKey: task.issue_key,
                 targetStatusName: status
             });
@@ -538,22 +503,13 @@ exports.deleteTask = async (req, res) => {
         const team = await Team.findById(task.team_id);
         if (!team) return res.status(404).json({ error: 'Team not found' });
 
-        // Xóa trên Jira trước
+        // Xóa trên Jira trước (API v2 — Đồng bộ 1.5 chiều)
         try {
-            // Lấy OAuth config
-            await getJiraOAuthConfig(req);
-
-            // Tạo REST API client
-            const client = await JiraSyncService.syncWithAutoRefresh({
-                user: currentUser,
-                clientId: process.env.ATLASSIAN_CLIENT_ID,
-                clientSecret: process.env.ATLASSIAN_CLIENT_SECRET,
-                syncFunction: async (client) => client
-            });
-
-            await JiraSyncService.deleteIssue({
-                client,
-                issueKey: task.issue_key
+            const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
+            const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
+            await JiraSyncService.deleteIssueV2({
+                client: clientV2,
+                issueIdOrKey: task.issue_key
             });
         } catch (e) {
             console.warn('⚠️ Không thể xóa trên Jira:', e.message);

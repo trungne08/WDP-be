@@ -133,6 +133,50 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
   return client;
 }
 
+/**
+ * Tạo Axios instance cho Platform API v2 (REST API v2)
+ * Dùng cho Create/Update/Delete Issue — description nhận plain text (không cần ADF)
+ * Base URL: .../rest/api/2
+ */
+function createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh }) {
+  if (!accessToken || typeof accessToken !== 'string' || !accessToken.trim()) {
+    throw new Error('accessToken không hợp lệ. Vui lòng reconnect Jira.');
+  }
+  if (!cloudId || typeof cloudId !== 'string' || !cloudId.trim()) {
+    throw new Error('cloudId không hợp lệ. Vui lòng reconnect Jira.');
+  }
+  const baseURL = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/2`;
+  const client = axios.create({
+    baseURL,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/json',
+      'Content-Type': 'application/json'
+    },
+    timeout: 30000
+  });
+  client.interceptors.response.use(
+    (r) => r,
+    async (err) => {
+      const req = err.config;
+      if (err.response?.status === 401 && !req._retry) {
+        req._retry = true;
+        const newToken = await onTokenRefresh();
+        req.headers = req.headers || {};
+        req.headers['Authorization'] = `Bearer ${newToken}`;
+        client.defaults.headers = client.defaults.headers || {};
+        client.defaults.headers['Authorization'] = `Bearer ${newToken}`;
+        if (client.defaults.headers.common) {
+          client.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
+        }
+        return client(req);
+      }
+      return Promise.reject(err);
+    }
+  );
+  return client;
+}
+
 // =========================
 // 2. JIRA API CALLS
 // =========================
@@ -749,6 +793,92 @@ async function deleteIssue({ client, issueKey }) {
   }
 }
 
+// =========================
+// JIRA API v2 (plain text description — Đồng bộ 1.5 chiều)
+// =========================
+
+/**
+ * Tạo Issue mới (API v2 — description plain text)
+ * @param {Object} options
+ * @param {AxiosInstance} options.client - REST API v2 client
+ * @param {string} options.projectKey
+ * @param {Object} options.data - { summary, description? }
+ * @returns {Promise<{id: string, key: string}>}
+ */
+async function createIssueV2({ client, projectKey, data }) {
+  try {
+    const payload = {
+      fields: {
+        project: { key: projectKey },
+        summary: data.summary,
+        description: data.description || '',
+        issuetype: { name: 'Task' }
+      }
+    };
+    const response = await client.post('/issue', payload);
+    if (response.status === 201 && response.data) {
+      return { id: response.data.id, key: response.data.key };
+    }
+    throw new Error('Jira trả về không đúng format');
+  } catch (error) {
+    const status = error.response?.status;
+    const data = error.response?.data;
+    if (status === 401) console.error('❌ [Jira API v2] 401 Unauthorized — token hết hạn hoặc sai scope');
+    else if (status === 403) console.error('❌ [Jira API v2] 403 Forbidden — thiếu quyền tạo issue');
+    else console.error('❌ [Jira API v2] Lỗi create issue:', data || error.message);
+    throw error;
+  }
+}
+
+/**
+ * Sửa Issue (API v2 — description plain text)
+ * @param {Object} options
+ * @param {AxiosInstance} options.client
+ * @param {string} options.issueIdOrKey
+ * @param {Object} options.data - { summary?, description? }
+ * @returns {Promise<boolean>}
+ */
+async function updateIssueV2({ client, issueIdOrKey, data }) {
+  try {
+    const fields = {};
+    if (data.summary != null) fields.summary = data.summary;
+    if (data.description != null) fields.description = data.description;
+    if (Object.keys(fields).length === 0) return true;
+
+    const response = await client.put(`/issue/${issueIdOrKey}`, { fields });
+    return response.status === 204 || response.status === 200;
+  } catch (error) {
+    const status = error.response?.status;
+    const data = error.response?.data;
+    if (status === 401) console.error('❌ [Jira API v2] 401 Unauthorized');
+    else if (status === 403) console.error('❌ [Jira API v2] 403 Forbidden');
+    else console.error('❌ [Jira API v2] Lỗi update issue:', data || error.message);
+    throw error;
+  }
+}
+
+/**
+ * Xóa Issue (API v2)
+ * @param {Object} options
+ * @param {AxiosInstance} options.client
+ * @param {string} options.issueIdOrKey
+ * @returns {Promise<boolean>}
+ */
+async function deleteIssueV2({ client, issueIdOrKey }) {
+  try {
+    const response = await client.delete(`/issue/${issueIdOrKey}`);
+    return response.status === 204 || response.status === 200;
+  } catch (error) {
+    const status = error.response?.status;
+    const data = error.response?.data;
+    if (status === 401) console.error('❌ [Jira API v2] 401 Unauthorized');
+    else if (status === 403) console.error('❌ [Jira API v2] 403 Forbidden');
+    else if (status === 404) console.error('❌ [Jira API v2] 404 Not Found — issue không tồn tại');
+    else console.error('❌ [Jira API v2] Lỗi delete issue:', data || error.message);
+    throw error;
+  }
+}
+
 /**
  * Transition Issue (change status)
  * @param {Object} options
@@ -1151,6 +1281,10 @@ module.exports = {
   createIssue,
   updateIssue,
   deleteIssue,
+  createJiraApiV2Client,
+  createIssueV2,
+  updateIssueV2,
+  deleteIssueV2,
   transitionIssue,
   getCustomFieldId
 };
