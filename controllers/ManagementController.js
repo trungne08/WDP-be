@@ -1549,7 +1549,7 @@ const updateStudentInClass = async (req, res) => {
 
 /**
  * DELETE /management/classes/:classId/students
- * Xóa sinh viên khỏi lớp
+ * Xóa sinh viên khỏi lớp (Cascade Remove: TeamMember, Project, JiraTask)
  */
 const removeStudentFromClass = async (req, res) => {
     try {
@@ -1559,42 +1559,56 @@ const removeStudentFromClass = async (req, res) => {
         if (!student_id && !pending_id) return res.status(400).json({ error: 'Cần student_id hoặc pending_id' });
 
         if (student_id) {
-            // -- ENROLLED -- Xóa mềm (soft delete): set is_active = false
-            const classTeams = await models.Team.find({ class_id: classId }).select('_id');
-            const classTeamIds = classTeams.map(t => t._id);
+            const classTeamIds = (await models.Team.find({ class_id: classId }).select('_id').lean()).map(t => t._id);
+            if (classTeamIds.length === 0) {
+                return res.status(404).json({ error: 'Không tìm thấy lớp hoặc chưa có team.' });
+            }
 
-            const updated = await models.TeamMember.findOneAndUpdate(
-                { team_id: { $in: classTeamIds }, student_id: student_id, is_active: true },
-                { is_active: false },
-                { new: true }
-            ).populate('student_id', 'full_name student_code avatar_url email').lean();
+            // 1. Lấy danh sách TeamMember cần deactivate (để unassign JiraTask)
+            const members = await models.TeamMember.find({
+                team_id: { $in: classTeamIds },
+                student_id,
+                is_active: true
+            }).select('_id').lean();
 
-            if (!updated) {
+            if (members.length === 0) {
                 return res.status(404).json({ error: 'Không tìm thấy sinh viên trong lớp hoặc đã bị xóa trước đó.' });
             }
 
-            // ==========================================
-            // TỰ ĐỘNG CLEANUP PROJECT: Xóa student khỏi project của nhóm cũ
-            // ==========================================
-            const oldTeamId = updated.team_id?.toString();
-            if (oldTeamId) {
-                const oldTeamProjects = await models.Project.find({
-                    team_id: oldTeamId,
-                    members: student_id
-                }).lean();
-                
-                if (oldTeamProjects.length > 0) {
-                    for (const oldProject of oldTeamProjects) {
-                        await models.Project.updateOne(
-                            { _id: oldProject._id },
-                            { $pull: { members: student_id } }
-                        );
-                        console.log(`   🔧 [RemoveStudent] Đã xóa student ${student_id} khỏi project "${oldProject.name}" của nhóm (team ${oldTeamId})`);
-                    }
-                }
+            const teamMemberIds = members.map(m => m._id);
+
+            // 2. Deactivate tất cả TeamMember của sinh viên trong lớp
+            await models.TeamMember.updateMany(
+                { _id: { $in: teamMemberIds } },
+                { $set: { is_active: false } }
+            );
+
+            // 3. $pull student khỏi members của mọi Project trong lớp
+            const pullRes = await models.Project.updateMany(
+                { class_id: classId, members: student_id },
+                { $pull: { members: student_id } }
+            );
+            if (pullRes.modifiedCount > 0) {
+                console.log(`   🔧 [RemoveStudent] Đã xóa student ${student_id} khỏi ${pullRes.modifiedCount} project(s)`);
             }
 
-            // RealtimeService sẽ bắt được event update (is_active: false) và bắn action: 'delete'
+            // 4. Nếu sinh viên là leader: set leader_id = null
+            await models.Project.updateMany(
+                { class_id: classId, leader_id: student_id },
+                { $set: { leader_id: null } }
+            );
+
+            // 5. Unassign JiraTask: gán assignee_id = null cho task đang assign vào TeamMember bị xóa
+            const { JiraTask } = require('../models/JiraData');
+            const unassignRes = await JiraTask.updateMany(
+                { assignee_id: { $in: teamMemberIds } },
+                { $set: { assignee_id: null } }
+            );
+            if (unassignRes.modifiedCount > 0) {
+                console.log(`   🔧 [RemoveStudent] Đã unassign ${unassignRes.modifiedCount} JiraTask(s)`);
+            }
+
+            // RealtimeService bắt event update TeamMember → bắn action: 'delete'
             return res.json({ message: '✅ Đã xóa sinh viên khỏi lớp!' });
 
         } else if (pending_id) {
