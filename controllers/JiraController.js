@@ -15,9 +15,12 @@ const IntegrationController = require('./IntegrationController');
  * @returns {Promise<{user, jira, clientId, clientSecret, onTokenRefresh}>}
  */
 async function getJiraOAuthConfig(req) {
-  const user = req.user;
+  const user = req.user; // req.user từ authenticateToken
+  const userId = req.user?._id || req.userId || req.user?.id;
+  console.log('🔍 Đang tìm Jira Auth cho user ID:', userId);
+
   const jira = user?.integrations?.jira;
-  
+
   if (!jira?.accessToken || !jira?.cloudId) {
     const error = new Error('Chưa kết nối Jira. Vui lòng kết nối Jira trước.');
     error.code = 'JIRA_NOT_CONNECTED';

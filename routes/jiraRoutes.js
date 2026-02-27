@@ -1,8 +1,12 @@
 const express = require('express');
 const JiraController = require('../controllers/JiraController');
+const { authenticateToken } = require('../middleware/auth');
 
 module.exports = (app) => {
   const router = express.Router();
+
+  // Tất cả route Jira cần JWT để lấy req.user (Jira OAuth nằm trên user)
+  router.use(authenticateToken);
 
   // ==================================================================
   // 1. SPRINT ROUTES
