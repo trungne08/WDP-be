@@ -150,24 +150,11 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
  */
 async function searchIssues({ client, jql, startAt = 0, maxResults = 100, fields = [], nextPageToken }) {
   try {
-    const defaultFields = [
-      'summary',
-      'status',
-      'assignee',
-      'created',
-      'updated',
-      'issuetype',
-      'description',
-      'duedate',
-      'reporter',
-      'customfield_10026', // Story Points
-      'customfield_10020'  // Sprint (array of {id, name, state, ...})
-    ];
-
+    // Dùng ["*all"] để Jira trả về mọi Custom Field (bao gồm Sprint) — ID Sprint field thay đổi theo instance
     const payload = {
       jql,
       maxResults,
-      fields: fields.length > 0 ? fields : defaultFields
+      fields: fields.length > 0 ? fields : ['*all']
     };
     if (nextPageToken) payload.nextPageToken = nextPageToken;
 
@@ -813,30 +800,22 @@ async function getCustomFieldId(client, fieldName) {
 // =========================
 
 /**
- * Bóc tách jira_sprint_id từ issue.fields (customfield_10020 hoặc field có cấu trúc Sprint).
- * Sprint trong Jira thường là Array với item có { id, name, state, boardId }.
+ * Bóc tách jira_sprint_id từ issue.fields.
+ * Sprint field ID thay đổi theo Jira instance (không phải lúc nào cũng customfield_10020).
+ * Quét toàn bộ fields, tìm field có cấu trúc Sprint (id, state, name, boardId).
  * @param {Object} issue - Issue từ Jira API
  * @returns {number|null} jira_sprint_id hoặc null (Backlog)
  */
 function extractJiraSprintIdFromIssue(issue) {
   const fields = issue?.fields || {};
-  const sprintFields = ['customfield_10020', 'customfield_10021', 'sprint'];
-  for (const key of sprintFields) {
-    const val = fields[key];
-    if (val == null) continue;
-    const arr = Array.isArray(val) ? val : (val && (val.id != null || val.sprintId != null) ? [val] : null);
+  for (const key in fields) {
+    const value = fields[key];
+    if (value == null) continue;
+    const arr = Array.isArray(value) ? value : (value && typeof value === 'object' ? [value] : null);
     if (!arr || arr.length === 0) continue;
-    const last = arr[arr.length - 1];
-    const id = last?.id ?? last?.sprintId;
-    if (id != null) return Number(id);
-  }
-  for (const [key, val] of Object.entries(fields)) {
-    if (!val || typeof val !== 'object') continue;
-    const arr = Array.isArray(val) ? val : (val && (val.id != null || val.sprintId != null) ? [val] : null);
-    if (!arr || arr.length === 0) continue;
-    const last = arr[arr.length - 1];
-    if (last && (last.id != null || last.sprintId != null) && (typeof last.name === 'string' || last.state != null)) {
-      return Number(last.id ?? last.sprintId);
+    const item = arr[arr.length - 1]; // Sprint hiện tại thường ở cuối
+    if (item && item.id != null && item.state != null && (item.name != null || item.boardId != null)) {
+      return Number(item.id);
     }
   }
   return null;
