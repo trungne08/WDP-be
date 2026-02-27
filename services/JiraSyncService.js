@@ -107,13 +107,17 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
 
           console.log('✅ [Jira Sync] Got new token (first 20):', newAccessToken ? newAccessToken.substring(0, 20) + '...' : 'NULL');
 
-          // Cập nhật token mới vào header
-          originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
-          client.defaults.headers.Authorization = `Bearer ${newAccessToken}`;
+          // BẮT BUỘC ghi đè Authorization với token mới trước khi retry
+          originalRequest.headers = originalRequest.headers || {};
+          originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+          client.defaults.headers = client.defaults.headers || {};
+          client.defaults.headers['Authorization'] = `Bearer ${newAccessToken}`;
+          if (client.defaults.headers.common) {
+            client.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
+          }
 
-          console.log('✅ [Jira Sync] Refresh thành công. Retry request...');
+          console.log('✅ [Jira Sync] Refresh thành công. Retry request với token mới');
 
-          // Retry request với token mới
           return client(originalRequest);
         } catch (refreshError) {
           console.error('❌ [Jira Sync] Refresh token thất bại:', refreshError.message);
@@ -355,10 +359,7 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
   });
 
   client.interceptors.request.use((config) => {
-    config.headers = config.headers || {};
-    config.headers.Authorization = config.headers.Authorization || `Bearer ${accessToken}`;
-    config.headers.Accept = config.headers.Accept || 'application/json';
-    console.log('📤 [Jira Agile API] Outgoing Request (base: .../rest/agile/1.0)', config.url, '| Auth:', !!config.headers.Authorization);
+    console.log('📤 [Jira Agile API] Outgoing Request (base: .../rest/agile/1.0)', config.url, '| Auth:', !!config.headers?.Authorization);
     return config;
   });
 
@@ -369,8 +370,15 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
       if (error.response?.status === 401 && !originalRequest._retry) {
         originalRequest._retry = true;
         const newAccessToken = await onTokenRefresh();
-        originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
-        client.defaults.headers.Authorization = `Bearer ${newAccessToken}`;
+        // BẮT BUỘC ghi đè Authorization với token mới trước khi retry
+        originalRequest.headers = originalRequest.headers || {};
+        originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+        client.defaults.headers = client.defaults.headers || {};
+        client.defaults.headers['Authorization'] = `Bearer ${newAccessToken}`;
+        if (client.defaults.headers.common) {
+          client.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
+        }
+        console.log('🔄 [Jira Agile] Retry với token mới');
         return client(originalRequest);
       }
       return Promise.reject(error);
