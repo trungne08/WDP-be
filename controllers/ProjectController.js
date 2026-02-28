@@ -464,63 +464,31 @@ exports.createProject = async (req, res) => {
   }
 };
 
-const IntegrationService = require('../services/IntegrationService');
-
 // GET /api/projects/my-project?class_id=xxx (optional)
-// Dành cho STUDENT: xem Project đầu tiên của mình (backward compatibility)
-// Nếu có class_id trong query, chỉ lấy project của class đó
+// Dành cho STUDENT: lấy TẤT CẢ projects mà user là thành viên (leader hoặc members)
+// Trả về Array [], sắp xếp theo thời gian tạo mới nhất
 exports.getMyProject = async (req, res) => {
   try {
     const { role, userId } = req;
+    const userObjectId = req.user?._id || userId;
     const { class_id } = req.query; // Query param optional
 
     if (role !== 'STUDENT') {
       return res.status(403).json({ error: 'Chỉ sinh viên mới dùng được API này.' });
     }
 
-    // Build query: tìm TeamMember của sinh viên có project_id khác null
-    const teamMemberQuery = {
-      student_id: userId,
-      is_active: true,
-      project_id: { $ne: null }
+    const query = {
+      $or: [
+        { leader_id: userObjectId },
+        { members: userObjectId }
+      ]
     };
 
-    // Tìm TeamMember và populate để có thông tin class
-    const teamMembers = await models.TeamMember.find(teamMemberQuery)
-    .populate({
-      path: 'team_id',
-      select: 'class_id',
-      populate: {
-        path: 'class_id',
-        select: '_id name class_code'
-      }
-    })
-    .lean();
-
-    if (!teamMembers || teamMembers.length === 0) {
-      return res.json({ project: null });
+    if (class_id && mongoose.Types.ObjectId.isValid(class_id)) {
+      query.class_id = class_id;
     }
 
-    // Nếu có class_id trong query, filter theo class đó
-    let teamMember = teamMembers[0]; // Default: lấy cái đầu tiên (backward compatibility)
-    
-    if (class_id) {
-      console.log(`🔍 [getMyProject] Filtering by class_id: ${class_id}`);
-      const filteredMember = teamMembers.find(tm => 
-        tm.team_id?.class_id?._id?.toString() === class_id
-      );
-      
-      if (!filteredMember) {
-        console.log(`   ℹ️  [getMyProject] No project found in class ${class_id}`);
-        return res.json({ project: null });
-      }
-      
-      teamMember = filteredMember;
-      console.log(`   ✅ [getMyProject] Found project in class ${class_id}`);
-    }
-
-    // Lấy project từ teamMember
-    const project = await models.Project.findById(teamMember.project_id)
+    const projects = await models.Project.find(query)
       .populate('leader_id', 'student_code email full_name avatar_url')
       .populate('lecturer_id', 'email full_name avatar_url')
       .populate('members', 'student_code email full_name avatar_url')
@@ -528,139 +496,13 @@ exports.getMyProject = async (req, res) => {
       .populate('team_id', '_id project_name')
       .populate('semester_id', '_id name code')
       .populate('subject_id', '_id name code')
+      .sort({ createdAt: -1 })
       .lean();
 
-    if (!project) {
-      return res.json({ project: null });
-    }
-
-    // ==========================================
-    // LAZY SYNC LEADER FROM JIRA (Tự động đồng bộ Leader)
-    // ==========================================
-    // Chỉ thực hiện nếu project có jiraProjectKey
-    if (project.jiraProjectKey) {
-      try {
-        // Lấy thông tin user hiện tại để mượn token
-        const requestUser = await models.Student.findById(userId);
-        const jiraIntegration = requestUser?.integrations?.jira;
-
-        // Chỉ sync nếu user hiện tại ĐÃ link Jira (có token)
-        if (jiraIntegration && jiraIntegration.accessToken && jiraIntegration.cloudId) {
-          
-          // Gọi Jira lấy info project (chạy ngầm, không await để tránh block response)
-          // Tuy nhiên để đảm bảo data trả về là mới nhất, ta nên await nhưng bọc try-catch
-          // để nếu lỗi sync thì vẫn trả về project cũ chứ không crash API.
-          
-          let projectInfo;
-          let accessToken = jiraIntegration.accessToken;
-          
-          try {
-            projectInfo = await IntegrationService.fetchJiraProjectInfo({
-              accessToken: accessToken,
-              cloudId: jiraIntegration.cloudId,
-              projectKey: project.jiraProjectKey
-            });
-          } catch (jiraError) {
-            const status = jiraError.response?.status;
-            if (status === 410) {
-              console.warn(`⚠️ Lazy Sync: Jira Project "${project.jiraProjectKey}" không còn tồn tại (410 Gone)`);
-              project.jira_sync_warning = 'Jira project không còn tồn tại (410). GitHub và dữ liệu khác vẫn dùng bình thường.';
-              projectInfo = null;
-            } else if ((status === 401 || status === 403) && jiraIntegration.refreshToken) {
-              const clientId = process.env.ATLASSIAN_CLIENT_ID;
-              const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
-              if (!clientId || !clientSecret) {
-                console.warn('⚠️ Lazy Sync: Thiếu ATLASSIAN_CLIENT_ID hoặc ATLASSIAN_CLIENT_SECRET (env). Không thể refresh token Jira.');
-              } else {
-                try {
-                  const refreshed = await IntegrationService.refreshAtlassianAccessToken({
-                    clientId,
-                    clientSecret,
-                    refreshToken: jiraIntegration.refreshToken
-                  });
-
-                  // Cập nhật token mới vào DB
-                  requestUser.integrations.jira.accessToken = refreshed.accessToken;
-                  if (refreshed.refreshToken) {
-                    requestUser.integrations.jira.refreshToken = refreshed.refreshToken;
-                  }
-                  await requestUser.save();
-
-                  // Thử lại với token mới
-                  accessToken = refreshed.accessToken;
-                  projectInfo = await IntegrationService.fetchJiraProjectInfo({
-                    accessToken: accessToken,
-                    cloudId: jiraIntegration.cloudId,
-                    projectKey: project.jiraProjectKey
-                  });
-
-                  console.log('🔄 Lazy Sync: Đã refresh token Jira thành công');
-                } catch (refreshError) {
-                  // 400/401/404 = refresh token hết hạn hoặc bị thu hồi -> user cần reconnect Jira
-                  const refreshStatus = refreshError.status || refreshError.response?.status;
-                  console.warn('⚠️ Lazy Sync: Không thể refresh token Jira:', refreshError.message, refreshStatus ? `(HTTP ${refreshStatus})` : '');
-                  throw jiraError; // Throw lại lỗi gốc
-                }
-              }
-            } else {
-              throw jiraError; // Throw lại nếu không phải lỗi 401 hoặc không có refreshToken
-            }
-          }
-
-          if (projectInfo && projectInfo.lead && projectInfo.lead.accountId) {
-            const jiraLeadAccountId = projectInfo.lead.accountId;
-            
-            // Tìm user trong DB có accountId này
-            const newLeaderUser = await models.Student.findOne({
-              'integrations.jira.jiraAccountId': jiraLeadAccountId
-            });
-
-            // Nếu tìm thấy user và user này KHÁC leader hiện tại của project
-            // project.leader_id đã được populate nên là object, cần kiểm tra null
-            const currentLeaderId = project.leader_id?._id?.toString() || project.leader_id?.toString();
-            if (newLeaderUser && currentLeaderId && newLeaderUser._id.toString() !== currentLeaderId) {
-              console.log(`🔄 Lazy Sync: Phát hiện Leader thay đổi từ Jira (${projectInfo.lead.displayName}) -> Cập nhật DB...`);
-              
-              // 1. Update Project Leader
-              await models.Project.updateOne(
-                { _id: project._id },
-                { leader_id: newLeaderUser._id }
-              );
-
-              // 2. Update TeamMember Roles
-              // Tìm team của project này (thông qua teamMember hiện tại hoặc project.team_id)
-              const teamId = teamMember?.team_id?._id || teamMember?.team_id || project.team_id;
-              
-              if (teamId) {
-                // Reset tất cả thành Member
-                await models.TeamMember.updateMany(
-                  { team_id: teamId, is_active: true },
-                  { role_in_team: 'Member' }
-                );
-
-                // Set Leader mới
-                await models.TeamMember.updateOne(
-                  { team_id: teamId, student_id: newLeaderUser._id, is_active: true },
-                  { role_in_team: 'Leader' }
-                );
-              }
-
-              // Cập nhật lại biến project để trả về data mới nhất cho FE
-              project.leader_id = newLeaderUser; // Gán object user mới vào
-              console.log('✅ Lazy Sync: Đã cập nhật Leader thành công!');
-            }
-          }
-        }
-      } catch (syncError) {
-        // Lỗi sync (ví dụ token hết hạn, mạng lag...) -> Chỉ log, không làm fail API chính
-        console.warn('⚠️ Lazy Sync Leader Warning:', syncError.message);
-      }
-    }
-    // ==========================================
-    // END LAZY SYNC
-    // ==========================================
-
-    return res.json({ project });
+    return res.json({
+      total: (projects || []).length,
+      projects: projects || []
+    });
   } catch (error) {
     console.error('getMyProject error:', error);
     return res.status(500).json({ error: error.message });
