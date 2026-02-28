@@ -17,37 +17,41 @@ const JiraAuthService = require('./JiraAuthService');
 // =========================
 
 /**
- * Tạo Axios instance cho Platform API (REST API v3)
+ * Tạo Axios instance cho Platform API (REST API v2 hoặc v3)
+ * Có cơ chế tự động Refresh Token khi 401 — giống hệt luồng Sync.
  * @param {Object} options
  * @param {string} options.accessToken - Access token hiện tại
  * @param {string} options.cloudId - Jira Cloud ID
- * @param {Function} options.onTokenRefresh - Callback khi refresh token thành công
+ * @param {Function} options.onTokenRefresh - Callback khi refresh token thành công (PHẢI lưu token mới vào DB)
+ * @param {number} [options.apiVersion=3] - API version (2: plain text description, 3: ADF)
  * @returns {AxiosInstance}
  */
-function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
+function createJiraApiClient({ accessToken, cloudId, onTokenRefresh, apiVersion = 3 }) {
+  const basePath = `/rest/api/${apiVersion}`;
+
   // Debug logging
-  console.log('🔧 [Jira API Client] Creating client...');
+  console.log(`🔧 [Jira API Client v${apiVersion}] Creating client...`);
   console.log('   - CloudId:', cloudId);
-  console.log('   - CloudId type:', typeof cloudId);
-  console.log('   - CloudId length:', cloudId?.length || 0);
   console.log('   - AccessToken present?', !!accessToken);
-  console.log('   - AccessToken type:', typeof accessToken);
-  console.log('   - AccessToken length:', accessToken?.length || 0);
-  console.log('   - AccessToken prefix (first 20):', accessToken ? accessToken.substring(0, 20) + '...' : 'NULL');
-  console.log('   - Base URL:', `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`);
-  
+  console.log('   - Base URL:', `https://api.atlassian.com/ex/jira/${cloudId}${basePath}`);
+
   // Validate inputs
   if (!cloudId || typeof cloudId !== 'string' || cloudId.trim() === '') {
     console.error('❌ [Jira API Client] Invalid cloudId!');
     throw new Error('cloudId không hợp lệ. Vui lòng reconnect Jira.');
   }
-  
+
   if (!accessToken || typeof accessToken !== 'string' || accessToken.trim() === '') {
     console.error('❌ [Jira API Client] Invalid accessToken!');
     throw new Error('accessToken không hợp lệ. Vui lòng reconnect Jira.');
   }
-  
-  const baseURL = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3`;
+
+  if (typeof onTokenRefresh !== 'function') {
+    console.error('❌ [Jira API Client] onTokenRefresh phải là function!');
+    throw new Error('onTokenRefresh callback bắt buộc để xử lý 401 khi token hết hạn.');
+  }
+
+  const baseURL = `https://api.atlassian.com/ex/jira/${cloudId}${basePath}`;
   const client = axios.create({
     baseURL,
     headers: {
@@ -61,7 +65,7 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
   // Request Interceptor: Log outgoing requests (Platform API)
   client.interceptors.request.use(
     (config) => {
-      console.log('📤 [Jira Platform API] Outgoing Request (base: .../rest/api/3)');
+      console.log(`📤 [Jira Platform API v${apiVersion}] Outgoing Request`);
       console.log('   - Method:', config.method?.toUpperCase());
       console.log('   - URL:', config.baseURL + config.url);
       console.log('   - Full URL:', `${config.baseURL}${config.url}`);
@@ -136,45 +140,10 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh }) {
 /**
  * Tạo Axios instance cho Platform API v2 (REST API v2)
  * Dùng cho Create/Update/Delete Issue — description nhận plain text (không cần ADF)
- * Base URL: .../rest/api/2
+ * Tái sử dụng đúng client + interceptor 401 của createJiraApiClient.
  */
 function createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh }) {
-  if (!accessToken || typeof accessToken !== 'string' || !accessToken.trim()) {
-    throw new Error('accessToken không hợp lệ. Vui lòng reconnect Jira.');
-  }
-  if (!cloudId || typeof cloudId !== 'string' || !cloudId.trim()) {
-    throw new Error('cloudId không hợp lệ. Vui lòng reconnect Jira.');
-  }
-  const baseURL = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/2`;
-  const client = axios.create({
-    baseURL,
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      Accept: 'application/json',
-      'Content-Type': 'application/json'
-    },
-    timeout: 30000
-  });
-  client.interceptors.response.use(
-    (r) => r,
-    async (err) => {
-      const req = err.config;
-      if (err.response?.status === 401 && !req._retry) {
-        req._retry = true;
-        const newToken = await onTokenRefresh();
-        req.headers = req.headers || {};
-        req.headers['Authorization'] = `Bearer ${newToken}`;
-        client.defaults.headers = client.defaults.headers || {};
-        client.defaults.headers['Authorization'] = `Bearer ${newToken}`;
-        if (client.defaults.headers.common) {
-          client.defaults.headers.common['Authorization'] = `Bearer ${newToken}`;
-        }
-        return client(req);
-      }
-      return Promise.reject(err);
-    }
-  );
-  return client;
+  return createJiraApiClient({ accessToken, cloudId, onTokenRefresh, apiVersion: 2 });
 }
 
 // =========================
