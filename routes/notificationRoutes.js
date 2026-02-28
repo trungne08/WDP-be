@@ -249,34 +249,6 @@ module.exports = (app) => {
 
     /**
      * @swagger
-     * /api/notifications/{notificationId}:
-     *   delete:
-     *     summary: Xóa một notification
-     *     tags: [20. Notifications]
-     *     description: |
-     *       **Dùng khi:** User swipe/click delete trên notification item
-     *     security:
-     *       - bearerAuth: []
-     *     parameters:
-     *       - in: path
-     *         name: notificationId
-     *         required: true
-     *         schema:
-     *           type: string
-     *     responses:
-     *       200:
-     *         description: Đã xóa notification
-     *       404:
-     *         description: Không tìm thấy notification
-     */
-    app.delete(
-        '/api/notifications/:notificationId',
-        authenticateToken,
-        NotificationController.deleteNotification
-    );
-
-    /**
-     * @swagger
      * /api/notifications/clear-read:
      *   delete:
      *     summary: Xóa TẤT CẢ notifications đã đọc
@@ -305,5 +277,33 @@ module.exports = (app) => {
         '/api/notifications/clear-read',
         authenticateToken,
         NotificationController.clearRead
+    );
+
+    /**
+     * @swagger
+     * /api/notifications/{notificationId}:
+     *   delete:
+     *     summary: Xóa một notification
+     *     tags: [20. Notifications]
+     *     description: |
+     *       **Dùng khi:** User swipe/click delete trên notification item
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: notificationId
+     *         required: true
+     *         schema:
+     *           type: string
+     *     responses:
+     *       200:
+     *         description: Đã xóa notification
+     *       404:
+     *         description: Không tìm thấy notification
+     */
+    app.delete(
+        '/api/notifications/:notificationId',
+        authenticateToken,
+        NotificationController.deleteNotification
     );
 };

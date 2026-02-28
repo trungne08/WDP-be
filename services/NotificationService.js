@@ -76,6 +76,22 @@ const sendNotification = async (userId, role, title, message, data = {}, type = 
             console.log(`ℹ️ User ${userId} (${role}) does not have FCM token. Notification saved to DB only.`);
         }
 
+        // 4. Emit Socket.IO để FE cập nhật chuông real-time (In-App UI)
+        if (global._io) {
+            const room = String(userId);
+            const newNotificationData = {
+                _id: notification._id,
+                title: notification.title,
+                message: notification.message,
+                type: notification.type,
+                is_read: notification.is_read,
+                created_at: notification.created_at,
+                data: notification.data
+            };
+            global._io.to(room).emit('new_notification', newNotificationData);
+            console.log(`📡 Socket: Emit new_notification cho user ${room}`);
+        }
+
         return notification;
 
     } catch (error) {

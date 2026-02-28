@@ -47,10 +47,17 @@ global._io = io;
 io.on('connection', (socket) => {
   console.log('⚡ Client connected:', socket.id);
 
-  // Client sẽ gửi sự kiện 'join_class' kèm classId để vào phòng riêng
+  // Client gửi 'join_class' kèm classId để vào phòng lớp
   socket.on('join_class', (classId) => {
-    socket.join(classId);
+    socket.join(String(classId));
     console.log(`Socket ${socket.id} đã join vào phòng lớp: ${classId}`);
+  });
+
+  // Client gửi 'join_user' kèm userId để vào phòng riêng (cho Real-time Notification)
+  socket.on('join_user', (userId) => {
+    const room = String(userId);
+    socket.join(room);
+    console.log(`Socket ${socket.id} đã join vào phòng user: ${room}`);
   });
 
   socket.on('disconnect', () => {
