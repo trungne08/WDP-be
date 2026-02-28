@@ -27,6 +27,7 @@ const ATLASSIAN_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessibl
  * Jira Software API (AGILE - BẮT BUỘC cho /boards và /sprints):
  * - read:board-scope:jira-software: Đọc boards (Scrum/Kanban)
  * - read:sprint:jira-software: Đọc sprints
+ * - write:sprint:jira-software: Thêm/xóa issue khỏi sprint (POST sprint/{id}/issue, backlog/issue)
  * - write:board-scope:jira-software: Tạo/sửa boards (optional)
  *
  * Strategy:
@@ -36,7 +37,7 @@ const ATLASSIAN_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessibl
 const JIRA_SCOPES =
   'offline_access ' + // Refresh Token
   'read:jira-work write:jira-work read:jira-user read:me ' + // Classic scopes cho Project/Issue/User
-  'read:board-scope:jira-software read:sprint:jira-software write:board-scope:jira-software read:project:jira'; // Agile scopes cho Board/Sprint
+  'read:board-scope:jira-software read:sprint:jira-software write:sprint:jira-software write:board-scope:jira-software read:project:jira'; // Agile scopes cho Board/Sprint
 
 // =========================
 // 2. HELPER FUNCTIONS
