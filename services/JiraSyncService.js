@@ -380,12 +380,19 @@ async function fetchUser(client, accountId) {
 /**
  * Tạo Axios instance cho Agile API (Board, Sprint)
  * Base URL: .../rest/agile/1.0
+ * BẮT BUỘC có onTokenRefresh để xử lý 401 (refresh token + retry).
  */
 function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
   if (!accessToken || typeof accessToken !== 'string' || !accessToken.trim()) {
-    console.error('❌ [Jira Agile Client] accessToken thiếu hoặc rỗng');
     throw new Error('accessToken không hợp lệ. Vui lòng reconnect Jira.');
   }
+  if (!cloudId || typeof cloudId !== 'string' || !cloudId.trim()) {
+    throw new Error('cloudId không hợp lệ. Vui lòng reconnect Jira.');
+  }
+  if (typeof onTokenRefresh !== 'function') {
+    throw new Error('onTokenRefresh callback bắt buộc cho Agile API để xử lý 401.');
+  }
+
   const baseURL = `https://api.atlassian.com/ex/jira/${cloudId}/rest/agile/1.0`;
   const client = axios.create({
     baseURL,
@@ -397,29 +404,36 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
     timeout: 30000
   });
 
-  client.interceptors.request.use((config) => {
-    console.log('🔥 Token Agile API gửi đi:', config.headers && config.headers['Authorization'] ? config.headers['Authorization'].substring(0, 25) + '...' : 'BỊ RỖNG!');
-    console.log('📤 [Jira Agile API] Outgoing Request (base: .../rest/agile/1.0)', config.url);
-    return config;
-  });
+  client.interceptors.request.use(
+    (config) => {
+      console.log('📤 [Jira Agile API] Outgoing Request', config.method?.toUpperCase(), config.url);
+      return config;
+    },
+    (err) => Promise.reject(err)
+  );
 
+  // Response Interceptor: Auto-refresh on 401 (ĐÚNG Y Platform API v2/v3)
   client.interceptors.response.use(
     (response) => response,
     async (error) => {
       const originalRequest = error.config;
       if (error.response?.status === 401 && !originalRequest._retry) {
         originalRequest._retry = true;
-        const newAccessToken = await onTokenRefresh();
-        // TUYỆT ĐỐI ghi đè Authorization (không có logic "chỉ gán nếu chưa có")
-        originalRequest.headers = originalRequest.headers || {};
-        originalRequest.headers['Authorization'] = 'Bearer ' + newAccessToken;
-        client.defaults.headers = client.defaults.headers || {};
-        client.defaults.headers['Authorization'] = 'Bearer ' + newAccessToken;
-        if (client.defaults.headers.common) {
-          client.defaults.headers.common['Authorization'] = 'Bearer ' + newAccessToken;
+        try {
+          const newAccessToken = await onTokenRefresh();
+          originalRequest.headers = originalRequest.headers || {};
+          originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+          client.defaults.headers = client.defaults.headers || {};
+          client.defaults.headers['Authorization'] = `Bearer ${newAccessToken}`;
+          if (client.defaults.headers.common) {
+            client.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
+          }
+          console.log('✅ [Jira Agile] Refresh token thành công, retry request');
+          return client(originalRequest);
+        } catch (refreshError) {
+          console.error('❌ [Jira Agile] Refresh token thất bại:', refreshError.message);
+          throw refreshError;
         }
-        console.log('🔄 [Jira Agile] Retry với token mới:', newAccessToken ? newAccessToken.substring(0, 20) + '...' : 'NULL');
-        return client(originalRequest);
       }
       return Promise.reject(error);
     }
@@ -644,51 +658,33 @@ async function fetchAllBoardIssues({ accessToken, cloudId, boardId, onTokenRefre
 
 /**
  * Thêm Issue vào Sprint
+ * THROW nếu thất bại — Controller phải xử lý, không lưu DB khi lỗi.
  * @param {Object} options
  * @param {string} options.accessToken
  * @param {string} options.cloudId
  * @param {number} options.sprintId
  * @param {string} options.issueKey - Jira issue key (VD: SCRUM-123)
  * @param {Function} options.onTokenRefresh
- * @returns {Promise<boolean>}
+ * @returns {Promise<void>}
  */
 async function addIssueToSprint({ accessToken, cloudId, sprintId, issueKey, onTokenRefresh }) {
-  try {
-    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
-    
-    await client.post(`/sprint/${sprintId}/issue`, {
-      issues: [issueKey]
-    });
-
-    return true;
-  } catch (error) {
-    console.error('❌ [Jira Agile] Lỗi add issue to sprint:', error.message);
-    return false;
-  }
+  const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+  await client.post(`/sprint/${sprintId}/issue`, { issues: [issueKey] });
 }
 
 /**
  * Move Issue về Backlog
+ * THROW nếu thất bại — Controller phải xử lý, không lưu DB khi lỗi.
  * @param {Object} options
  * @param {string} options.accessToken
  * @param {string} options.cloudId
  * @param {string} options.issueKey
  * @param {Function} options.onTokenRefresh
- * @returns {Promise<boolean>}
+ * @returns {Promise<void>}
  */
 async function moveIssueToBacklog({ accessToken, cloudId, issueKey, onTokenRefresh }) {
-  try {
-    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
-    
-    await client.post('/backlog/issue', {
-      issues: [issueKey]
-    });
-
-    return true;
-  } catch (error) {
-    console.error('❌ [Jira Agile] Lỗi move issue to backlog:', error.message);
-    return false;
-  }
+  const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+  await client.post('/backlog/issue', { issues: [issueKey] });
 }
 
 // =========================
@@ -896,24 +892,17 @@ async function deleteIssueV2({ client, issueIdOrKey }) {
  * @returns {Promise<boolean>}
  */
 async function transitionIssue({ client, issueKey, targetStatusName }) {
-  try {
-    const transitionsRes = await client.get(`/issue/${issueKey}/transitions`);
-    
-    const transition = transitionsRes.data.transitions.find(
-      t => t.name.toLowerCase() === targetStatusName.toLowerCase()
-    );
-
-    if (!transition) return false;
-
-    await client.post(`/issue/${issueKey}/transitions`, {
-      transition: { id: transition.id }
-    });
-
-    return true;
-  } catch (error) {
-    console.error('❌ [Jira API] Lỗi transition issue:', error.message);
-    return false;
+  const transitionsRes = await client.get(`/issue/${issueKey}/transitions`);
+  const transition = transitionsRes.data.transitions?.find(
+    t => t.name.toLowerCase() === targetStatusName.toLowerCase()
+  );
+  if (!transition) {
+    throw new Error(`Không tìm thấy transition sang trạng thái "${targetStatusName}"`);
   }
+  await client.post(`/issue/${issueKey}/transitions`, {
+    transition: { id: transition.id }
+  });
+  return true;
 }
 
 /**

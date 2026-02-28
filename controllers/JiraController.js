@@ -296,9 +296,9 @@ exports.getTasks = async (req, res) => {
 };
 
 // POST: Tạo Task (OAuth Version)
+// Quy tắc: Jira thành công 100% mới lưu DB — tránh Sync cleanup xóa nhầm
 exports.createTask = async (req, res) => {
     try {
-        const currentUser = req.user;
         const { 
             team_id, 
             summary, 
@@ -311,7 +311,6 @@ exports.createTask = async (req, res) => {
             sprint_id
         } = req.body;
 
-        // Validate
         if (!team_id) return res.status(400).json({ error: 'Thiếu team_id' });
         if (!summary) return res.status(400).json({ error: 'Thiếu summary (Tên task)' });
 
@@ -319,18 +318,19 @@ exports.createTask = async (req, res) => {
         if (!team) return res.status(404).json({ error: 'Team not found' });
         if (!team.jira_project_key) return res.status(400).json({ error: 'Team chưa có Jira Project Key' });
 
-        // Lấy OAuth config
         const { accessToken, cloudId, jira, onTokenRefresh } = await getJiraOAuthConfig(req);
-
-        // Dùng API v2 (plain text description) — Đồng bộ 1.5 chiều
         const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
+
+        // === BƯỚC 1: Tạo Issue trên Jira (API v2) — Chờ 201 Created, thất bại -> throw
         const jiraResp = await JiraSyncService.createIssueV2({
             client: clientV2,
             projectKey: team.jira_project_key,
             data: { summary, description: description || '' }
         });
+        const issueKey = jiraResp.key;
+        const issueId = String(jiraResp.id); // Sync tìm theo String(issue.id)
 
-        // Xử lý Sprint
+        // === BƯỚC 2: Nếu có sprint_id — Add vào Sprint (Agile API), thất bại -> throw
         let finalSprintId = null;
         if (sprint_id) {
             const sprintTarget = await Sprint.findById(sprint_id);
@@ -339,19 +339,19 @@ exports.createTask = async (req, res) => {
                     accessToken,
                     cloudId,
                     sprintId: sprintTarget.jira_sprint_id,
-                    issueKey: jiraResp.key,
+                    issueKey,
                     onTokenRefresh
                 });
                 finalSprintId = sprint_id;
             }
         }
 
-        // Lưu Task vào MongoDB
+        // === BƯỚC 3: CHỈ KHI TẤT CẢ JIRA API THÀNH CÔNG — mới lưu MongoDB
         const newTask = new JiraTask({
             team_id: team._id,
             sprint_id: finalSprintId,
-            issue_key: jiraResp.key,
-            issue_id: jiraResp.id,
+            issue_id: issueId,
+            issue_key: issueKey,
             summary,
             description: description || '',
             story_point: story_point || 0,
@@ -365,7 +365,7 @@ exports.createTask = async (req, res) => {
         });
 
         await newTask.save();
-        
+
         if (finalSprintId) {
             await newTask.populate('sprint_id', 'name state');
         }
@@ -377,22 +377,20 @@ exports.createTask = async (req, res) => {
 
     } catch (error) {
         console.error('❌ Create Task Error:', error.message);
-        
         if (error.code === 'JIRA_NOT_CONNECTED') {
             return res.status(400).json({ error: error.message, requiresAuth: true });
         }
         if (error.code === 'REFRESH_TOKEN_MISSING' || error.code === 'REFRESH_TOKEN_EXPIRED') {
             return res.status(401).json({ error: error.message, requiresReauth: true });
         }
-        
         res.status(500).json({ error: error.message });
     }
 };
 
 // PUT: Update Task (OAuth Version)
+// Quy tắc: Tất cả Jira API thành công mới update DB — thất bại -> throw
 exports.updateTask = async (req, res) => {
     try {
-        const currentUser = req.user;
         const { id } = req.params;
         const { 
             team_id, summary, description, 
@@ -401,49 +399,36 @@ exports.updateTask = async (req, res) => {
             sprint_id, status,
             start_date, due_date
         } = req.body;
-        
+
         if (!team_id) return res.status(400).json({ error: 'Thiếu team_id.' });
 
         const task = await JiraTask.findById(id);
         const team = await Team.findById(team_id);
         if (!task || !team) return res.status(404).json({ error: 'Task hoặc Team không tồn tại' });
 
-        // Lấy OAuth config
         const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
-
-        // Dùng API v2 (plain text description) — Đồng bộ 1.5 chiều
         const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
 
-        // 1. Update Issue trên Jira (summary, description)
-        try {
-            const updateFields = {};
-            if (summary !== undefined) updateFields.summary = summary;
-            if (description !== undefined) updateFields.description = description;
-            if (Object.keys(updateFields).length > 0) {
-                await JiraSyncService.updateIssueV2({
-                    client: clientV2,
-                    issueIdOrKey: task.issue_key,
-                    data: updateFields
-                });
-            }
-        } catch (jiraErr) {
-            return res.status(500).json({ error: 'Lỗi Sync Jira: ' + jiraErr.message });
+        // === BƯỚC 1–3: GỌI TẤT CẢ JIRA API TRƯỚC — thất bại bất kỳ -> throw
+        const updateFields = {};
+        if (summary !== undefined) updateFields.summary = summary;
+        if (description !== undefined) updateFields.description = description;
+        if (Object.keys(updateFields).length > 0) {
+            await JiraSyncService.updateIssueV2({
+                client: clientV2,
+                issueIdOrKey: task.issue_key,
+                data: updateFields
+            });
         }
 
-        // 2. Xử lý Status Transition (dùng v2 client)
         if (status && status !== task.status_name) {
-            const ok = await JiraSyncService.transitionIssue({
+            await JiraSyncService.transitionIssue({
                 client: clientV2,
                 issueKey: task.issue_key,
                 targetStatusName: status
             });
-            if (ok) {
-                task.status_name = status;
-                task.status_category = status;
-            }
         }
 
-        // 3. Xử lý Sprint Move
         if (sprint_id !== undefined) {
             if (sprint_id) {
                 const sp = await Sprint.findById(sprint_id);
@@ -455,7 +440,6 @@ exports.updateTask = async (req, res) => {
                         issueKey: task.issue_key,
                         onTokenRefresh
                     });
-                    task.sprint_id = sprint_id;
                 }
             } else {
                 await JiraSyncService.moveIssueToBacklog({
@@ -464,74 +448,71 @@ exports.updateTask = async (req, res) => {
                     issueKey: task.issue_key,
                     onTokenRefresh
                 });
-                task.sprint_id = null;
             }
         }
 
-        // 4. Update DB
+        // === BƯỚC 4: CHỈ KHI TẤT CẢ JIRA API THÀNH CÔNG — mới update DB
         task.team_id = team_id;
-        if (summary) task.summary = summary;
-        if (description) task.description = description;
+        if (summary !== undefined) task.summary = summary;
+        if (description !== undefined) task.description = description;
         if (story_point !== undefined) task.story_point = story_point;
         if (assignee_account_id !== undefined) task.assignee_account_id = assignee_account_id;
         if (reporter_account_id !== undefined) task.reporter_account_id = reporter_account_id;
-        if (start_date) task.start_date = new Date(start_date);
-        if (due_date) task.due_date = new Date(due_date);
-        
-        task.updated_at = Date.now();
+        if (start_date !== undefined) task.start_date = start_date ? new Date(start_date) : null;
+        if (due_date !== undefined) task.due_date = due_date ? new Date(due_date) : null;
+        if (status && status !== task.status_name) {
+            task.status_name = status;
+            task.status_category = status;
+        }
+        if (sprint_id !== undefined) {
+            task.sprint_id = sprint_id || null;
+        }
+        task.updated_at = new Date();
         await task.save();
-        
+
         res.json({ message: '✅ Cập nhật thành công', data: task });
-    } catch (error) { 
+    } catch (error) {
         console.error('❌ Update Task Error:', error.message);
-        
         if (error.code === 'JIRA_NOT_CONNECTED') {
             return res.status(400).json({ error: error.message, requiresAuth: true });
         }
         if (error.code === 'REFRESH_TOKEN_MISSING' || error.code === 'REFRESH_TOKEN_EXPIRED') {
             return res.status(401).json({ error: error.message, requiresReauth: true });
         }
-        
-        res.status(500).json({ error: error.message }); 
+        res.status(500).json({ error: error.message });
     }
 };
 
 // DELETE: Xóa Task (OAuth Version)
+// Quy tắc: Jira delete thành công 100% mới xóa DB — thất bại -> throw
 exports.deleteTask = async (req, res) => {
     try {
-        const currentUser = req.user;
         const task = await JiraTask.findById(req.params.id);
         if (!task) return res.status(404).json({ error: 'Task not found' });
 
         const team = await Team.findById(task.team_id);
         if (!team) return res.status(404).json({ error: 'Team not found' });
 
-        // Xóa trên Jira trước (API v2 — Đồng bộ 1.5 chiều)
-        try {
-            const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
-            const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
-            await JiraSyncService.deleteIssueV2({
-                client: clientV2,
-                issueIdOrKey: task.issue_key
-            });
-        } catch (e) {
-            console.warn('⚠️ Không thể xóa trên Jira:', e.message);
-            // Continue anyway để xóa local DB
-        }
+        const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
+        const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
 
-        // Xóa trong DB
+        // === BƯỚC 1: Xóa trên Jira — thất bại -> throw, KHÔNG xóa DB
+        await JiraSyncService.deleteIssueV2({
+            client: clientV2,
+            issueIdOrKey: task.issue_key
+        });
+
+        // === BƯỚC 2: CHỈ KHI JIRA DELETE THÀNH CÔNG — mới xóa MongoDB
         await JiraTask.findByIdAndDelete(req.params.id);
         res.json({ message: '✅ Đã xóa Task' });
-    } catch (error) { 
+    } catch (error) {
         console.error('❌ Delete Task Error:', error.message);
-        
         if (error.code === 'JIRA_NOT_CONNECTED') {
             return res.status(400).json({ error: error.message, requiresAuth: true });
         }
         if (error.code === 'REFRESH_TOKEN_MISSING' || error.code === 'REFRESH_TOKEN_EXPIRED') {
             return res.status(401).json({ error: error.message, requiresReauth: true });
         }
-        
-        res.status(500).json({ error: error.message }); 
+        res.status(500).json({ error: error.message });
     }
 };
