@@ -1,6 +1,45 @@
 const axios = require('axios');
 const JiraAuthService = require('./JiraAuthService');
 
+// =========================
+// 0. HELPER: ADF → Plain Text
+// =========================
+
+/**
+ * Chuyển ADF (Atlassian Document Format) sang plain text.
+ * Jira API v3 trả về description dạng ADF object; MongoDB schema yêu cầu String.
+ * @param {*} adfData - null/undefined | string | ADF object { type: 'doc', content: [...] }
+ * @returns {string}
+ */
+function parseAdfToString(adfData) {
+  if (adfData == null || adfData === undefined) {
+    return '';
+  }
+  if (typeof adfData === 'string') {
+    return adfData;
+  }
+  if (typeof adfData !== 'object') {
+    return String(adfData);
+  }
+
+  const texts = [];
+  function extractText(node) {
+    if (!node) return;
+    if (node.text && typeof node.text === 'string') {
+      texts.push(node.text);
+    }
+    if (Array.isArray(node.content)) {
+      node.content.forEach(extractText);
+    }
+  }
+  extractText(adfData);
+  const result = texts.join(' ').trim();
+  if (adfData.type === 'doc' && texts.length > 0) {
+    console.log('📄 [parseAdfToString] Đã parse ADF → plain text, độ dài:', result.length, 'ký tự');
+  }
+  return result;
+}
+
 /**
  * JiraSyncService - Sync dữ liệu từ Jira với Auto-Refresh Token
  * Tự động retry khi gặp lỗi 401 Unauthorized
@@ -577,7 +616,7 @@ async function fetchAllBoardIssues({ accessToken, cloudId, boardId, onTokenRefre
           issue_key: issue.key,
           issue_id: issue.id,
           summary: issue.fields.summary,
-          description: issue.fields.description || '',
+          description: parseAdfToString(issue.fields.description),
           status_name: issue.fields.status.name,
           status_category: issue.fields.status.statusCategory.name,
           assignee_account_id: issue.fields.assignee ? issue.fields.assignee.accountId : null,
@@ -1094,7 +1133,7 @@ async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, t
           issue_id: String(issue.id),
           issue_key: issue.key,
           summary: issue.fields?.summary ?? '',
-          description: issue.fields?.description ?? '',
+          description: parseAdfToString(issue.fields?.description),
           status_name: issue.fields?.status?.name ?? '',
           status_category: issue.fields?.status?.statusCategory?.key ?? '',
           story_point: issue.fields?.customfield_10026 ?? 0,
