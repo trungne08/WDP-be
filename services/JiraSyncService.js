@@ -561,7 +561,7 @@ async function startSprint({ accessToken, cloudId, sprintId, startDate, endDate,
 }
 
 /**
- * Update Sprint
+ * Update Sprint (Partial Update — POST, không dùng PUT để tránh ghi đè null)
  * @param {Object} options
  * @param {string} options.accessToken
  * @param {string} options.cloudId
@@ -573,8 +573,19 @@ async function startSprint({ accessToken, cloudId, sprintId, startDate, endDate,
 async function updateSprint({ accessToken, cloudId, sprintId, data, onTokenRefresh }) {
   try {
     const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
-    
-    const response = await client.put(`/sprint/${sprintId}`, data);
+
+    // Chỉ gửi field có giá trị (không gửi undefined/null để tránh ghi đè data cũ trên Jira)
+    const payload = {};
+    if (data.name != null && data.name !== '') payload.name = data.name;
+    if (data.state != null && data.state !== '') payload.state = data.state;
+    if (data.startDate != null && data.startDate !== '') payload.startDate = data.startDate;
+    if (data.endDate != null && data.endDate !== '') payload.endDate = data.endDate;
+
+    if (Object.keys(payload).length === 0) {
+      return { ok: true };
+    }
+
+    const response = await client.post(`/sprint/${sprintId}`, payload);
     return response.data;
   } catch (error) {
     console.error('❌ [Jira Agile] Lỗi update sprint:', error.message);
