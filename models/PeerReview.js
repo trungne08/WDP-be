@@ -28,5 +28,4 @@ const PeerReviewSchema = new Schema({
 // Đảm bảo 1 người chỉ đánh giá 1 người khác 1 lần duy nhất trong toàn bộ dự án (team)
 PeerReviewSchema.index({ team_id: 1, evaluator_id: 1, evaluated_id: 1 }, { unique: true });
 
-// Tránh lỗi OverwriteModelError
-module.exports = mongoose.models.PeerReview || mongoose.model('PeerReview', PeerReviewSchema);
+module.exports = mongoose.model('PeerReview', PeerReviewSchema);
