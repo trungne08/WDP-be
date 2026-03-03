@@ -331,18 +331,26 @@ exports.createTask = async (req, res) => {
         const issueId = String(jiraResp.id); // Sync tìm theo String(issue.id)
 
         // === BƯỚC 2: Nếu có sprint_id — Add vào Sprint (Agile API), thất bại -> throw
+        // QUAN TRỌNG: sprint_id là Mongo _id → query Sprint để lấy jira_sprint_id (số) gửi lên Jira
         let finalSprintId = null;
         if (sprint_id) {
             const sprintTarget = await Sprint.findById(sprint_id);
             if (sprintTarget) {
-                await JiraSyncService.addIssueToSprint({
-                    accessToken,
-                    cloudId,
-                    sprintId: sprintTarget.jira_sprint_id,
-                    issueKey,
-                    onTokenRefresh
-                });
-                finalSprintId = sprint_id;
+                // Đảm bảo sprint thuộc cùng team
+                if (sprintTarget.team_id?.toString() !== team._id?.toString()) {
+                    return res.status(400).json({ error: 'Sprint không thuộc team này' });
+                }
+                const jiraSprintId = Number(sprintTarget.jira_sprint_id);
+                if (!isNaN(jiraSprintId) && jiraSprintId > 0) {
+                    await JiraSyncService.addIssueToSprint({
+                        accessToken,
+                        cloudId,
+                        sprintId: jiraSprintId,
+                        issueKey,
+                        onTokenRefresh
+                    });
+                }
+                finalSprintId = sprint_id; // Lưu sprint_id vào DB (kể cả Backlog)
             }
         }
 
@@ -433,10 +441,17 @@ exports.updateTask = async (req, res) => {
             if (sprint_id) {
                 const sp = await Sprint.findById(sprint_id);
                 if (sp) {
+                    if (sp.team_id?.toString() !== team_id?.toString()) {
+                        return res.status(400).json({ error: 'Sprint không thuộc team này' });
+                    }
+                    const jiraSprintId = Number(sp.jira_sprint_id);
+                    if (isNaN(jiraSprintId) || jiraSprintId <= 0) {
+                        return res.status(400).json({ error: 'Sprint này là Backlog, dùng move to backlog.' });
+                    }
                     await JiraSyncService.addIssueToSprint({
                         accessToken,
                         cloudId,
-                        sprintId: sp.jira_sprint_id,
+                        sprintId: jiraSprintId,
                         issueKey: task.issue_key,
                         onTokenRefresh
                     });
