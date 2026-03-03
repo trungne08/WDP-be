@@ -7,6 +7,7 @@ const teamRoutes = require('./routes/teamRoutes');
 const teamSyncRoutes = require('./routes/teamSyncRoutes');
 const teamMemberRoutes = require('./routes/teamMemberRoutes');
 const teamDataRoutes = require('./routes/teamDataRoutes');
+const reviewRoutes = require('./routes/reviewRoutes');
 
 // Export function để setup routes
 module.exports = (app) => {
@@ -19,6 +20,7 @@ module.exports = (app) => {
     teamSyncRoutes(app);
     teamMemberRoutes(app);
     teamDataRoutes(app);
+    app.use(reviewRoutes);
     require('./routes/notificationRoutes')(app); // <--- Đã thêm route thông báo
     require('./routes/academicRoutes')(app); // <--- Đã thêm route học thuật (Schedule, Assignment, Lab)
     require('./routes/webhookRoutes')(app); // <--- Webhook cho Jira real-time sync
