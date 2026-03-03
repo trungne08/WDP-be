@@ -1,13 +1,14 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
+// Remove the model from Mongoose models cache if it already exists
+if (mongoose.models.PeerReview) {
+    delete mongoose.models.PeerReview;
+}
+
 const PeerReviewSchema = new Schema({
     team_id: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
-    
-    // Người đi đánh giá
     evaluator_id: { type: Schema.Types.ObjectId, ref: 'Student', required: true }, 
-    
-    // Người được đánh giá
     evaluated_id: { type: Schema.Types.ObjectId, ref: 'Student', required: true }, 
     
     rating: {
@@ -19,13 +20,13 @@ const PeerReviewSchema = new Schema({
     comment: {
         type: String,
         required: function() {
-            return this.rating < 2.0; // Dưới 2 sao bắt buộc có lý do
+            return this.rating < 2.0; 
         }
     },
     submitted_at: { type: Date, default: Date.now }
 });
 
-// Đảm bảo 1 người chỉ đánh giá 1 người khác 1 lần duy nhất trong toàn bộ dự án (team)
 PeerReviewSchema.index({ team_id: 1, evaluator_id: 1, evaluated_id: 1 }, { unique: true });
 
+// Always compile and export the new model
 module.exports = mongoose.model('PeerReview', PeerReviewSchema);
