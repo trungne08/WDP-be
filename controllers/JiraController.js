@@ -84,8 +84,19 @@ const getJiraConfig = (team) => {
     };
 };
 
+// Format ngày chuẩn Jira (YYYY-MM-DDThh:mm:ssZ — không milliseconds)
+const formatDateForJira = (dateString) => {
+    if (!dateString) return null;
+    try {
+        const date = new Date(dateString);
+        return date.toISOString().split('.')[0] + 'Z';
+    } catch (err) {
+        return dateString;
+    }
+};
+
 // ==========================================
-// 1. SPRINT CONTROLLER (GIỮ NGUYÊN CỦA BẠN)
+// 1. SPRINT CONTROLLER
 // ==========================================
 
 // GET: Lấy danh sách Sprint
@@ -123,14 +134,14 @@ exports.createSprint = async (req, res) => {
         // Lấy OAuth config từ user
         const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
         
-        // Tạo Sprint qua OAuth
+        // Tạo Sprint qua OAuth (format ngày chuẩn Jira — không milliseconds)
         const jiraSprint = await JiraSyncService.createSprint({
             accessToken,
             cloudId,
             boardId: team.jira_board_id,
             name,
-            startDate: start_date,
-            endDate: end_date,
+            startDate: formatDateForJira(start_date),
+            endDate: formatDateForJira(end_date),
             onTokenRefresh
         });
 
@@ -175,13 +186,13 @@ exports.startSprint = async (req, res) => {
         // Lấy OAuth config
         const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
 
-        // Start Sprint qua OAuth
+        // Start Sprint qua OAuth (format ngày chuẩn Jira — không milliseconds)
         await JiraSyncService.startSprint({
             accessToken,
             cloudId,
             sprintId: sprint.jira_sprint_id,
-            startDate: start_date,
-            endDate: end_date,
+            startDate: formatDateForJira(start_date),
+            endDate: formatDateForJira(end_date),
             onTokenRefresh
         });
 
@@ -221,25 +232,26 @@ exports.updateSprint = async (req, res) => {
         // Lấy OAuth config
         const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
 
-        // Update Sprint qua OAuth
-        await JiraSyncService.updateSprint({
-            accessToken,
-            cloudId,
-            sprintId: sprint.jira_sprint_id,
-            data: {
-                name,
-                state,
-                startDate: start_date,
-                endDate: end_date
-            },
-            onTokenRefresh
-        });
+        const dataToUpdate = {};
+        if (req.body.name !== undefined) dataToUpdate.name = req.body.name;
+        if (req.body.start_date !== undefined) dataToUpdate.startDate = formatDateForJira(req.body.start_date);
+        if (req.body.end_date !== undefined) dataToUpdate.endDate = formatDateForJira(req.body.end_date);
+        if (req.body.state !== undefined) dataToUpdate.state = req.body.state;
 
-        // Update DB
-        if (name) sprint.name = name;
-        if (state) sprint.state = state;
-        if (start_date) sprint.start_date = start_date;
-        if (end_date) sprint.end_date = end_date;
+        if (Object.keys(dataToUpdate).length > 0) {
+            await JiraSyncService.updateSprint({
+                accessToken,
+                cloudId,
+                sprintId: sprint.jira_sprint_id,
+                data: dataToUpdate,
+                onTokenRefresh
+            });
+        }
+
+        if (req.body.name !== undefined) sprint.name = req.body.name;
+        if (req.body.state !== undefined) sprint.state = req.body.state;
+        if (req.body.start_date !== undefined) sprint.start_date = req.body.start_date;
+        if (req.body.end_date !== undefined) sprint.end_date = req.body.end_date;
         
         await sprint.save();
 
