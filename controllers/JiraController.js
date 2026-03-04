@@ -1,6 +1,7 @@
 const { Sprint, JiraTask } = require('../models/JiraData');
 const Team = require('../models/Team');
 const Project = require('../models/Project');
+const models = require('../models');
 const JiraService = require('../services/JiraService'); // Legacy - Deprecated
 const JiraSyncService = require('../services/JiraSyncService'); // OAuth version
 const JiraAuthService = require('../services/JiraAuthService');
@@ -84,6 +85,48 @@ const getJiraConfig = (team) => {
         token: team.api_token_jira 
     };
 };
+
+/**
+ * Resolve assignee_id (User/Student ID hoặc TeamMember ID) → Jira accountId
+ * @param {string|ObjectId} assigneeId - Internal ID (Student._id hoặc TeamMember._id)
+ * @returns {Promise<string|null>} - jiraAccountId hoặc null
+ * @throws {Error} - Nếu assignee_id được gửi nhưng user chưa kết nối Jira
+ */
+async function resolveAssigneeToJiraAccountId(assigneeId) {
+  if (!assigneeId) return null;
+
+  // 1. Thử lookup Student trước (assignee_id thường là Student ID)
+  const Student = models.Student;
+  const TeamMember = models.TeamMember;
+
+  const student = await Student.findById(assigneeId).lean();
+  if (student) {
+    const jiraAccountId = student.integrations?.jira?.jiraAccountId;
+    if (!jiraAccountId) {
+      const err = new Error('Thành viên được gán chưa kết nối tài khoản Jira. Vui lòng yêu cầu họ đồng bộ tài khoản trước khi gán task!');
+      err.code = 'ASSIGNEE_NOT_LINKED_JIRA';
+      throw err;
+    }
+    return jiraAccountId;
+  }
+
+  // 2. Fallback: TeamMember ID
+  const teamMember = await TeamMember.findById(assigneeId)
+    .populate('student_id', 'integrations')
+    .lean();
+  if (teamMember) {
+    const jiraAccountId = teamMember.jira_account_id
+      || teamMember.student_id?.integrations?.jira?.jiraAccountId;
+    if (!jiraAccountId) {
+      const err = new Error('Thành viên được gán chưa kết nối tài khoản Jira. Vui lòng yêu cầu họ đồng bộ tài khoản trước khi gán task!');
+      err.code = 'ASSIGNEE_NOT_LINKED_JIRA';
+      throw err;
+    }
+    return jiraAccountId;
+  }
+
+  return null;
+}
 
 // Format ngày chuẩn Jira (YYYY-MM-DDThh:mm:ssZ — không milliseconds)
 const formatDateForJira = (dateString) => {
@@ -343,6 +386,7 @@ exports.createTask = async (req, res) => {
             team_id, 
             summary, 
             description, 
+            assignee_id, 
             assignee_account_id, 
             reporter_account_id, 
             story_point, 
@@ -364,14 +408,30 @@ exports.createTask = async (req, res) => {
             return res.status(400).json({ error: 'Team/Project chưa có Jira Project Key. Vui lòng cấu hình trên Project hoặc Team.' });
         }
 
+        // Ánh xạ assignee: assignee_id (nội bộ) → jiraAccountId
+        let assigneeAccountId = assignee_account_id || null;
+        if (assignee_id) {
+            assigneeAccountId = await resolveAssigneeToJiraAccountId(assignee_id);
+        }
+
         const { accessToken, cloudId, jira, onTokenRefresh } = await getJiraOAuthConfig(req);
         const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
+
+        const createData = { 
+            summary, 
+            description: description || '',
+            ...(assigneeAccountId && { assigneeAccountId }),
+            ...(reporter_account_id && { reporterAccountId: reporter_account_id })
+        };
+        if (!reporter_account_id && jira?.jiraAccountId) {
+            createData.reporterAccountId = jira.jiraAccountId;
+        }
 
         // === BƯỚC 1: Tạo Issue trên Jira (API v2) — Chờ 201 Created, thất bại -> throw
         const jiraResp = await JiraSyncService.createIssueV2({
             client: clientV2,
             projectKey,
-            data: { summary, description: description || '' }
+            data: createData
         });
         const issueKey = jiraResp.key;
         const issueId = String(jiraResp.id); // Sync tìm theo String(issue.id)
@@ -400,6 +460,20 @@ exports.createTask = async (req, res) => {
             }
         }
 
+        // Resolve assignee_id (TeamMember) cho JiraTask nếu có assignee_id và team_id
+        let assigneeMemberId = null;
+        if (assignee_id && team_id) {
+            const tm = await models.TeamMember.findOne({
+                team_id,
+                $or: [
+                    { student_id: assignee_id },
+                    { _id: assignee_id }
+                ],
+                is_active: true
+            }).select('_id').lean();
+            assigneeMemberId = tm?._id || null;
+        }
+
         // === BƯỚC 3: CHỈ KHI TẤT CẢ JIRA API THÀNH CÔNG — mới lưu MongoDB
         const newTask = new JiraTask({
             team_id: team._id,
@@ -409,7 +483,8 @@ exports.createTask = async (req, res) => {
             summary,
             description: description || '',
             story_point: story_point || 0,
-            assignee_account_id: assignee_account_id || null,
+            assignee_account_id: assigneeAccountId || null,
+            assignee_id: assigneeMemberId,
             reporter_account_id: reporter_account_id || jira.jiraAccountId,
             start_date: start_date ? new Date(start_date) : null,
             due_date: due_date ? new Date(due_date) : null,
@@ -434,6 +509,9 @@ exports.createTask = async (req, res) => {
         if (error.code === 'JIRA_NOT_CONNECTED') {
             return res.status(400).json({ error: error.message, requiresAuth: true });
         }
+        if (error.code === 'ASSIGNEE_NOT_LINKED_JIRA') {
+            return res.status(400).json({ error: error.message });
+        }
         if (error.code === 'REFRESH_TOKEN_MISSING' || error.code === 'REFRESH_TOKEN_EXPIRED') {
             return res.status(401).json({ error: error.message, requiresReauth: true });
         }
@@ -448,7 +526,7 @@ exports.updateTask = async (req, res) => {
         const { id } = req.params;
         const { 
             team_id, summary, description, 
-            story_point, assignee_account_id, 
+            story_point, assignee_id, assignee_account_id, 
             reporter_account_id,
             sprint_id, status,
             start_date, due_date
@@ -460,6 +538,18 @@ exports.updateTask = async (req, res) => {
         const team = await Team.findById(team_id);
         if (!task || !team) return res.status(404).json({ error: 'Task hoặc Team không tồn tại' });
 
+        // Ánh xạ assignee: assignee_id (nội bộ) → jiraAccountId (khi gán người)
+        let assigneeAccountId = undefined;
+        if (assignee_id !== undefined || assignee_account_id !== undefined) {
+            if (assignee_id === null || assignee_id === '' || assignee_account_id === null || assignee_account_id === '') {
+                assigneeAccountId = null; // Unassign
+            } else if (assignee_id) {
+                assigneeAccountId = await resolveAssigneeToJiraAccountId(assignee_id);
+            } else {
+                assigneeAccountId = assignee_account_id || null;
+            }
+        }
+
         const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
         const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
 
@@ -467,6 +557,8 @@ exports.updateTask = async (req, res) => {
         const updateFields = {};
         if (summary !== undefined) updateFields.summary = summary;
         if (description !== undefined) updateFields.description = description;
+        if (assigneeAccountId !== undefined) updateFields.assigneeAccountId = assigneeAccountId;
+        if (reporter_account_id !== undefined) updateFields.reporterAccountId = reporter_account_id || null;
         if (Object.keys(updateFields).length > 0) {
             await JiraSyncService.updateIssueV2({
                 client: clientV2,
@@ -512,12 +604,31 @@ exports.updateTask = async (req, res) => {
             }
         }
 
+        // Resolve assignee_id (TeamMember) cho DB khi assignee được cập nhật
+        let assigneeMemberId = undefined;
+        if ((assignee_id !== undefined || assignee_account_id !== undefined) && team_id) {
+            if (!assigneeAccountId) {
+                assigneeMemberId = null;
+            } else if (assignee_id) {
+                const tm = await models.TeamMember.findOne({
+                    team_id,
+                    $or: [
+                        { student_id: assignee_id },
+                        { _id: assignee_id }
+                    ],
+                    is_active: true
+                }).select('_id').lean();
+                assigneeMemberId = tm?._id || null;
+            }
+        }
+
         // === BƯỚC 4: CHỈ KHI TẤT CẢ JIRA API THÀNH CÔNG — mới update DB
         task.team_id = team_id;
         if (summary !== undefined) task.summary = summary;
         if (description !== undefined) task.description = description;
         if (story_point !== undefined) task.story_point = story_point;
-        if (assignee_account_id !== undefined) task.assignee_account_id = assignee_account_id;
+        if (assigneeAccountId !== undefined) task.assignee_account_id = assigneeAccountId;
+        if (assigneeMemberId !== undefined) task.assignee_id = assigneeMemberId;
         if (reporter_account_id !== undefined) task.reporter_account_id = reporter_account_id;
         if (start_date !== undefined) task.start_date = start_date ? new Date(start_date) : null;
         if (due_date !== undefined) task.due_date = due_date ? new Date(due_date) : null;
@@ -536,6 +647,9 @@ exports.updateTask = async (req, res) => {
         console.error('❌ Update Task Error:', error.message);
         if (error.code === 'JIRA_NOT_CONNECTED') {
             return res.status(400).json({ error: error.message, requiresAuth: true });
+        }
+        if (error.code === 'ASSIGNEE_NOT_LINKED_JIRA') {
+            return res.status(400).json({ error: error.message });
         }
         if (error.code === 'REFRESH_TOKEN_MISSING' || error.code === 'REFRESH_TOKEN_EXPIRED') {
             return res.status(401).json({ error: error.message, requiresReauth: true });

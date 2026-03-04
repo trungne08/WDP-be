@@ -822,14 +822,16 @@ async function deleteIssue({ client, issueKey }) {
  */
 async function createIssueV2({ client, projectKey, data }) {
   try {
-    const payload = {
-      fields: {
-        project: { key: projectKey },
-        summary: data.summary,
-        description: data.description || '',
-        issuetype: { name: 'Task' }
-      }
+    const fields = {
+      project: { key: projectKey },
+      summary: data.summary,
+      description: data.description || '',
+      issuetype: { name: 'Task' }
     };
+    if (data.assigneeAccountId) fields.assignee = { accountId: data.assigneeAccountId };
+    if (data.reporterAccountId) fields.reporter = { accountId: data.reporterAccountId };
+
+    const payload = { fields };
     const response = await client.post('/issue', payload);
     if (response.status === 201 && response.data) {
       return { id: response.data.id, key: response.data.key };
@@ -858,6 +860,12 @@ async function updateIssueV2({ client, issueIdOrKey, data }) {
     const fields = {};
     if (data.summary != null) fields.summary = data.summary;
     if (data.description != null) fields.description = data.description;
+    if (data.assigneeAccountId !== undefined) {
+      fields.assignee = data.assigneeAccountId ? { accountId: data.assigneeAccountId } : null;
+    }
+    if (data.reporterAccountId !== undefined) {
+      fields.reporter = data.reporterAccountId ? { accountId: data.reporterAccountId } : null;
+    }
     if (Object.keys(fields).length === 0) return true;
 
     const response = await client.put(`/issue/${issueIdOrKey}`, { fields });
