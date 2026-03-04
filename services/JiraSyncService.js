@@ -1,6 +1,10 @@
 const axios = require('axios');
 const JiraAuthService = require('./JiraAuthService');
 
+// Global mutex cho toàn bộ Jira OAuth refresh flow (Platform + Agile)
+// Đảm bảo mọi request 401 đều dùng chung một lần refresh token.
+let jiraRefreshTokenPromise = null;
+
 // =========================
 // 0. HELPER: ADF → Plain Text
 // =========================
@@ -145,8 +149,18 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh, apiVersion 
         console.log('   - Original token (first 20):', originalRequest.headers.Authorization?.substring(0, 27) || 'MISSING');
 
         try {
-          // Gọi callback để refresh token
-          const newAccessToken = await onTokenRefresh();
+          // Dùng Mutex toàn cục: nếu đã có luồng refresh, các request sau chỉ cần await
+          if (!jiraRefreshTokenPromise) {
+            jiraRefreshTokenPromise = (async () => {
+              try {
+                return await onTokenRefresh();
+              } finally {
+                jiraRefreshTokenPromise = null;
+              }
+            })();
+          }
+
+          const newAccessToken = await jiraRefreshTokenPromise;
 
           console.log('✅ [Jira Sync] Got new token (first 20):', newAccessToken ? newAccessToken.substring(0, 20) + '...' : 'NULL');
 
@@ -420,7 +434,16 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
       if (error.response?.status === 401 && !originalRequest._retry) {
         originalRequest._retry = true;
         try {
-          const newAccessToken = await onTokenRefresh();
+          if (!jiraRefreshTokenPromise) {
+            jiraRefreshTokenPromise = (async () => {
+              try {
+                return await onTokenRefresh();
+              } finally {
+                jiraRefreshTokenPromise = null;
+              }
+            })();
+          }
+          const newAccessToken = await jiraRefreshTokenPromise;
           originalRequest.headers = originalRequest.headers || {};
           originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
           client.defaults.headers = client.defaults.headers || {};
