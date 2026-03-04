@@ -160,17 +160,29 @@ function createJiraApiClient({ accessToken, cloudId, onTokenRefresh, apiVersion 
             })();
           }
 
-          const newAccessToken = await jiraRefreshTokenPromise;
+          const tokenResult = await jiraRefreshTokenPromise;
+          const newAccessToken =
+            typeof tokenResult === 'object' && tokenResult !== null
+              ? tokenResult.accessToken
+              : tokenResult;
 
-          console.log('✅ [Jira Sync] Got new token (first 20):', newAccessToken ? newAccessToken.substring(0, 20) + '...' : 'NULL');
+          console.log(
+            '✅ [Jira Sync] Got new token (first 20):',
+            newAccessToken ? newAccessToken.substring(0, 20) + '...' : 'NULL'
+          );
 
           // BẮT BUỘC ghi đè Authorization với token mới trước khi retry
           originalRequest.headers = originalRequest.headers || {};
-          originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+          delete originalRequest.headers.authorization;
+          delete originalRequest.headers.Authorization;
+          originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+
           client.defaults.headers = client.defaults.headers || {};
-          client.defaults.headers['Authorization'] = `Bearer ${newAccessToken}`;
+          delete client.defaults.headers.authorization;
+          client.defaults.headers.Authorization = `Bearer ${newAccessToken}`;
           if (client.defaults.headers.common) {
-            client.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
+            delete client.defaults.headers.common.authorization;
+            client.defaults.headers.common.Authorization = `Bearer ${newAccessToken}`;
           }
 
           console.log('✅ [Jira Sync] Refresh thành công. Retry request với token mới');
@@ -443,13 +455,23 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
               }
             })();
           }
-          const newAccessToken = await jiraRefreshTokenPromise;
+          const tokenResult = await jiraRefreshTokenPromise;
+          const newAccessToken =
+            typeof tokenResult === 'object' && tokenResult !== null
+              ? tokenResult.accessToken
+              : tokenResult;
+
           originalRequest.headers = originalRequest.headers || {};
-          originalRequest.headers['Authorization'] = `Bearer ${newAccessToken}`;
+          delete originalRequest.headers.authorization;
+          delete originalRequest.headers.Authorization;
+          originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+
           client.defaults.headers = client.defaults.headers || {};
-          client.defaults.headers['Authorization'] = `Bearer ${newAccessToken}`;
+          delete client.defaults.headers.authorization;
+          client.defaults.headers.Authorization = `Bearer ${newAccessToken}`;
           if (client.defaults.headers.common) {
-            client.defaults.headers.common['Authorization'] = `Bearer ${newAccessToken}`;
+            delete client.defaults.headers.common.authorization;
+            client.defaults.headers.common.Authorization = `Bearer ${newAccessToken}`;
           }
           console.log('✅ [Jira Agile] Refresh token thành công, retry request');
           return client(originalRequest);
