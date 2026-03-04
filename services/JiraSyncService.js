@@ -1022,6 +1022,13 @@ async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, t
   const boards = await fetchBoards({ accessToken: currentAccessToken, cloudId, projectKey: key, onTokenRefresh });
   const boardId = boards?.[0]?.id ?? null;
 
+  // Backfill jira_board_id vào Team (giống SyncController.syncTeamData)
+  if (boardId && teamId) {
+    await models.Team.findByIdAndUpdate(teamId, { jira_board_id: boardId });
+    console.log('🟢 Ê tui vừa lấy được boardId từ Jira là:', boardId);
+    console.log('🟢 Và tui vừa ráng lưu vô cho team có ID là:', teamId);
+  }
+
   if (!boardId) {
     console.log('⚠️ [Jira Sync] Không có board cho project. Skip Sprint sync, chỉ fetch Issues (Backlog).');
   }

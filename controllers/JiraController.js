@@ -356,7 +356,13 @@ exports.createTask = async (req, res) => {
 
         const team = await Team.findById(team_id);
         if (!team) return res.status(404).json({ error: 'Team not found' });
-        if (!team.jira_project_key) return res.status(400).json({ error: 'Team chưa có Jira Project Key' });
+
+        // projectKey: ưu tiên Project (schema mới), fallback Team (backward-compatible)
+        const project = await Project.findOne({ team_id: team._id }).lean();
+        const projectKey = project?.jiraProjectKey || team.jira_project_key;
+        if (!projectKey) {
+            return res.status(400).json({ error: 'Team/Project chưa có Jira Project Key. Vui lòng cấu hình trên Project hoặc Team.' });
+        }
 
         const { accessToken, cloudId, jira, onTokenRefresh } = await getJiraOAuthConfig(req);
         const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
@@ -364,7 +370,7 @@ exports.createTask = async (req, res) => {
         // === BƯỚC 1: Tạo Issue trên Jira (API v2) — Chờ 201 Created, thất bại -> throw
         const jiraResp = await JiraSyncService.createIssueV2({
             client: clientV2,
-            projectKey: team.jira_project_key,
+            projectKey,
             data: { summary, description: description || '' }
         });
         const issueKey = jiraResp.key;

@@ -19,8 +19,11 @@ const syncJiraLeader = async (req, res) => {
             return res.status(404).json({ error: 'Không tìm thấy nhóm' });
         }
 
-        if (!team.jira_project_key) {
-            return res.status(400).json({ error: 'Nhóm chưa được liên kết với dự án Jira (thiếu project key)' });
+        // projectKey: ưu tiên Project (schema mới), fallback Team (backward-compatible)
+        const project = await models.Project.findOne({ team_id: team._id }).lean();
+        const projectKey = project?.jiraProjectKey || team.jira_project_key;
+        if (!projectKey) {
+            return res.status(400).json({ error: 'Team/Project chưa có Jira Project Key. Vui lòng cấu hình trên Project hoặc Team.' });
         }
 
         // 2. Lấy Token để gọi Jira API
@@ -44,14 +47,14 @@ const syncJiraLeader = async (req, res) => {
         // Tạm thời giả định token còn hạn hoặc client sẽ handle re-login
 
         // 3. Gọi Jira API lấy thông tin Project
-        console.log(`🔄 Đang đồng bộ Leader cho team ${team.project_name} (Jira Key: ${team.jira_project_key})...`);
+        console.log(`🔄 Đang đồng bộ Leader cho team ${team.project_name} (Jira Key: ${projectKey})...`);
         
         let projectInfo;
         try {
             projectInfo = await IntegrationService.fetchJiraProjectInfo({
                 accessToken: jiraIntegration.accessToken,
                 cloudId: jiraIntegration.cloudId,
-                projectKey: team.jira_project_key
+                projectKey
             });
         } catch (jiraError) {
             console.error('Lỗi gọi Jira API:', jiraError.response?.data || jiraError.message);
@@ -60,8 +63,8 @@ const syncJiraLeader = async (req, res) => {
             // Xử lý lỗi 410: Project không còn tồn tại
             if (status === 410) {
                 return res.status(410).json({
-                    error: `Jira Project "${team.jira_project_key}" không còn tồn tại hoặc đã bị xóa. Vui lòng kiểm tra lại Jira Project Key.`,
-                    jira_project_key: team.jira_project_key
+                    error: `Jira Project "${projectKey}" không còn tồn tại hoặc đã bị xóa. Vui lòng kiểm tra lại Jira Project Key.`,
+                    jira_project_key: projectKey
                 });
             }
             
