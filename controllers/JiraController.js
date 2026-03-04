@@ -139,6 +139,17 @@ const formatDateForJira = (dateString) => {
     }
 };
 
+// Format ngày cho Issue (YYYY-MM-DD) – dùng cho duedate/startDate
+const formatDateOnlyForJira = (dateString) => {
+    if (!dateString) return null;
+    try {
+        const date = new Date(dateString);
+        return date.toISOString().slice(0, 10);
+    } catch (err) {
+        return dateString;
+    }
+};
+
 // ==========================================
 // 1. SPRINT CONTROLLER
 // ==========================================
@@ -345,9 +356,41 @@ exports.updateSprint = async (req, res) => {
 // DELETE: Xóa Sprint
 exports.deleteSprint = async (req, res) => {
     try {
-        await Sprint.findByIdAndDelete(req.params.id);
+        const { id } = req.params;
+
+        const sprint = await Sprint.findById(id);
+        if (!sprint) return res.status(404).json({ error: 'Sprint not found' });
+
+        const team = await Team.findById(sprint.team_id);
+        if (!team) return res.status(404).json({ error: 'Team not found' });
+
+        // Lấy OAuth config
+        const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
+
+        // Nếu có jira_sprint_id hợp lệ (>0) thì xóa trên Jira trước
+        const jiraSprintId = Number(sprint.jira_sprint_id);
+        if (!isNaN(jiraSprintId) && jiraSprintId > 0) {
+            await JiraSyncService.deleteSprint({
+                accessToken,
+                cloudId,
+                sprintId: jiraSprintId,
+                onTokenRefresh
+            });
+        }
+
+        // Chỉ khi Jira delete thành công mới xóa trong DB
+        await Sprint.findByIdAndDelete(id);
         res.json({ message: 'Đã xóa Sprint' });
-    } catch (error) { res.status(500).json({ error: error.message }); }
+    } catch (error) {
+        console.error('❌ Delete Sprint Error:', error.message);
+        if (error.code === 'JIRA_NOT_CONNECTED') {
+            return res.status(400).json({ error: error.message, requiresAuth: true });
+        }
+        if (error.code === 'REFRESH_TOKEN_MISSING' || error.code === 'REFRESH_TOKEN_EXPIRED') {
+            return res.status(401).json({ error: error.message, requiresReauth: true });
+        }
+        res.status(500).json({ error: error.message });
+    }
 };
 
 // ==========================================
@@ -550,6 +593,14 @@ exports.updateTask = async (req, res) => {
             }
         }
 
+        // Chuẩn hóa ngày cho Jira (YYYY-MM-DD)
+        const formattedStartDate = start_date !== undefined && start_date
+            ? formatDateOnlyForJira(start_date)
+            : null;
+        const formattedDueDate = due_date !== undefined && due_date
+            ? formatDateOnlyForJira(due_date)
+            : null;
+
         const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
         const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
 
@@ -559,6 +610,19 @@ exports.updateTask = async (req, res) => {
         if (description !== undefined) updateFields.description = description;
         if (assigneeAccountId !== undefined) updateFields.assigneeAccountId = assigneeAccountId;
         if (reporter_account_id !== undefined) updateFields.reporterAccountId = reporter_account_id || null;
+        if (formattedStartDate !== null || start_date === null) {
+            updateFields.startDate = formattedStartDate;
+            // Sử dụng customfield cố định cho Start Date (khớp với sync)
+            updateFields.startDateFieldId = 'customfield_10015';
+        }
+        if (formattedDueDate !== null || due_date === null) {
+            updateFields.duedate = formattedDueDate;
+        }
+        if (story_point !== undefined) {
+            updateFields.storyPoint = story_point;
+            // Dùng field id đã detect & lưu trên Team (fallback default)
+            updateFields.storyPointFieldId = team.jira_story_point_field || 'customfield_10026';
+        }
         if (Object.keys(updateFields).length > 0) {
             await JiraSyncService.updateIssueV2({
                 client: clientV2,

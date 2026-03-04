@@ -594,6 +594,25 @@ async function updateSprint({ accessToken, cloudId, sprintId, data, onTokenRefre
 }
 
 /**
+ * Delete Sprint (Agile API)
+ * @param {Object} options
+ * @param {string} options.accessToken
+ * @param {string} options.cloudId
+ * @param {number} options.sprintId
+ * @param {Function} options.onTokenRefresh
+ * @returns {Promise<void>}
+ */
+async function deleteSprint({ accessToken, cloudId, sprintId, onTokenRefresh }) {
+  try {
+    const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
+    await client.delete(`/sprint/${sprintId}`);
+  } catch (error) {
+    console.error('❌ [Jira Agile] Lỗi delete sprint:', error.message);
+    throw error;
+  }
+}
+
+/**
  * Lấy tất cả Issues của Board (Sprint + Backlog)
  * @param {Object} options
  * @param {string} options.accessToken
@@ -865,6 +884,15 @@ async function updateIssueV2({ client, issueIdOrKey, data }) {
     }
     if (data.reporterAccountId !== undefined) {
       fields.reporter = data.reporterAccountId ? { accountId: data.reporterAccountId } : null;
+    }
+    if (data.duedate) {
+      fields.duedate = data.duedate;
+    }
+    if (data.storyPoint !== undefined && data.storyPointFieldId) {
+      fields[data.storyPointFieldId] = Number(data.storyPoint);
+    }
+    if (data.startDate && data.startDateFieldId) {
+      fields[data.startDateFieldId] = data.startDate;
     }
     if (Object.keys(fields).length === 0) return true;
 
@@ -1309,5 +1337,6 @@ module.exports = {
   updateIssueV2,
   deleteIssueV2,
   transitionIssue,
+  deleteSprint,
   getCustomFieldId
 };
