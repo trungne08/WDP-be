@@ -1,4 +1,5 @@
 const Team = require('../models/Team');
+const Project = require('../models/Project');
 const GithubCommit = require('../models/GitData');
 const { Sprint, JiraTask } = require('../models/JiraData');
 const GithubService = require('../services/GithubService');
@@ -17,6 +18,11 @@ exports.syncTeamData = async (req, res) => {
     try {
         const team = await Team.findById(teamId);
         if (!team) return res.status(404).json({ msg: 'Team not found' });
+
+        // Lấy Project gắn với team (schema mới lưu githubRepoUrl & jiraProjectKey trên Project)
+        const project = await Project.findOne({ team_id: team._id }).lean();
+        const projectGithubUrl = project?.githubRepoUrl || null;
+        const projectJiraKey = project?.jiraProjectKey || null;
         
         console.log(`⏳ Đang Sync dữ liệu cho Team: ${team.project_name}...`);
         const results = { git: 0, jira_sprints: 0, jira_tasks: 0, errors: [] };
@@ -24,7 +30,10 @@ exports.syncTeamData = async (req, res) => {
         // ==========================================
         // PHẦN 1: GITHUB (OAuth Version)
         // ==========================================
-        if (team.github_repo_url && currentUser.integrations?.github) {
+        // Ưu tiên repo URL từ Project (schema mới); fallback sang Team.github_repo_url (backward-compatible)
+        const repoUrl = projectGithubUrl || team.github_repo_url || null;
+
+        if (repoUrl && currentUser.integrations?.github) {
             try {
                 const github = currentUser.integrations.github;
                 
@@ -37,7 +46,7 @@ exports.syncTeamData = async (req, res) => {
                     
                     // Fetch commits từ TẤT CẢ branches với user OAuth token
                     const commits = await GithubService.fetchCommits(
-                        team.github_repo_url, 
+                        repoUrl, 
                         github.accessToken,  // User OAuth token thay vì team token
                         {
                             maxCommitsPerBranch: 100,
@@ -77,9 +86,9 @@ exports.syncTeamData = async (req, res) => {
                 }
             }
         } else {
-            if (!team.github_repo_url) {
-                results.errors.push('Team chưa có GitHub repository URL.');
-                console.log('⚠️ Team chưa có GitHub repo URL');
+            if (!repoUrl) {
+                results.errors.push('Team/Project chưa có GitHub repository URL.');
+                console.log('⚠️ Team/Project chưa có GitHub repo URL');
             }
             if (!currentUser.integrations?.github) {
                 results.errors.push('User chưa kết nối GitHub. Vui lòng kết nối GitHub trước.');
@@ -90,7 +99,7 @@ exports.syncTeamData = async (req, res) => {
         // ==========================================
         // PHẦN 2: JIRA (OAuth Version)
         // ==========================================
-        if (team.jira_board_id && currentUser.integrations?.jira) {
+        if ((team.jira_board_id || projectJiraKey) && currentUser.integrations?.jira) {
             try {
                 const jira = currentUser.integrations.jira;
                 
@@ -128,6 +137,35 @@ exports.syncTeamData = async (req, res) => {
                     };
 
                     // ==========================================
+                    // Tìm Jira Board ID: ưu tiên từ Team, fallback từ Project.jiraProjectKey
+                    // ==========================================
+                    let boardId = team.jira_board_id;
+                    if (!boardId) {
+                        if (!projectJiraKey) {
+                            results.errors.push('Team/Project chưa có Jira Project Key. Không thể xác định Board để sync Jira.');
+                            console.log('⚠️ [Team Sync] Thiếu Jira Project Key trên Project');
+                            // Bỏ qua phần Jira nhưng vẫn trả tổng kết
+                            throw new Error('Thiếu Jira Project Key cho Team/Project');
+                        }
+
+                        const boards = await JiraSyncService.fetchBoards({
+                            accessToken: jira.accessToken,
+                            cloudId: jira.cloudId,
+                            projectKey: projectJiraKey,
+                            onTokenRefresh
+                        });
+
+                        if (!boards || boards.length === 0) {
+                            results.errors.push('Không tìm thấy Jira Board cho project này. Vui lòng kiểm tra lại Jira Project Key.');
+                            console.log('⚠️ [Team Sync] Không tìm thấy Jira Board');
+                            throw new Error('Không tìm thấy Jira Board cho project');
+                        }
+
+                        boardId = boards[0].id;
+                        await Team.findByIdAndUpdate(teamId, { jira_board_id: boardId });
+                    }
+
+                    // ==========================================
                     // BƯỚC 1: SYNC TẤT CẢ SPRINTS (active, future, closed từ Jira)
                     // "Default Sprint" (jira_sprint_id: 0) được tạo ở IntegrationController/WebhookController,
                     // không có trên Jira → sẽ bị xóa ở bước cleanup bên dưới; chỉ giữ sprint thật từ Jira.
@@ -135,7 +173,7 @@ exports.syncTeamData = async (req, res) => {
                     const sprints = await JiraSyncService.fetchSprints({
                         accessToken: jira.accessToken,
                         cloudId: jira.cloudId,
-                        boardId: team.jira_board_id,
+                        boardId,
                         onTokenRefresh
                     });
 
@@ -186,7 +224,7 @@ exports.syncTeamData = async (req, res) => {
                     const allTasks = await JiraSyncService.fetchAllBoardIssues({
                         accessToken: jira.accessToken,
                         cloudId: jira.cloudId,
-                        boardId: team.jira_board_id,
+                        boardId,
                         onTokenRefresh
                     });
 

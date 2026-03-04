@@ -1,5 +1,6 @@
 const { Sprint, JiraTask } = require('../models/JiraData');
 const Team = require('../models/Team');
+const Project = require('../models/Project');
 const JiraService = require('../services/JiraService'); // Legacy - Deprecated
 const JiraSyncService = require('../services/JiraSyncService'); // OAuth version
 const JiraAuthService = require('../services/JiraAuthService');
@@ -129,16 +130,43 @@ exports.createSprint = async (req, res) => {
         
         const team = await Team.findById(team_id);
         if (!team) return res.status(404).json({ error: 'Team not found' });
-        if (!team.jira_board_id) return res.status(400).json({ error: 'Team chưa có Board ID' });
 
         // Lấy OAuth config từ user
         const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
+
+        // Lấy boardId: ưu tiên từ Team; nếu thiếu thì suy ra từ Project.jiraProjectKey
+        let boardId = team.jira_board_id;
+        if (!boardId) {
+            // Tìm project gắn với team này
+            const project = await Project.findOne({ team_id: team._id }).lean();
+            const jiraProjectKey = project?.jiraProjectKey;
+            if (!jiraProjectKey) {
+                return res.status(400).json({ error: 'Team/Project chưa có Jira Project Key để tìm Board.' });
+            }
+
+            // Gọi Jira lấy danh sách boards cho project
+            const boards = await JiraSyncService.fetchBoards({
+                accessToken,
+                cloudId,
+                projectKey: jiraProjectKey,
+                onTokenRefresh
+            });
+
+            if (!boards || boards.length === 0) {
+                return res.status(400).json({ error: 'Không tìm thấy Jira Board cho project này. Vui lòng kiểm tra lại trên Jira.' });
+            }
+
+            boardId = boards[0].id;
+
+            // Backfill lưu lại boardId vào Team để các lần sau dùng nhanh hơn
+            await Team.findByIdAndUpdate(team._id, { jira_board_id: boardId });
+        }
         
         // Tạo Sprint qua OAuth (format ngày chuẩn Jira — không milliseconds)
         const jiraSprint = await JiraSyncService.createSprint({
             accessToken,
             cloudId,
-            boardId: team.jira_board_id,
+            boardId,
             name,
             startDate: formatDateForJira(start_date),
             endDate: formatDateForJira(end_date),
