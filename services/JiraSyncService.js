@@ -430,9 +430,21 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
     timeout: 30000
   });
 
+  // 🔍 Request Interceptor: log và kiểm tra header Authorization
   client.interceptors.request.use(
     (config) => {
-      console.log('📤 [Jira Agile API] Outgoing Request', config.method?.toUpperCase(), config.url);
+      const headers = config.headers || {};
+      const rawAuth =
+        headers.Authorization ||
+        headers.authorization ||
+        (typeof headers.get === 'function' ? headers.get('Authorization') : undefined);
+
+      console.log('📤 [Jira Agile] Outgoing Request', config.method?.toUpperCase(), config.url);
+      console.log(
+        '🔑 [Jira Agile] Header Authorization:',
+        rawAuth ? rawAuth.substring(0, 30) + '...' : 'MÁ ƠI NÓ UNDEFINED!'
+      );
+
       return config;
     },
     (err) => Promise.reject(err)
@@ -461,10 +473,19 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
               ? tokenResult.accessToken
               : tokenResult;
 
+          console.log(
+            '👉 [Jira Agile Debug] Token mới lấy được:',
+            newAccessToken ? newAccessToken.substring(0, 15) + '...' : 'UNDEFINED LUN RỒI!'
+          );
+
           originalRequest.headers = originalRequest.headers || {};
-          delete originalRequest.headers.authorization;
-          delete originalRequest.headers.Authorization;
-          originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+          if (typeof originalRequest.headers.set === 'function') {
+            originalRequest.headers.set('Authorization', `Bearer ${newAccessToken}`);
+          } else {
+            delete originalRequest.headers.authorization;
+            delete originalRequest.headers.Authorization;
+            originalRequest.headers.Authorization = `Bearer ${newAccessToken}`;
+          }
 
           client.defaults.headers = client.defaults.headers || {};
           delete client.defaults.headers.authorization;
@@ -473,6 +494,10 @@ function createJiraAgileClient({ accessToken, cloudId, onTokenRefresh }) {
             delete client.defaults.headers.common.authorization;
             client.defaults.headers.common.Authorization = `Bearer ${newAccessToken}`;
           }
+
+          // Mẹo: chờ 1s để Jira kịp đồng bộ token mới
+          await new Promise(resolve => setTimeout(resolve, 1000));
+
           console.log('✅ [Jira Agile] Refresh token thành công, retry request');
           return client(originalRequest);
         } catch (refreshError) {
