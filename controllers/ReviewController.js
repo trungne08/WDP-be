@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const PeerReview = require('../models/PeerReview');
 const TeamMember = require('../models/TeamMember');
 const Team = require('../models/Team');
@@ -78,7 +79,14 @@ exports.submitPeerReview = async (req, res) => {
 // ==========================================
 exports.getTeamReviewsForLecturer = async (req, res) => {
     try {
-        const { teamId } = req.params;
+        const teamId = req.params.teamId || req.query.team_id || req.query.teamId;
+
+        if (!teamId || teamId === 'undefined' || teamId === 'null' || String(teamId).trim() === '') {
+            return res.status(400).json({ error: 'Team ID không hợp lệ hoặc bị thiếu!' });
+        }
+        if (!mongoose.Types.ObjectId.isValid(teamId)) {
+            return res.status(400).json({ error: 'Team ID không hợp lệ hoặc bị thiếu!' });
+        }
 
         // Phân quyền: Chỉ Giảng viên hoặc Admin mới được xem
         if (req.role !== 'LECTURER' && req.role !== 'ADMIN') {
