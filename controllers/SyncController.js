@@ -36,38 +36,44 @@ exports.syncTeamData = async (req, res) => {
         if (repoUrl && currentUser.integrations?.github) {
             try {
                 const github = currentUser.integrations.github;
-                
-                // Check OAuth connection
+                const branch = (req.body?.branch || req.query?.branch || '').trim() || undefined;
+
                 if (!github.accessToken) {
                     results.errors.push('User chưa kết nối GitHub OAuth. Vui lòng kết nối GitHub trước.');
                     console.log('⚠️ User chưa connect GitHub OAuth');
                 } else {
-                    console.log('🔄 [Team Sync] Đang sync GitHub qua OAuth...');
+                    console.log(`🔄 [Team Sync] Đang sync GitHub qua OAuth...${branch ? ` (nhánh: ${branch})` : ' (tất cả nhánh)'}`);
                     
-                    // Fetch commits từ TẤT CẢ branches với user OAuth token
-                    const commits = await GithubService.fetchCommits(
-                        repoUrl, 
-                        github.accessToken,  // User OAuth token thay vì team token
-                        {
-                            maxCommitsPerBranch: 100,
-                            includeBranchInfo: true
-                        }
-                    );
+                    const commits = await GithubService.fetchCommits(repoUrl, github.accessToken, {
+                        maxCommitsPerBranch: 100,
+                        includeBranchInfo: true,
+                        branch
+                    });
                     
                     for (const commit of commits) {
                         const checkResult = await GithubCommit.processCommit(commit, teamId);
+                        const branchesToAdd = (commit.branches && commit.branches.length)
+                            ? commit.branches
+                            : (commit.branch ? [commit.branch] : []);
+                        const primaryBranch = commit.branch || (commit.branches && commit.branches[0]) || null;
+
                         await GithubCommit.findOneAndUpdate(
                             { team_id: teamId, hash: commit.hash },
                             {
-                                team_id: teamId,
-                                author_email: commit.author_email,
-                                author_name: commit.author_name,
-                                message: commit.message,
-                                commit_date: commit.commit_date,
-                                url: commit.url,
-                                branches: commit.branches || [],
-                                is_counted: checkResult.is_counted,
-                                rejection_reason: checkResult.reason
+                                $set: {
+                                    team_id: teamId,
+                                    author_email: commit.author_email,
+                                    author_name: commit.author_name,
+                                    message: commit.message,
+                                    commit_date: commit.commit_date,
+                                    url: commit.url,
+                                    branch: primaryBranch,
+                                    is_counted: checkResult.is_counted,
+                                    rejection_reason: checkResult.reason
+                                },
+                                ...(branchesToAdd.length > 0 && {
+                                    $addToSet: { branches: { $each: branchesToAdd } }
+                                })
                             },
                             { upsert: true, new: true }
                         );

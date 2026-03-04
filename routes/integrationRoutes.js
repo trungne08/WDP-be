@@ -365,6 +365,43 @@ module.exports = (app) => {
 
     /**
      * @swagger
+     * /api/integrations/projects/{projectId}/github-branches:
+     *   get:
+     *     summary: Lấy danh sách branches của GitHub repo
+     *     tags: [6. Projects]
+     *     security:
+     *       - bearerAuth: []
+     *     description: Dùng cho Dropdown Select Branch (FE). Project phải có githubRepoUrl, user phải OAuth connect GitHub.
+     *     parameters:
+     *       - in: path
+     *         name: projectId
+     *         required: true
+     *         schema:
+     *           type: string
+     *     responses:
+     *       200:
+     *         description: Danh sách tên nhánh
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 branches:
+     *                   type: array
+     *                   items:
+     *                     type: string
+     *                   example: ["main", "dev", "feat/hoanghai"]
+     *       400:
+     *         description: Project chưa link GitHub hoặc user chưa connect GitHub
+     *       403:
+     *         description: Không có quyền
+     *       404:
+     *         description: Không tìm thấy project
+     */
+    app.get('/api/integrations/projects/:projectId/github-branches', authenticateToken, IntegrationController.getProjectGithubBranches);
+
+    /**
+     * @swagger
      * /api/integrations/my-commits:
      *   get:
      *     summary: Member xem commits GitHub của chính mình

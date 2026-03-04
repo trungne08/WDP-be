@@ -153,17 +153,18 @@ async function fetchCommitsFromBranch(repoUrl, token, branchName, maxCommits = 1
 // =========================
 
 /**
- * Lấy commits từ TẤT CẢ branches với deduplication
+ * Lấy commits từ TẤT CẢ branches hoặc 1 branch cụ thể
  * @param {string} repoUrl
  * @param {string} token
  * @param {Object} options
  * @param {number} options.maxCommitsPerBranch - Max commits per branch (default: 100)
  * @param {boolean} options.includeBranchInfo - Lưu thông tin branch vào commit (default: true)
+ * @param {string} [options.branch] - Nhánh cụ thể (VD: main, dev). Nếu có thì chỉ lấy commits của nhánh đó
  * @returns {Promise<Array>}
  */
 async function fetchCommits(repoUrl, token, options = {}) {
     try {
-        const { maxCommitsPerBranch = 100, includeBranchInfo = true } = options;
+        const { maxCommitsPerBranch = 100, includeBranchInfo = true, branch: branchFilter } = options;
 
         if (!repoUrl || !token) {
             console.log('⚠️ [GithubService] Thiếu URL hoặc Token');
@@ -171,6 +172,15 @@ async function fetchCommits(repoUrl, token, options = {}) {
         }
 
         const { owner, repo } = parseRepoUrl(repoUrl);
+
+        // Nếu có branch cụ thể → chỉ fetch nhánh đó
+        if (branchFilter && typeof branchFilter === 'string' && branchFilter.trim()) {
+            const branchName = branchFilter.trim();
+            console.log(`📡 [GitHub] Đang sync commits từ nhánh: ${branchName}...`);
+            const commits = await fetchCommitsFromBranch(repoUrl, token, branchName, maxCommitsPerBranch);
+            return includeBranchInfo ? commits : commits.map(c => ({ ...c, branch: undefined }));
+        }
+
         console.log(`📡 [GitHub] Đang sync commits từ: ${owner}/${repo}...`);
 
         // 1. Lấy danh sách branches
@@ -202,12 +212,12 @@ async function fetchCommits(repoUrl, token, options = {}) {
             if (!uniqueCommitsMap.has(commit.hash)) {
                 uniqueCommitsMap.set(commit.hash, {
                     ...commit,
-                    branches: [commit.branch] // Lưu branch đầu tiên
+                    branch: commit.branch,
+                    branches: [commit.branch]
                 });
             } else {
-                // Commit đã tồn tại → Thêm branch vào danh sách
                 const existing = uniqueCommitsMap.get(commit.hash);
-                if (!existing.branches.includes(commit.branch)) {
+                if (commit.branch && !existing.branches.includes(commit.branch)) {
                     existing.branches.push(commit.branch);
                 }
             }

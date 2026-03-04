@@ -851,25 +851,29 @@ exports.syncMyProjectData = async (req, res) => {
     const Team = models.Team;
     const axios = require('axios');
 
+    // branch: nhánh cụ thể do FE chọn (req.body hoặc req.query). Nếu không có thì sync tất cả nhánh
+    const branch = (req.body?.branch || req.query?.branch || '').trim() || undefined;
+
     // Log thông tin project để debug
     console.log(`🔄 [Sync] Bắt đầu sync project "${project.name}" (ID: ${project._id})`);
     console.log(`   📦 GitHub Repo: ${project.githubRepoUrl || '(không có)'}`);
     console.log(`   📦 Jira Project Key: ${project.jiraProjectKey || '(không có)'}`);
+    console.log(`   🌿 Branch: ${branch || '(tất cả)'}`);
     console.log(`   👤 User: ${user.email} (${user._id})`);
 
     // ==========================================
-    // SYNC GITHUB (nếu có token và repo URL) - ALL BRANCHES
+    // SYNC GITHUB (nếu có token và repo URL)
     // ==========================================
     if (user.integrations?.github?.accessToken && project.githubRepoUrl) {
-      console.log(`🔄 [Sync GitHub] Đang sync repo: ${project.githubRepoUrl}`);
+      console.log(`🔄 [Sync GitHub] Đang sync repo: ${project.githubRepoUrl}${branch ? ` (nhánh: ${branch})` : ' (tất cả nhánh)'}`);
       try {
-        // REFACTORED: Fetch commits từ TẤT CẢ branches
         const commits = await GithubService.fetchCommits(
           project.githubRepoUrl, 
           user.integrations.github.accessToken,
           {
-            maxCommitsPerBranch: 100, // Max commits per branch
-            includeBranchInfo: true   // Lưu thông tin branches vào DB
+            maxCommitsPerBranch: 100,
+            includeBranchInfo: true,
+            branch
           }
         );
         
@@ -885,20 +889,28 @@ exports.syncMyProjectData = async (req, res) => {
             }
 
             const checkResult = await GithubCommit.processCommit(commit, teamId);
+            const branchesToAdd = (commit.branches && commit.branches.length)
+              ? commit.branches
+              : (commit.branch ? [commit.branch] : []);
+            const primaryBranch = commit.branch || (commit.branches && commit.branches[0]) || null;
+
             await GithubCommit.findOneAndUpdate(
-              // Upsert theo (team_id + hash) để tránh trộn dữ liệu
-              // giữa các team có chung history/repo.
               { team_id: teamId, hash: commit.hash },
               {
-                team_id: teamId,
-                author_email: commit.author_email,
-                author_name: commit.author_name,
-                message: commit.message,
-                commit_date: commit.commit_date,
-                url: commit.url,
-                branches: commit.branches || [], // Lưu danh sách branches
-                is_counted: checkResult.is_counted,
-                rejection_reason: checkResult.reason
+                $set: {
+                  team_id: teamId,
+                  author_email: commit.author_email,
+                  author_name: commit.author_name,
+                  message: commit.message,
+                  commit_date: commit.commit_date,
+                  url: commit.url,
+                  branch: primaryBranch,
+                  is_counted: checkResult.is_counted,
+                  rejection_reason: checkResult.reason
+                },
+                ...(branchesToAdd.length > 0 && {
+                  $addToSet: { branches: { $each: branchesToAdd } }
+                })
               },
               { upsert: true, new: true }
             );
@@ -1007,6 +1019,56 @@ exports.syncMyProjectData = async (req, res) => {
   }
 };
 
+/**
+ * GET /api/integrations/projects/:projectId/github-branches
+ * Lấy danh sách branches của GitHub repo gắn với project (cho Dropdown Select Branch)
+ */
+exports.getProjectGithubBranches = async (req, res) => {
+  try {
+    const user = req.user;
+    const { projectId } = req.params;
+
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    const Project = models.Project;
+    const project = await Project.findById(projectId);
+    if (!project) {
+      return res.status(404).json({ error: 'Không tìm thấy project' });
+    }
+
+    const isLeader = project.leader_id.toString() === user._id.toString();
+    const isMember = project.members.some(m => m.toString() === user._id.toString());
+    if (!isLeader && !isMember) {
+      return res.status(403).json({ error: 'Bạn không có quyền xem branches của project này' });
+    }
+
+    if (!project.githubRepoUrl || !project.githubRepoUrl.trim()) {
+      return res.status(400).json({ error: 'Project chưa liên kết GitHub repository.', branches: [] });
+    }
+
+    const accessToken = user.integrations?.github?.accessToken;
+    if (!accessToken) {
+      return res.status(400).json({ error: 'Bạn chưa kết nối tài khoản GitHub. Vui lòng OAuth connect GitHub trước.', branches: [] });
+    }
+
+    const branches = await GithubService.fetchBranches(project.githubRepoUrl, accessToken);
+    const branchNames = branches.map(b => b.name);
+
+    return res.json({ branches: branchNames });
+  } catch (error) {
+    console.error('Get Github Branches Error:', error.message);
+    if (error.message.includes('token không hợp lệ')) {
+      return res.status(401).json({ error: error.message, branches: [] });
+    }
+    if (error.message.includes('Repository không tồn tại') || error.message.includes('không có quyền')) {
+      return res.status(404).json({ error: error.message, branches: [] });
+    }
+    return res.status(500).json({ error: error.message, branches: [] });
+  }
+};
+
 // =========================
 // GET DATA APIs (Phân quyền Leader/Member)
 // =========================
@@ -1052,17 +1114,22 @@ exports.getMyCommits = async (req, res) => {
 
     const GithubCommit = models.GithubCommit;
     const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
+    const branch = (req.query?.branch || '').trim() || null;
 
-    // Lấy commits của user (theo email)
+    let query = { team_id: teamId, author_email: user.email.toLowerCase() };
+    if (branch) {
+      query.$or = [
+        { branch: branch },
+        { branches: branch }
+      ];
+    }
+
     let commits = [];
     if (teamId && user.email) {
-      commits = await GithubCommit.find({
-        team_id: teamId,
-        author_email: user.email.toLowerCase()
-      })
-      .sort({ commit_date: -1 })
-      .limit(limit)
-      .lean();
+      commits = await GithubCommit.find(query)
+        .sort({ commit_date: -1 })
+        .limit(limit)
+        .lean();
     }
 
     return res.json({
@@ -1214,9 +1281,17 @@ exports.getTeamCommits = async (req, res) => {
       .lean();
 
     const limit = Math.min(500, Math.max(1, Number(req.query?.limit || 100)));
+    const branch = (req.query?.branch || '').trim() || null;
 
-    // Lấy tất cả commits của team
-    const allCommits = await GithubCommit.find({ team_id: teamId })
+    let query = { team_id: teamId };
+    if (branch) {
+      query.$or = [
+        { branch: branch },
+        { branches: branch }
+      ];
+    }
+
+    const allCommits = await GithubCommit.find(query)
       .sort({ commit_date: -1 })
       .limit(limit)
       .lean();
@@ -1401,15 +1476,17 @@ exports.getMemberCommits = async (req, res) => {
 
     const email = (member.student_id?.email || '').toLowerCase();
     const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
+    const branch = (req.query?.branch || '').trim() || null;
 
-    // Lấy commits của member
-    const commits = await GithubCommit.find({
-      team_id: teamId,
-      author_email: email
-    })
-    .sort({ commit_date: -1 })
-    .limit(limit)
-    .lean();
+    let query = { team_id: teamId, author_email: email };
+    if (branch) {
+      query.$or = [{ branch }, { branches: branch }];
+    }
+
+    const commits = await GithubCommit.find(query)
+      .sort({ commit_date: -1 })
+      .limit(limit)
+      .lean();
 
     return res.json({
       member: {

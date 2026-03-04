@@ -18,8 +18,9 @@ const GithubCommitSchema = new Schema({
     deletions: Number,
     files_changed: Number,
     
-    // BRANCH INFO (NEW - Multi-branch support)
-    branches: [String], // Danh sách branches chứa commit này (VD: ['main', 'dev', 'feature/login'])
+    // BRANCH INFO (Multi-branch support)
+    branch: String, // Nhánh chính chứa commit (khi sync theo 1 nhánh cụ thể)
+    branches: [String], // Danh sách branches chứa commit này (khi sync tất cả nhánh)
     
     // LOGIC TÍNH ĐIỂM (QUALIFIED)
     is_counted: { type: Boolean, default: false },

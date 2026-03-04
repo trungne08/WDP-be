@@ -412,14 +412,21 @@ exports.getTasks = async (req, res) => {
     }
 };
 
-// 12) GET /teams/:teamId/commits?limit=10
+// 12) GET /teams/:teamId/commits?limit=10&branch=dev
 exports.getCommits = async (req, res) => {
     try {
         const { teamId } = req.params;
         if (!isValidObjectId(teamId)) return res.status(400).json({ error: 'teamId không hợp lệ' });
 
         const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 10)));
-        const commits = await GithubCommit.find({ team_id: teamId })
+        const branch = (req.query?.branch || '').trim() || null;
+
+        let query = { team_id: teamId };
+        if (branch) {
+            query.$or = [{ branch }, { branches: branch }];
+        }
+
+        const commits = await GithubCommit.find(query)
             .sort({ commit_date: -1 })
             .limit(limit)
             .lean();
