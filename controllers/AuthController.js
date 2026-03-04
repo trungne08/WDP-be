@@ -914,18 +914,20 @@ const getMyClasses = async (req, res) => {
         })
         .lean();
 
-        // Format response
-        const classes = teamMembers.map(tm => ({
+        // Bỏ qua dữ liệu mồ côi (team/class đã bị xóa) — tránh crash khi populate trả null
+        const validMembers = teamMembers.filter(tm => tm.team_id && tm.team_id.class_id);
+
+        const classes = validMembers.map(tm => ({
             team_id: tm.team_id._id,
             team_name: tm.team_id.project_name,
-            role_in_team: tm.role_in_team, // 'Leader' hoặc 'Member'
+            role_in_team: tm.role_in_team,
             is_leader: tm.role_in_team === 'Leader',
             class: {
                 _id: tm.team_id.class_id._id,
                 name: tm.team_id.class_id.name,
                 class_code: tm.team_id.class_id.class_code,
-                semester: tm.team_id.class_id.semester_id,
-                lecturer: tm.team_id.class_id.lecturer_id
+                semester: tm.team_id.class_id.semester_id ?? null,
+                lecturer: tm.team_id.class_id.lecturer_id ?? null
             }
         }));
 
