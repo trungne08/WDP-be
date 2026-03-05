@@ -102,48 +102,64 @@ async function fetchBranches(repoUrl, token) {
 // 3. FETCH COMMITS FROM BRANCH
 // =========================
 
+/** Giới hạn an toàn: tối đa 10 trang × 100 = 1000 commits/branch (tránh GitHub rate limit) */
+const MAX_PAGES_PER_BRANCH = 10;
+const PER_PAGE = 100;
+
 /**
- * Lấy commits từ một branch cụ thể
+ * Lấy commits từ một branch cụ thể (có pagination)
  * @param {string} repoUrl
  * @param {string} token
  * @param {string} branchName
- * @param {number} maxCommits - Số lượng commits tối đa (default: 100)
+ * @param {number} maxCommits - Số lượng commits tối đa mong muốn (default: 1000)
  * @returns {Promise<Array>}
  */
-async function fetchCommitsFromBranch(repoUrl, token, branchName, maxCommits = 100) {
+async function fetchCommitsFromBranch(repoUrl, token, branchName, maxCommits = 1000) {
     try {
         const { owner, repo } = parseRepoUrl(repoUrl);
         const client = createGithubClient(token);
 
+        const maxPages = Math.min(MAX_PAGES_PER_BRANCH, Math.ceil(maxCommits / PER_PAGE));
+        const allCommits = [];
+        let page = 1;
+
         console.log(`  📥 [GitHub] Fetching commits from branch: ${branchName}...`);
 
-        const response = await client.get(`/repos/${owner}/${repo}/commits`, {
-            params: {
-                sha: branchName,      // Chỉ định branch
-                per_page: maxCommits,
-                page: 1
-            }
-        });
+        while (page <= maxPages) {
+            const response = await client.get(`/repos/${owner}/${repo}/commits`, {
+                params: {
+                    sha: branchName,
+                    per_page: PER_PAGE,
+                    page
+                }
+            });
 
-        const commits = response.data.map(item => ({
-            hash: item.sha,
-            message: item.commit.message,
-            author_email: item.commit.author.email,
-            author_name: item.commit.author.name,
-            commit_date: item.commit.author.date,
-            url: item.html_url,
-            branch: branchName // Lưu thông tin branch
-        }));
+            const items = response.data || [];
+            if (items.length === 0) break;
 
-        console.log(`     ✅ ${commits.length} commit(s) from ${branchName}`);
+            const commits = items.map(item => ({
+                hash: item.sha,
+                message: item.commit.message,
+                author_email: item.commit.author?.email,
+                author_name: item.commit.author?.name,
+                commit_date: item.commit.author?.date,
+                url: item.html_url,
+                branch: branchName
+            }));
 
-        return commits;
+            allCommits.push(...commits);
+            if (items.length < PER_PAGE) break;
+            page++;
+        }
+
+        console.log(`     ✅ ${allCommits.length} commit(s) from ${branchName} (${page} page(s))`);
+
+        return allCommits;
     } catch (error) {
         const status = error.response?.status || 'Unknown';
         const msg = error.response?.data?.message || error.message;
         console.error(`     ❌ Lỗi fetch commits from ${branchName} (Status ${status}): ${msg}`);
-        
-        // Không throw error, chỉ return [] để không làm fail toàn bộ sync
+
         return [];
     }
 }
@@ -157,14 +173,14 @@ async function fetchCommitsFromBranch(repoUrl, token, branchName, maxCommits = 1
  * @param {string} repoUrl
  * @param {string} token
  * @param {Object} options
- * @param {number} options.maxCommitsPerBranch - Max commits per branch (default: 100)
+ * @param {number} options.maxCommitsPerBranch - Max commits per branch (default: 500, tối đa 1000)
  * @param {boolean} options.includeBranchInfo - Lưu thông tin branch vào commit (default: true)
  * @param {string} [options.branch] - Nhánh cụ thể (VD: main, dev). Nếu có thì chỉ lấy commits của nhánh đó
  * @returns {Promise<Array>}
  */
 async function fetchCommits(repoUrl, token, options = {}) {
     try {
-        const { maxCommitsPerBranch = 100, includeBranchInfo = true, branch: branchFilter } = options;
+        const { maxCommitsPerBranch = 500, includeBranchInfo = true, branch: branchFilter } = options;
 
         if (!repoUrl || !token) {
             console.log('⚠️ [GithubService] Thiếu URL hoặc Token');

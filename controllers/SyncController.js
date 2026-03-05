@@ -45,7 +45,7 @@ exports.syncTeamData = async (req, res) => {
                     console.log(`🔄 [Team Sync] Đang sync GitHub qua OAuth...${branch ? ` (nhánh: ${branch})` : ' (tất cả nhánh)'}`);
                     
                     const commits = await GithubService.fetchCommits(repoUrl, github.accessToken, {
-                        maxCommitsPerBranch: 100,
+                        maxCommitsPerBranch: 500,
                         includeBranchInfo: true,
                         branch
                     });

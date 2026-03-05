@@ -871,7 +871,7 @@ exports.syncMyProjectData = async (req, res) => {
           project.githubRepoUrl, 
           user.integrations.github.accessToken,
           {
-            maxCommitsPerBranch: 100,
+            maxCommitsPerBranch: 500,
             includeBranchInfo: true,
             branch
           }
