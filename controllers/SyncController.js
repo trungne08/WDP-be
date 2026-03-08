@@ -50,31 +50,36 @@ exports.syncTeamData = async (req, res) => {
                         branch
                     });
                     
+                    const jiraRegex = /[A-Z][A-Z0-9]+-\d+/g;
                     for (const commit of commits) {
                         const checkResult = await GithubCommit.processCommit(commit, teamId);
                         const branchesToAdd = (commit.branches && commit.branches.length)
                             ? commit.branches
                             : (commit.branch ? [commit.branch] : []);
                         const primaryBranch = commit.branch || (commit.branches && commit.branches[0]) || null;
+                        const extractedJiraIssues = [...new Set((commit.message || '').match(jiraRegex) || [])];
+
+                        const updateDoc = {
+                            $set: {
+                                team_id: teamId,
+                                author_email: commit.author_email,
+                                author_name: commit.author_name,
+                                message: commit.message,
+                                commit_date: commit.commit_date,
+                                url: commit.url,
+                                branch: primaryBranch,
+                                is_counted: checkResult.is_counted,
+                                rejection_reason: checkResult.reason
+                            }
+                        };
+                        const addToSetFields = {};
+                        if (branchesToAdd.length > 0) addToSetFields.branches = { $each: branchesToAdd };
+                        if (extractedJiraIssues.length > 0) addToSetFields.jira_issues = { $each: extractedJiraIssues };
+                        if (Object.keys(addToSetFields).length > 0) updateDoc.$addToSet = addToSetFields;
 
                         await GithubCommit.findOneAndUpdate(
                             { team_id: teamId, hash: commit.hash },
-                            {
-                                $set: {
-                                    team_id: teamId,
-                                    author_email: commit.author_email,
-                                    author_name: commit.author_name,
-                                    message: commit.message,
-                                    commit_date: commit.commit_date,
-                                    url: commit.url,
-                                    branch: primaryBranch,
-                                    is_counted: checkResult.is_counted,
-                                    rejection_reason: checkResult.reason
-                                },
-                                ...(branchesToAdd.length > 0 && {
-                                    $addToSet: { branches: { $each: branchesToAdd } }
-                                })
-                            },
+                            updateDoc,
                             { upsert: true, new: true }
                         );
                     }

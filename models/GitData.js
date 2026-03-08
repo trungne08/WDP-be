@@ -22,6 +22,9 @@ const GithubCommitSchema = new Schema({
     branch: String, // Nhánh chính chứa commit (khi sync theo 1 nhánh cụ thể)
     branches: [String], // Danh sách branches chứa commit này (khi sync tất cả nhánh)
     
+    // SMART LINKING - Jira Issues được trích xuất từ commit message (VD: "Fix SCRUM-12, SCRUM-15")
+    jira_issues: [String],
+    
     // LOGIC TÍNH ĐIỂM (QUALIFIED)
     is_counted: { type: Boolean, default: false },
     rejection_reason: String // 'Spam', 'Too soon', 'Empty'

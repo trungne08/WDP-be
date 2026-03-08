@@ -930,6 +930,7 @@ exports.syncMyProjectData = async (req, res) => {
         
         console.log(`   📊 Total unique commits: ${commits.length}`);
 
+        const jiraRegex = /[A-Z][A-Z0-9]+-\d+/g;
         let syncedCommits = 0;
         for (const commit of commits) {
           // Nếu có teamId thì dùng logic processCommit
@@ -944,25 +945,29 @@ exports.syncMyProjectData = async (req, res) => {
               ? commit.branches
               : (commit.branch ? [commit.branch] : []);
             const primaryBranch = commit.branch || (commit.branches && commit.branches[0]) || null;
+            const extractedJiraIssues = [...new Set((commit.message || '').match(jiraRegex) || [])];
+
+            const updateDoc = {
+              $set: {
+                team_id: teamId,
+                author_email: commit.author_email,
+                author_name: commit.author_name,
+                message: commit.message,
+                commit_date: commit.commit_date,
+                url: commit.url,
+                branch: primaryBranch,
+                is_counted: checkResult.is_counted,
+                rejection_reason: checkResult.reason
+              }
+            };
+            const addToSetFields = {};
+            if (branchesToAdd.length > 0) addToSetFields.branches = { $each: branchesToAdd };
+            if (extractedJiraIssues.length > 0) addToSetFields.jira_issues = { $each: extractedJiraIssues };
+            if (Object.keys(addToSetFields).length > 0) updateDoc.$addToSet = addToSetFields;
 
             await GithubCommit.findOneAndUpdate(
               { team_id: teamId, hash: commit.hash },
-              {
-                $set: {
-                  team_id: teamId,
-                  author_email: commit.author_email,
-                  author_name: commit.author_name,
-                  message: commit.message,
-                  commit_date: commit.commit_date,
-                  url: commit.url,
-                  branch: primaryBranch,
-                  is_counted: checkResult.is_counted,
-                  rejection_reason: checkResult.reason
-                },
-                ...(branchesToAdd.length > 0 && {
-                  $addToSet: { branches: { $each: branchesToAdd } }
-                })
-              },
+              updateDoc,
               { upsert: true, new: true }
             );
             syncedCommits++;
@@ -1107,6 +1112,68 @@ exports.getCommitDetails = async (req, res) => {
       return res.status(404).json({ error: msg });
     }
     return res.status(500).json({ error: msg });
+  }
+};
+
+/**
+ * GET /api/integrations/jira/issues/:issueKey/commits
+ * Lấy danh sách GitHub commits thuộc về 1 Jira Issue cụ thể (Smart Linking)
+ */
+exports.getCommitsByJiraIssue = async (req, res) => {
+  try {
+    const user = req.user;
+    const { issueKey } = req.params;
+    const { projectId } = req.query || {};
+
+    if (!user) {
+      return res.status(404).json({ error: 'Không tìm thấy user' });
+    }
+
+    if (!issueKey || typeof issueKey !== 'string' || !issueKey.trim()) {
+      return res.status(400).json({ error: 'Thiếu issueKey (VD: SCRUM-12)' });
+    }
+
+    if (!projectId || !mongoose.Types.ObjectId.isValid(projectId)) {
+      return res.status(400).json({ error: 'projectId là bắt buộc trong query (VD: ?projectId=xxx)' });
+    }
+
+    const Project = models.Project;
+    const project = await Project.findById(projectId).lean();
+    if (!project) {
+      return res.status(404).json({ error: 'Không tìm thấy project' });
+    }
+
+    const isLeader = project.leader_id?.toString() === user._id.toString();
+    const isMember = (project.members || []).some(m => m.toString() === user._id.toString());
+    if (!isLeader && !isMember) {
+      return res.status(403).json({ error: 'Bạn không có quyền xem commits của project này' });
+    }
+
+    const teamId = project.team_id;
+    if (!teamId) {
+      return res.status(400).json({ error: 'Project chưa có team_id' });
+    }
+
+    const GithubCommit = models.GithubCommit;
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
+
+    const commits = await GithubCommit.find({
+      jira_issues: issueKey.trim().toUpperCase(),
+      team_id: teamId
+    })
+      .sort({ commit_date: -1 })
+      .limit(limit)
+      .lean();
+
+    return res.json({
+      issueKey: issueKey.trim().toUpperCase(),
+      projectId,
+      total: commits.length,
+      commits
+    });
+  } catch (error) {
+    console.error('Get Commits By Jira Issue Error:', error);
+    return res.status(500).json({ error: error.message });
   }
 };
 

@@ -307,6 +307,57 @@ module.exports = (app) => {
 
     /**
      * @swagger
+     * /api/integrations/jira/issues/{issueKey}/commits:
+     *   get:
+     *     summary: Lấy danh sách GitHub commits thuộc về 1 Jira Issue (Smart Linking)
+     *     tags: [10. Jira - External Data]
+     *     security:
+     *       - bearerAuth: []
+     *     description: |
+     *       **Smart Linking:** Commits được liên kết với Jira Issue qua commit message (VD: "Fix SCRUM-12").
+     *       Cần truyền projectId trong query để scope theo project.
+     *     parameters:
+     *       - in: path
+     *         name: issueKey
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: Jira issue key (VD: SCRUM-12)
+     *       - in: query
+     *         name: projectId
+     *         required: true
+     *         schema:
+     *           type: string
+     *         description: ID project để lọc commits (tránh lấy nhầm project khác)
+     *       - in: query
+     *         name: limit
+     *         required: false
+     *         schema:
+     *           type: number
+     *         description: Số commits tối đa (mặc định 50, tối đa 100)
+     *     responses:
+     *       200:
+     *         description: Danh sách commits
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 issueKey: { type: string }
+     *                 projectId: { type: string }
+     *                 total: { type: number }
+     *                 commits: { type: array }
+     *       400:
+     *         description: Thiếu issueKey hoặc projectId
+     *       403:
+     *         description: Không có quyền xem project
+     *       404:
+     *         description: Không tìm thấy project
+     */
+    app.get('/api/integrations/jira/issues/:issueKey/commits', authenticateToken, IntegrationController.getCommitsByJiraIssue);
+
+    /**
+     * @swagger
      * /api/integrations/github/disconnect:
      *   delete:
      *     summary: Ngắt kết nối tài khoản GitHub
