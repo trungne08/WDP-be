@@ -361,7 +361,51 @@ async function createRepository(accessToken, repoName, description = '', isPriva
 }
 
 // =========================
-// 7. EXPORTS
+// 7. GET COMMIT DETAILS (Patch/Diff)
+// =========================
+
+/**
+ * Lấy chi tiết một commit (bao gồm patch/diff từng file)
+ * @param {string} repoUrl - URL repo (VD: https://github.com/owner/repo)
+ * @param {string} accessToken - GitHub OAuth access token
+ * @param {string} sha - Commit SHA (full hash)
+ * @returns {Promise<Array<{filename: string, status: string, additions: number, deletions: number, patch: string}>>}
+ */
+async function getCommitDetails(repoUrl, accessToken, sha) {
+    try {
+        if (!repoUrl || !accessToken || !sha) {
+            throw new Error('repoUrl, accessToken và sha là bắt buộc');
+        }
+
+        const { owner, repo } = parseRepoUrl(repoUrl);
+        const client = createGithubClient(accessToken);
+
+        const response = await client.get(`/repos/${owner}/${repo}/commits/${sha}`);
+
+        const files = response.data?.files || [];
+        return files.map(file => ({
+            filename: file.filename,
+            status: file.status || 'unknown',
+            additions: file.additions ?? 0,
+            deletions: file.deletions ?? 0,
+            patch: file.patch || 'Không có text diff (có thể là file ảnh/nhị phân)'
+        }));
+    } catch (error) {
+        const status = error.response?.status;
+        const msg = error.response?.data?.message || error.message;
+
+        if (status === 401 || status === 403) {
+            throw new Error('GitHub token không hợp lệ hoặc đã hết hạn');
+        }
+        if (status === 404) {
+            throw new Error('Commit hoặc repository không tồn tại hoặc không có quyền truy cập');
+        }
+        throw error;
+    }
+}
+
+// =========================
+// 8. EXPORTS
 // =========================
 
 module.exports = {
@@ -370,6 +414,9 @@ module.exports = {
 
     // Create repo (auto-provisioning)
     createRepository,
+
+    // Commit details (patch/diff)
+    getCommitDetails,
     
     // Helper functions
     fetchBranches,

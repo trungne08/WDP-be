@@ -199,6 +199,57 @@ module.exports = (app) => {
 
     /**
      * @swagger
+     * /api/integrations/github/commits/{sha}/details:
+     *   post:
+     *     summary: Xem chi tiết Commit GitHub (lấy Patch/Diff code)
+     *     tags: [3. OAuth - GitHub]
+     *     security:
+     *       - bearerAuth: []
+     *     parameters:
+     *       - in: path
+     *         name: sha
+     *         required: true
+     *         schema: { type: string }
+     *         description: Commit SHA (full hash)
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required: [repoUrl]
+     *             properties:
+     *               repoUrl: { type: string, description: URL repo GitHub (VD: https://github.com/owner/repo) }
+     *     responses:
+     *       200:
+     *         description: Chi tiết commit (danh sách file với patch/diff)
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 message: { type: string, example: "Lấy chi tiết commit thành công" }
+     *                 files:
+     *                   type: array
+     *                   items:
+     *                     type: object
+     *                     properties:
+     *                       filename: { type: string }
+     *                       status: { type: string }
+     *                       additions: { type: number }
+     *                       deletions: { type: number }
+     *                       patch: { type: string }
+     *       400:
+     *         description: Thiếu repoUrl/sha hoặc chưa link GitHub
+     *       401:
+     *         description: GitHub token không hợp lệ
+     *       404:
+     *         description: Commit hoặc repo không tồn tại
+     */
+    app.post('/api/integrations/github/commits/:sha/details', authenticateToken, IntegrationController.getCommitDetails);
+
+    /**
+     * @swagger
      * /api/integrations/jira/projects:
      *   get:
      *     summary: Lấy danh sách Jira project để chọn từ dropdown

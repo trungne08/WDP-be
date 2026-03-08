@@ -1071,6 +1071,46 @@ exports.syncMyProjectData = async (req, res) => {
 };
 
 /**
+ * POST /api/integrations/github/commits/:sha/details
+ * Lấy chi tiết commit (patch/diff từng file)
+ */
+exports.getCommitDetails = async (req, res) => {
+  try {
+    const token = req.user?.integrations?.github?.accessToken;
+    if (!token) {
+      return res.status(400).json({ error: 'Chưa kết nối GitHub. Vui lòng link GitHub trước.' });
+    }
+
+    const { sha } = req.params;
+    const { repoUrl } = req.body || {};
+
+    if (!sha || typeof sha !== 'string' || !sha.trim()) {
+      return res.status(400).json({ error: 'Thiếu sha (commit hash).' });
+    }
+
+    if (!repoUrl || typeof repoUrl !== 'string' || !repoUrl.trim()) {
+      return res.status(400).json({ error: 'repoUrl là bắt buộc trong request body.' });
+    }
+
+    const files = await GithubService.getCommitDetails(repoUrl, token, sha.trim());
+
+    return res.json({
+      message: 'Lấy chi tiết commit thành công',
+      files
+    });
+  } catch (error) {
+    const msg = error.message || 'Lỗi lấy chi tiết commit.';
+    if (msg.includes('token')) {
+      return res.status(401).json({ error: msg });
+    }
+    if (msg.includes('không tồn tại') || msg.includes('không có quyền')) {
+      return res.status(404).json({ error: msg });
+    }
+    return res.status(500).json({ error: msg });
+  }
+};
+
+/**
  * GET /api/integrations/projects/:projectId/github-branches
  * Lấy danh sách branches của GitHub repo gắn với project (cho Dropdown Select Branch)
  */
