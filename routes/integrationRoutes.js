@@ -322,22 +322,22 @@ module.exports = (app) => {
      *         required: true
      *         schema:
      *           type: string
-     *         description: Jira issue key (VD: SCRUM-12)
+     *         description: "Jira issue key (VD: SCRUM-12)"
      *       - in: query
      *         name: projectId
      *         required: true
      *         schema:
      *           type: string
-     *         description: ID project để lọc commits (tránh lấy nhầm project khác)
+     *         description: "ID project để lọc commits (tránh lấy nhầm project khác)"
      *       - in: query
      *         name: limit
      *         required: false
      *         schema:
      *           type: number
-     *         description: Số commits tối đa (mặc định 50, tối đa 100)
+     *         description: "Số commits tối đa (mặc định 50, tối đa 100)"
      *     responses:
      *       200:
-     *         description: Danh sách commits
+     *         description: "Danh sách commits"
      *         content:
      *           application/json:
      *             schema:
@@ -348,11 +348,11 @@ module.exports = (app) => {
      *                 total: { type: number }
      *                 commits: { type: array }
      *       400:
-     *         description: Thiếu issueKey hoặc projectId
+     *         description: "Thiếu issueKey hoặc projectId"
      *       403:
-     *         description: Không có quyền xem project
+     *         description: "Không có quyền xem project"
      *       404:
-     *         description: Không tìm thấy project
+     *         description: "Không tìm thấy project"
      */
     app.get('/api/integrations/jira/issues/:issueKey/commits', authenticateToken, IntegrationController.getCommitsByJiraIssue);
 
