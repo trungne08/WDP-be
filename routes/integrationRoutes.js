@@ -183,10 +183,10 @@ module.exports = (app) => {
      *             required: [repoName]
      *             properties:
      *               repoName: { type: string, description: Tên repository }
-     *               description: { type: string, description: Mô tả repo (mặc định: Created via WDP Management System) }
+     *               description: { type: string, description: "Mô tả repo (mặc định: Created via WDP Management System)" }
      *               isPrivate: { type: boolean, description: Repo private hay public }
      *               projectId: { type: string, description: ID project để tự động gắn githubRepoUrl }
-     *               gitignoreTemplate: { type: string, description: Gitignore template (Node, Java, Python, ...). Mặc định: Node }
+     *               gitignoreTemplate: { type: string, description: "Gitignore template (Node, Java, Python, ...). Mặc định: Node" }
      *     responses:
      *       200:
      *         description: Tạo repo thành công
@@ -219,7 +219,7 @@ module.exports = (app) => {
      *             type: object
      *             required: [repoUrl]
      *             properties:
-     *               repoUrl: { type: string, description: URL repo GitHub (VD: https://github.com/owner/repo) }
+     *               repoUrl: { type: string, description: "URL repo GitHub (VD: https://github.com/owner/repo)" }
      *     responses:
      *       200:
      *         description: Chi tiết commit (danh sách file với patch/diff)
