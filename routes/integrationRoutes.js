@@ -168,6 +168,37 @@ module.exports = (app) => {
 
     /**
      * @swagger
+     * /api/integrations/github/create-repo:
+     *   post:
+     *     summary: Tự động tạo GitHub Repository (Auto-Provisioning)
+     *     tags: [3. OAuth - GitHub]
+     *     security:
+     *       - bearerAuth: []
+     *     requestBody:
+     *       required: true
+     *       content:
+     *         application/json:
+     *           schema:
+     *             type: object
+     *             required: [repoName]
+     *             properties:
+     *               repoName: { type: string, description: Tên repository }
+     *               description: { type: string, description: Mô tả repo (mặc định: Created via WDP Management System) }
+     *               isPrivate: { type: boolean, description: Repo private hay public }
+     *               projectId: { type: string, description: ID project để tự động gắn githubRepoUrl }
+     *               gitignoreTemplate: { type: string, description: Gitignore template (Node, Java, Python, ...). Mặc định: Node }
+     *     responses:
+     *       200:
+     *         description: Tạo repo thành công
+     *       400:
+     *         description: Thiếu repoName, repo trùng tên, hoặc chưa link GitHub
+     *       401:
+     *         description: GitHub token không hợp lệ
+     */
+    app.post('/api/integrations/github/create-repo', authenticateToken, IntegrationController.createGithubRepo);
+
+    /**
+     * @swagger
      * /api/integrations/jira/projects:
      *   get:
      *     summary: Lấy danh sách Jira project để chọn từ dropdown

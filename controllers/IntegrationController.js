@@ -418,6 +418,57 @@ exports.jiraCallback = async (req, res) => {
 // =========================
 // DROPDOWN APIs
 // =========================
+/**
+ * POST /api/integrations/github/create-repo
+ * Tự động tạo GitHub repository và gắn vào project (nếu có projectId)
+ */
+exports.createGithubRepo = async (req, res) => {
+  try {
+    const token = req.user?.integrations?.github?.accessToken;
+    if (!token) {
+      return res.status(400).json({ error: 'Chưa kết nối GitHub. Vui lòng link GitHub trước.' });
+    }
+
+    const { repoName, description, isPrivate, projectId, gitignoreTemplate } = req.body || {};
+
+    if (!repoName || typeof repoName !== 'string' || !repoName.trim()) {
+      return res.status(400).json({ error: 'repoName là bắt buộc.' });
+    }
+
+    const response = await GithubService.createRepository(
+      token,
+      repoName.trim(),
+      description && typeof description === 'string' ? description.trim() : '',
+      !!isPrivate,
+      gitignoreTemplate && typeof gitignoreTemplate === 'string' ? gitignoreTemplate.trim() : undefined
+    );
+
+    const repoUrl = response.html_url;
+
+    if (projectId && mongoose.Types.ObjectId.isValid(projectId)) {
+      const project = await models.Project.findOneAndUpdate(
+        { _id: projectId },
+        { githubRepoUrl: repoUrl },
+        { new: true }
+      ).lean();
+      if (!project) {
+        return res.status(404).json({ error: 'Không tìm thấy project.', repoUrl });
+      }
+    }
+
+    return res.json({
+      message: 'Tạo repo thành công',
+      repoUrl
+    });
+  } catch (error) {
+    const msg = error.message || 'Lỗi tạo repository.';
+    if (msg.includes('token') || msg.includes('GitHub')) {
+      return res.status(401).json({ error: msg });
+    }
+    return res.status(400).json({ error: msg });
+  }
+};
+
 exports.getGithubRepos = async (req, res) => {
   try {
     const token = req.user?.integrations?.github?.accessToken;

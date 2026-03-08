@@ -306,12 +306,70 @@ async function fetchCommitsFromDefaultBranch(repoUrl, token) {
 }
 
 // =========================
-// 6. EXPORTS
+// 6. CREATE REPOSITORY (Auto-Provisioning)
+// =========================
+
+/**
+ * Tạo repository mới trên GitHub (dùng tham số nâng cao của GitHub REST API)
+ * @param {string} accessToken - GitHub OAuth access token
+ * @param {string} repoName - Tên repo (slug hợp lệ: chữ, số, dấu gạch ngang/dưới)
+ * @param {string} [description] - Mô tả repo (mặc định: "Created via WDP Management System")
+ * @param {boolean} [isPrivate=false] - Repo private hay public
+ * @param {string} [gitignoreTemplate] - Gitignore template (VD: Node, Java, Python). Mặc định: Node
+ * @returns {Promise<{html_url: string, clone_url: string, [key: string]: any}>} Response data từ GitHub
+ */
+async function createRepository(accessToken, repoName, description = '', isPrivate = false, gitignoreTemplate) {
+    try {
+        if (!accessToken || typeof accessToken !== 'string' || !accessToken.trim()) {
+            throw new Error('GitHub access token là bắt buộc');
+        }
+        if (!repoName || typeof repoName !== 'string' || !repoName.trim()) {
+            throw new Error('Tên repository là bắt buộc');
+        }
+
+        const desc = (description && typeof description === 'string') ? description.trim() : 'Created via WDP Management System';
+        const client = createGithubClient(accessToken);
+        const payload = {
+            name: repoName.trim(),
+            description: desc,
+            private: !!isPrivate,
+            auto_init: true,
+            has_issues: false,
+            has_projects: false,
+            has_wiki: false,
+            gitignore_template: gitignoreTemplate || 'Node',
+            license_template: 'mit'
+        };
+
+        const response = await client.post('/user/repos', payload);
+        return response.data;
+    } catch (error) {
+        const status = error.response?.status;
+        const msg = error.response?.data?.message || error.message;
+        const errors = error.response?.data?.errors;
+
+        if (status === 401 || status === 403) {
+            throw new Error('GitHub token không hợp lệ hoặc đã hết hạn. Vui lòng kết nối lại GitHub.');
+        }
+        if (status === 422) {
+            // Validation failed: trùng tên repo, tên không hợp lệ, v.v.
+            const detail = errors?.length ? errors.map(e => e.message || e.code).join('; ') : msg;
+            throw new Error(detail || 'Tên repository đã tồn tại hoặc không hợp lệ.');
+        }
+        throw error;
+    }
+}
+
+// =========================
+// 7. EXPORTS
 // =========================
 
 module.exports = {
     // Main function (all branches)
     fetchCommits,
+
+    // Create repo (auto-provisioning)
+    createRepository,
     
     // Helper functions
     fetchBranches,
