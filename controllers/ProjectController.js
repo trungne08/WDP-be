@@ -19,7 +19,7 @@ exports.createProject = async (req, res) => {
       return res.status(403).json({ error: 'Chỉ sinh viên (Leader) mới được tạo Project.' });
     }
 
-    const { name, members, githubRepoUrl: rawGithubUrl, jiraProjectKey: rawJiraKey } = req.body || {};
+    const { name, members, class_id: bodyClassId, team_id: bodyTeamId, githubRepoUrl: rawGithubUrl, jiraProjectKey: rawJiraKey } = req.body || {};
     
     // Sanitize Jira Project Key (loại bỏ "[SCRUM]", trim, uppercase)
     const sanitizeJiraProjectKey = (input) => {
@@ -60,17 +60,25 @@ exports.createProject = async (req, res) => {
 
     if (!name || !Array.isArray(members) || members.length === 0) {
       console.log(`   ❌ [CreateProject] Validation: Thiếu name hoặc members`);
-      console.log(`      name: ${name || '(empty)'}`);
-      console.log(`      members: ${Array.isArray(members) ? members.length : 'not array'} items`);
       return res.status(400).json({
         error: 'name và members (array studentId) là bắt buộc.',
-        received: {
-          name: name || null,
-          members: members || null,
-          members_type: Array.isArray(members) ? 'array' : typeof members
-        }
+        received: { name: name || null, members: members || null }
       });
     }
+
+    if (!bodyClassId || !bodyTeamId) {
+      console.log(`   ❌ [CreateProject] Validation: Thiếu class_id hoặc team_id`);
+      return res.status(400).json({
+        error: 'class_id và team_id là bắt buộc. Vui lòng chọn lớp và nhóm từ giao diện.',
+        received: { class_id: bodyClassId || null, team_id: bodyTeamId || null }
+      });
+    }
+    if (!mongoose.Types.ObjectId.isValid(bodyClassId) || !mongoose.Types.ObjectId.isValid(bodyTeamId)) {
+      return res.status(400).json({ error: 'class_id hoặc team_id không hợp lệ.' });
+    }
+
+    const selectedTeamId = bodyTeamId.toString().trim();
+    const requestedClassId = bodyClassId.toString().trim();
 
     // Validate và filter các ID hợp lệ
     const allStudentIdStrings = Array.from(
@@ -90,196 +98,40 @@ exports.createProject = async (req, res) => {
     // Convert sang ObjectId (đã validate rồi nên an toàn)
     const allStudentIds = allStudentIdStrings.map(id => new mongoose.Types.ObjectId(id));
 
-    // 1) Lấy TeamMember cho tất cả sinh viên trong danh sách
-    // QUAN TRỌNG: Populate đầy đủ để có thông tin lớp, học kỳ, môn học khi debug
-    const allTeamMembers = await models.TeamMember.find({
+    // 1) Kiểm tra Team tồn tại và thuộc đúng class (dùng class_id và team_id từ req.body)
+    const teamExists = await models.Team.findOne({
+      _id: selectedTeamId,
+      class_id: requestedClassId
+    }).lean();
+
+    if (!teamExists) {
+      console.log(`   ❌ [CreateProject] Validation: Team ${selectedTeamId} không tồn tại hoặc không thuộc lớp ${requestedClassId}`);
+      return res.status(400).json({
+        error: 'Nhóm (team) không tồn tại hoặc không thuộc lớp đã chọn. Vui lòng kiểm tra lại.'
+      });
+    }
+
+    // 2) Kiểm tra TẤT CẢ thành viên đều đang tồn tại (active) trong TeamMember với team_id đã chọn
+    const teamMembers = await models.TeamMember.find({
+      team_id: selectedTeamId,
       student_id: { $in: allStudentIds },
       is_active: true
-    })
-    .populate({
-      path: 'team_id',
-      select: 'class_id',
-      populate: {
-        path: 'class_id',
-        select: '_id name class_code subjectName semester_id subject_id',
-        populate: [
-          {
-            path: 'semester_id',
-            select: '_id name code'
-          },
-          {
-            path: 'subject_id',
-            select: '_id name code'
-          }
-        ]
-      }
-    })
-    .lean();
+    }).lean();
 
-    // Debug log
-    console.log(`🔍 [CreateProject] Tìm kiếm TeamMember cho ${allStudentIds.length} sinh viên`);
-    console.log(`   📋 Danh sách ID cần tìm: ${allStudentIds.map(id => id.toString()).join(', ')}`);
-    console.log(`   ✅ Tìm thấy ${allTeamMembers.length} TeamMember records (có thể thuộc nhiều lớp/team khác nhau)`);
-    
-    // Group TeamMember theo student_id để xử lý trường hợp 1 sinh viên có nhiều TeamMember
-    const teamMembersByStudent = {};
-    allTeamMembers.forEach(tm => {
-      const studentIdStr = tm.student_id?.toString();
-      if (!studentIdStr) return;
-      
-      if (!teamMembersByStudent[studentIdStr]) {
-        teamMembersByStudent[studentIdStr] = [];
-      }
-      teamMembersByStudent[studentIdStr].push(tm);
-    });
-
-    // Kiểm tra xem có sinh viên nào không có TeamMember không
-    const foundStudentIds = Object.keys(teamMembersByStudent);
+    const foundStudentIds = [...new Set(teamMembers.map(tm => tm.student_id?.toString()).filter(Boolean))];
     const missingStudentIds = allStudentIds
       .filter(id => !foundStudentIds.includes(id.toString()))
       .map(id => id.toString());
 
     if (missingStudentIds.length > 0) {
-      console.log(`   ❌ [CreateProject] Thiếu ${missingStudentIds.length} thành viên: ${missingStudentIds.join(', ')}`);
+      console.log(`   ❌ [CreateProject] Validation: ${missingStudentIds.length} thành viên không thuộc nhóm này: ${missingStudentIds.join(', ')}`);
       return res.status(400).json({
-        error: 'Một số thành viên chưa thuộc nhóm (Team) nào, không thể tạo Project.',
-        missing_student_ids: missingStudentIds,
-        debug_info: {
-          requested_count: allStudentIds.length,
-          found_count: foundStudentIds.length,
-          requested_ids: allStudentIds.map(id => id.toString()),
-          found_ids: foundStudentIds
-        }
+        error: 'Một số thành viên không thuộc nhóm (team) đã chọn hoặc đã bị vô hiệu hóa. Vui lòng kiểm tra lại.',
+        missing_student_ids: missingStudentIds
       });
     }
 
-    // 2) Tìm team chung cho tất cả sinh viên (trong cùng một lớp)
-    // Logic: Một sinh viên có thể thuộc nhiều lớp/team khác nhau, nhưng trong MỘT LỚP chỉ thuộc MỘT TEAM
-    // Khi tạo project, tất cả thành viên phải thuộc CÙNG MỘT TEAM trong CÙNG MỘT LỚP
-    
-    // Lấy tất cả team_id từ tất cả TeamMember (có thể thuộc nhiều lớp khác nhau)
-    const allTeamIds = Array.from(new Set(
-      allTeamMembers.map(tm => tm.team_id?._id?.toString()).filter(Boolean)
-    ));
-
-    console.log(`   🔍 [CreateProject] Tất cả team IDs: ${allTeamIds.join(', ')}`);
-
-    // Tìm team mà TẤT CẢ sinh viên đều thuộc
-    // Mỗi sinh viên có thể có nhiều TeamMember (nhiều lớp), nhưng chỉ cần tìm team chung
-    const commonTeams = allTeamIds.filter(teamId => {
-      return allStudentIds.every(studentId => {
-        const studentIdStr = studentId.toString();
-        const members = teamMembersByStudent[studentIdStr] || [];
-        // Kiểm tra xem sinh viên này có TeamMember thuộc team này không
-        return members.some(m => m.team_id?._id?.toString() === teamId);
-      });
-    });
-
-    console.log(`   🔍 [CreateProject] Team chung cho tất cả sinh viên: ${commonTeams.length > 0 ? commonTeams.join(', ') : 'KHÔNG CÓ'}`);
-
-    if (commonTeams.length === 0) {
-      console.log(`   ❌ [CreateProject] Validation: Không có team nào chứa TẤT CẢ thành viên`);
-      // Log chi tiết để debug (kèm thông tin lớp, học kỳ, môn học)
-      Object.entries(teamMembersByStudent).forEach(([studentId, members]) => {
-        const teams = members.map(m => ({
-          team_id: m.team_id?._id?.toString(),
-          class_id: m.team_id?.class_id?._id?.toString(),
-          class_name: m.team_id?.class_id?.name || m.team_id?.class_id?.class_code,
-          subject_name: m.team_id?.class_id?.subjectName,
-          semester: m.team_id?.class_id?.semester_id?.name || m.team_id?.class_id?.semester_id,
-          subject: m.team_id?.class_id?.subject_id?.name || m.team_id?.class_id?.subject_id
-        }));
-        console.log(`      - Student ${studentId}: thuộc ${teams.length} team(s)`, JSON.stringify(teams, null, 2));
-      });
-      
-      return res.status(400).json({
-        error: 'Các thành viên không thuộc cùng một nhóm (team). Mỗi sinh viên có thể thuộc nhiều lớp/team khác nhau, nhưng để tạo project thì tất cả phải thuộc cùng một team.',
-        found_teams: allTeamIds.length,
-        team_ids: allTeamIds,
-        students_teams: Object.entries(teamMembersByStudent).map(([studentId, members]) => ({
-          student_id: studentId,
-          teams: members.map(m => ({
-            team_id: m.team_id?._id?.toString(),
-            class_id: m.team_id?.class_id?._id?.toString(),
-            class_name: m.team_id?.class_id?.name || m.team_id?.class_id?.class_code,
-            subject_name: m.team_id?.class_id?.subjectName,
-            semester: m.team_id?.class_id?.semester_id?.name || m.team_id?.class_id?.semester_id,
-            subject: m.team_id?.class_id?.subject_id?.name || m.team_id?.class_id?.subject_id
-          }))
-        }))
-      });
-    }
-
-    // Nếu có nhiều team chung, cần kiểm tra xem chúng có cùng lớp không
-    // QUAN TRỌNG: Tất cả commonTeams phải thuộc CÙNG MỘT LỚP để đảm bảo project được tạo đúng lớp
-    let selectedTeamId = commonTeams[0];
-    
-    if (commonTeams.length > 1) {
-      console.log(`   ⚠️ [CreateProject] Có ${commonTeams.length} teams chung. Kiểm tra xem có cùng lớp không...`);
-      
-      // Lấy thông tin các team này (kèm class_id, semester_id, subject_id)
-      const teamsInfo = await models.Team.find({ _id: { $in: commonTeams } })
-        .populate({
-          path: 'class_id',
-          select: '_id semester_id subject_id'
-        })
-        .lean();
-      
-      // Nhóm teams theo lớp (class_id + semester_id + subject_id)
-      const teamsByClass = {};
-      teamsInfo.forEach(team => {
-        const classId = team.class_id?._id?.toString();
-        const semesterId = team.class_id?.semester_id?.toString() || team.class_id?.semester_id;
-        const subjectId = team.class_id?.subject_id?.toString() || team.class_id?.subject_id || 'null';
-        
-        // Tạo key duy nhất cho mỗi lớp (class_id + semester_id + subject_id)
-        const classKey = `${classId}_${semesterId}_${subjectId}`;
-        
-        if (!teamsByClass[classKey]) {
-          teamsByClass[classKey] = {
-            class_id: classId,
-            semester_id: semesterId,
-            subject_id: subjectId,
-            teams: []
-          };
-        }
-        teamsByClass[classKey].teams.push({
-          team_id: team._id.toString(),
-          class_id: classId
-        });
-      });
-      
-      const classKeys = Object.keys(teamsByClass);
-      
-      if (classKeys.length > 1) {
-        // Có teams từ nhiều lớp khác nhau - KHÔNG CHO PHÉP
-        console.log(`   ❌ [CreateProject] Validation: Có ${commonTeams.length} teams chung nhưng thuộc ${classKeys.length} lớp khác nhau!`);
-        return res.status(400).json({
-          error: 'Các thành viên thuộc nhiều nhóm (team) ở các lớp khác nhau. Không thể xác định được lớp nào để tạo project. Vui lòng đảm bảo tất cả thành viên thuộc cùng một nhóm trong cùng một lớp.',
-          found_teams: commonTeams.length,
-          teams_by_class: Object.values(teamsByClass).map(group => ({
-            class_id: group.class_id,
-            semester_id: group.semester_id,
-            subject_id: group.subject_id,
-            team_count: group.teams.length,
-            team_ids: group.teams.map(t => t.team_id)
-          }))
-        });
-      }
-      
-      // Tất cả teams đều thuộc cùng một lớp - OK, chọn team đầu tiên
-      console.log(`   ✅ [CreateProject] Tất cả ${commonTeams.length} teams đều thuộc cùng một lớp. Chọn team: ${selectedTeamId}`);
-    }
-    
-    // Lọc TeamMember chỉ lấy những record thuộc team được chọn
-    const teamMembers = allTeamMembers.filter(tm => tm.team_id?._id?.toString() === selectedTeamId);
-    
-    // Đảm bảo số lượng TeamMember = số lượng sinh viên (mỗi sinh viên chỉ có 1 record trong team này)
-    if (teamMembers.length !== allStudentIds.length) {
-      console.warn(`   ⚠️ [CreateProject] Số TeamMember (${teamMembers.length}) khác số sinh viên (${allStudentIds.length}). Có thể có duplicate.`);
-    }
-    
-    console.log(`   ✅ [CreateProject] Đã chọn team: ${selectedTeamId} với ${teamMembers.length} TeamMember records`);
+    console.log(`   ✅ [CreateProject] Đã xác thực team ${selectedTeamId} với ${teamMembers.length} thành viên hợp lệ`);
 
     // 3) Lấy thông tin team hiện tại (để lấy class_id, semester_id và subject_id)
     const currentTeam = await models.Team.findById(selectedTeamId)
