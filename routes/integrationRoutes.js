@@ -185,7 +185,7 @@ module.exports = (app) => {
      *               repoName: { type: string, description: Tên repository }
      *               description: { type: string, description: "Mô tả repo (mặc định: Created via WDP Management System)" }
      *               isPrivate: { type: boolean, description: Repo private hay public }
-     *               projectId: { type: string, description: ID project để tự động gắn githubRepoUrl }
+     *               projectId: { type: string, description: "ID project để tự động gắn githubRepoUrl (optional)" }
      *               gitignoreTemplate: { type: string, description: "Gitignore template (Node, Java, Python, ...). Mặc định: Node" }
      *     responses:
      *       200:
