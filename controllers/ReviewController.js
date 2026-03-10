@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const PeerReview = require('../models/PeerReview');
 const TeamMember = require('../models/TeamMember');
+const GradingService = require('../services/GradingService');
 const Team = require('../models/Team');
 
 // ==========================================
@@ -8,8 +9,8 @@ const Team = require('../models/Team');
 // ==========================================
 exports.submitPeerReview = async (req, res) => {
     try {
-        const evaluatorId = req.user._id; 
-        const { teamId, reviews } = req.body; 
+        const evaluatorId = req.user._id;
+        const { teamId, reviews } = req.body;
 
         // 1. Kiểm tra Nhóm có tồn tại không
         const team = await Team.findById(teamId);
@@ -31,7 +32,7 @@ exports.submitPeerReview = async (req, res) => {
         const otherMembers = await TeamMember.find({
             team_id: teamId,
             is_active: true,
-            student_id: { $ne: evaluatorId } 
+            student_id: { $ne: evaluatorId }
         }).select('student_id');
 
         const requiredMemberIds = otherMembers.map(m => m.student_id.toString());
@@ -100,11 +101,11 @@ exports.getTeamReviewsForLecturer = async (req, res) => {
             .lean();
 
         if (!reviews || reviews.length === 0) {
-            return res.json({ 
+            return res.json({
                 team_id: teamId,
-                message: "Chưa có đánh giá chéo nào được nộp cho nhóm này.", 
+                message: "Chưa có đánh giá chéo nào được nộp cho nhóm này.",
                 total_reviews: 0,
-                evaluation_summary: [] 
+                evaluation_summary: []
             });
         }
 
@@ -113,10 +114,10 @@ exports.getTeamReviewsForLecturer = async (req, res) => {
 
         reviews.forEach(review => {
             // Đề phòng trường hợp sinh viên bị xóa khỏi database làm null tham chiếu
-            if (!review.evaluated_id || !review.evaluator_id) return; 
+            if (!review.evaluated_id || !review.evaluator_id) return;
 
             const evaluatedId = review.evaluated_id._id.toString();
-            
+
             if (!summaryMap[evaluatedId]) {
                 summaryMap[evaluatedId] = {
                     student: review.evaluated_id,
@@ -154,5 +155,34 @@ exports.getTeamReviewsForLecturer = async (req, res) => {
     } catch (error) {
         console.error("❌ Lỗi fetching team reviews:", error);
         return res.status(500).json({ error: "Lỗi Server nội bộ" });
+    }
+};
+
+exports.calculateSprintGrades = async (req, res) => {
+    try {
+        const { teamId, sprintId, groupGrade } = req.body;
+
+        // 1. Validation đầu vào
+        if (!teamId || !sprintId || groupGrade === undefined) {
+            return res.status(400).json({ error: 'Thiếu thông tin teamId, sprintId hoặc groupGrade' });
+        }
+
+        // 2. Phân quyền: Thường chỉ LECTURER hoặc ADMIN mới được chốt điểm
+        if (req.role !== 'LECTURER' && req.role !== 'ADMIN') {
+            return res.status(403).json({ error: 'Chỉ giảng viên mới có quyền chốt điểm.' });
+        }
+
+        // 3. Gọi Service để tính toán điểm
+        const results = await GradingService.calculateSprintGrades(teamId, sprintId, Number(groupGrade));
+
+        return res.status(200).json({
+            message: '✅ Đã tính điểm và lưu thành công!',
+            total_members_assessed: results.length,
+            data: results
+        });
+
+    } catch (error) {
+        console.error("❌ Lỗi tính điểm Sprint/Assignment:", error);
+        return res.status(500).json({ error: error.message });
     }
 };

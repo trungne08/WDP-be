@@ -1,7 +1,7 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
-// 1. Peer Review (Đánh giá chéo)
+// 1. Peer Review (Đánh giá chéo) - Giữ nguyên như cũ
 const PeerReviewSchema = new Schema({
     sprint_id: { type: Schema.Types.ObjectId, ref: 'Sprint', required: true },
     reviewer_id: { type: Schema.Types.ObjectId, ref: 'TeamMember', required: true },
@@ -12,24 +12,29 @@ const PeerReviewSchema = new Schema({
     created_at: { type: Date, default: Date.now }
 });
 
-// 2. Sprint Assessment (Bảng chốt điểm)
+// 2. Sprint Assessment (Bảng chốt điểm) - Đã cập nhật theo công thức mới
 const AssessmentSchema = new Schema({
     sprint_id: { type: Schema.Types.ObjectId, ref: 'Sprint', required: true },
     member_id: { type: Schema.Types.ObjectId, ref: 'TeamMember', required: true },
     
-    // Chỉ số hệ 10 (flat fields theo schema)
-    jira_score_10: { type: Number, default: 0 },
-    git_score_10:  { type: Number, default: 0 },
-    review_score_10: { type: Number, default: 0 },
+    // Điểm nhóm do Giảng viên nhập (hệ 10)
+    group_grade: { type: Number, required: true, default: 0 },
     
-    // Tính toán
-    composite_score: Number,       // Weighted Sum
-    contribution_percentage: Number, // % Share
-    final_score: Number,           // Fund * %
+    // Tỷ lệ phần trăm đóng góp từng phần (%Jira, %Git, %Review)
+    jira_percentage: { type: Number, default: 0 },
+    git_percentage: { type: Number, default: 0 },
+    review_percentage: { type: Number, default: 0 },
     
-    created_at: { type: Date, default: Date.now }
+    // Kết quả tính toán
+    contribution_factor: { type: Number, default: 0 }, // Tổng % đóng góp
+    final_score: { type: Number, default: 0 },         // Điểm cá nhân cuối cùng
+    
+    is_locked: { type: Boolean, default: false }, // Đã chốt điểm chưa
+    created_at: { type: Date, default: Date.now },
+    updated_at: { type: Date, default: Date.now }
 });
 
+// Export cả 2 model
 module.exports = {
     PeerReview: mongoose.model('PeerReview', PeerReviewSchema),
     SprintAssessment: mongoose.model('SprintAssessment', AssessmentSchema)

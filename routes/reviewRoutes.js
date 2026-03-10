@@ -104,4 +104,53 @@ router.post('/api/reviews/submit', authenticateToken, ReviewController.submitPee
  */
 router.get('/api/reviews/team/:teamId', authenticateToken, ReviewController.getTeamReviewsForLecturer);
 
+/**
+ * @swagger
+ * /api/reviews/calculate:
+ *   post:
+ *     summary: Giảng viên chốt điểm cá nhân cho Assignment/Sprint
+ *     tags: [Reviews]
+ *     security:
+ *       - bearerAuth: []
+ *     description: |
+ *       API dành cho **GIẢNG VIÊN** để tính điểm cá nhân của từng sinh viên.
+ *
+ *       Hệ thống sẽ lấy **điểm nhóm (groupGrade)** và nhân với hệ số đóng góp
+ *       (% Jira, % Git, % Peer Review) để tính ra **điểm cá nhân cuối cùng**.
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required:
+ *               - teamId
+ *               - sprintId
+ *               - groupGrade
+ *             properties:
+ *               teamId:
+ *                 type: string
+ *                 example: "60d5ecb8b392d700153ef123"
+ *                 description: ID của nhóm
+ *               sprintId:
+ *                 type: string
+ *                 example: "60d5eccfb392d700153ef456"
+ *                 description: ID của Sprint / Assignment
+ *               groupGrade:
+ *                 type: number
+ *                 example: 8.5
+ *                 description: Điểm nhóm do giảng viên chấm (thang điểm 10)
+ *     responses:
+ *       200:
+ *         description: Tính toán thành công. Trả về danh sách điểm chi tiết của từng sinh viên.
+ *       400:
+ *         description: Dữ liệu đầu vào không hợp lệ.
+ *       403:
+ *         description: Không có quyền truy cập (chỉ Giảng viên/Admin).
+ *       404:
+ *         description: Không tìm thấy nhóm hoặc Sprint.
+ *       500:
+ *         description: Lỗi máy chủ nội bộ.
+ */
+router.post('/api/reviews/calculate', authenticateToken, ReviewController.calculateSprintGrades);
 module.exports = router;

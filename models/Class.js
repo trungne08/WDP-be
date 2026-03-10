@@ -45,19 +45,11 @@ const ClassSchema = new Schema({
     // 3. CẤU HÌNH ĐIỂM (GRADING CONFIG) - QUAN TRỌNG
     // ==================================================
     
-    // Cấu trúc điểm môn học (VD: Lab 10%, Ass 20%, Final 40%)
-    gradeStructure: [{
-        name: { type: String, required: true },     // Tên cột điểm (VD: Assignment 1)
-        weight: { type: Number, required: true },   // Trọng số (VD: 0.2 cho 20%)
-        isGroupGrade: { type: Boolean, default: false } // Có phải điểm nhóm không?
-    }],
-
-    // Cấu hình tính đóng góp (Cho các cột điểm nhóm)
     contributionConfig: {
-        jiraWeight: { type: Number, default: 0.4 },   // Trọng số Jira (40%)
-        gitWeight: { type: Number, default: 0.4 },    // Trọng số Git (40%)
-        reviewWeight: { type: Number, default: 0.2 }, // Trọng số Review (20%)
-        allowOverCeiling: { type: Boolean, default: false } // Cho phép điểm > 100% không? (Bonus)
+        jiraWeight: { type: Number, default: 0.4 },   // Trọng số Jira (VD: 0.4 = 40%)
+        gitWeight: { type: Number, default: 0.4 },    // Trọng số Git (VD: 0.4 = 40%)
+        reviewWeight: { type: Number, default: 0.2 }, // Trọng số Review (VD: 0.2 = 20%)
+        allowOverCeiling: { type: Boolean, default: false } // Cho phép điểm > 100% không?
     }
 
 }, { 
