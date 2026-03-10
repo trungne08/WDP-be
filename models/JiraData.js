@@ -1,12 +1,13 @@
 const mongoose = require('mongoose');
 const Schema = mongoose.Schema;
 
-// Sprint Schema (Giữ nguyên)
+// Sprint Schema (Giữ nguyên + bổ sung trạng thái Hoàn thành)
 const SprintSchema = new Schema({
     team_id: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
     jira_sprint_id: { type: Number, required: true },
     name: { type: String, required: true },
     state: { type: String, enum: ['active', 'closed', 'future'], default: 'future' },
+    isCompleted: { type: Boolean, default: false },
     start_date: { type: Date },
     end_date: { type: Date },
     goal: { type: String }

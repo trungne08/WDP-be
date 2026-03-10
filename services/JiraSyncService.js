@@ -1156,6 +1156,10 @@ async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, t
       const jiraSprintId = s.id != null ? Number(s.id) : null;
       if (jiraSprintId == null) continue;
 
+      const stateValue = (() => {
+        const st = ((s.state || 'future') + '').toLowerCase();
+        return ['active', 'closed', 'future'].includes(st) ? st : 'future';
+      })();
       const saved = await Sprint.findOneAndUpdate(
         { team_id: teamId, jira_sprint_id: jiraSprintId },
         {
@@ -1163,10 +1167,8 @@ async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, t
             team_id: teamId,
             jira_sprint_id: jiraSprintId,
             name: s.name || `Sprint ${jiraSprintId}`,
-            state: (() => {
-              const st = ((s.state || 'future') + '').toLowerCase();
-              return ['active', 'closed', 'future'].includes(st) ? st : 'future';
-            })(),
+            state: stateValue,
+            isCompleted: stateValue === 'closed',
             start_date: s.startDate ? new Date(s.startDate) : null,
             end_date: s.endDate ? new Date(s.endDate) : null,
             goal: s.goal || null
@@ -1200,6 +1202,7 @@ async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, t
         jira_sprint_id: 0,
         name: 'Default Sprint',
         state: 'active',
+        isCompleted: false,
         start_date: new Date(),
         end_date: null
       }

@@ -75,6 +75,7 @@ exports.handleJiraWebhook = async (req, res) => {
           jira_sprint_id: 0,
           name: 'Default Sprint',
           state: 'active',
+          isCompleted: false,
           start_date: new Date(),
           end_date: null
         },

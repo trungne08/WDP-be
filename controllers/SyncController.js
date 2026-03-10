@@ -195,6 +195,8 @@ exports.syncTeamData = async (req, res) => {
                         const jiraSprintId = s.id != null ? Number(s.id) : null;
                         if (jiraSprintId == null) continue; // bỏ qua item không có id (giữ id=0 nếu Jira trả về)
 
+                        const stateValue = ((s.state || 'future') + '').toLowerCase();
+                        const validState = ['active', 'closed', 'future'].includes(stateValue) ? stateValue : 'future';
                         const savedSprint = await Sprint.findOneAndUpdate(
                             { team_id: teamId, jira_sprint_id: jiraSprintId },
                             {
@@ -202,7 +204,8 @@ exports.syncTeamData = async (req, res) => {
                                     team_id: teamId,
                                     jira_sprint_id: jiraSprintId,
                                     name: s.name || `Sprint ${jiraSprintId}`,
-                                    state: (s.state || 'future').toLowerCase(),
+                                    state: validState,
+                                    isCompleted: validState === 'closed',
                                     start_date: s.startDate ? new Date(s.startDate) : null,
                                     end_date: s.endDate ? new Date(s.endDate) : null,
                                     goal: s.goal || null
