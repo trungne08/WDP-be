@@ -3,6 +3,7 @@ const bcrypt = require('bcryptjs');
 const Team = require('../models/Team');
 const Project = require('../models/Project');
 const TeamMember = require('../models/TeamMember');
+const { commitBelongsToAuthor } = require('../utils/commitUtils');
 const Student = require('../models/Student');
 const GithubCommit = require('../models/GitData');
 const { Sprint, JiraTask } = require('../models/JiraData');
@@ -528,14 +529,22 @@ exports.getRanking = async (req, res) => {
             .lean();
 
         const commits = await GithubCommit.find({ team_id: teamId, is_counted: true })
-            .select('author_email')
+            .select('author_email author_name')
             .lean();
+        console.log(`[getRanking] teamId=${teamId}, total is_counted commits=${commits.length}`);
 
-        const commitsByEmail = new Map();
+        const countedCommitsByMember = new Map();
+        for (const m of members) {
+            countedCommitsByMember.set(m._id.toString(), 0);
+        }
         for (const c of commits) {
-            const key = (c.author_email || '').toLowerCase();
-            if (!key) continue;
-            commitsByEmail.set(key, (commitsByEmail.get(key) || 0) + 1);
+            for (const m of members) {
+                const emails = [m.student_id?.email].filter(Boolean);
+                const githubUsernames = [m.github_username].filter(Boolean);
+                if (commitBelongsToAuthor(c, emails, githubUsernames)) {
+                    countedCommitsByMember.set(m._id.toString(), (countedCommitsByMember.get(m._id.toString()) || 0) + 1);
+                }
+            }
         }
 
         const taskAggByJiraId = new Map();
@@ -554,9 +563,10 @@ exports.getRanking = async (req, res) => {
         }
 
         const rows = members.map(m => {
-            const email = (m.student_id?.email || '').toLowerCase();
             const jiraId = m.jira_account_id || null;
             const taskAgg = jiraId ? taskAggByJiraId.get(jiraId) : null;
+            const countedCommits = countedCommitsByMember.get(m._id.toString()) || 0;
+            console.log(`[getRanking] Member ${m.student_id?.student_code || m._id}: github_username=${m.github_username || 'N/A'}, counted_commits=${countedCommits}`);
 
             return {
                 member_id: m._id,
@@ -573,7 +583,7 @@ exports.getRanking = async (req, res) => {
                     total_story_points: taskAgg ? taskAgg.total_sp : 0
                 },
                 github: {
-                    counted_commits: email ? commitsByEmail.get(email) || 0 : 0
+                    counted_commits: countedCommits
                 }
             };
         });
