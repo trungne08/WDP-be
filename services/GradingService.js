@@ -107,20 +107,23 @@ const calculateSprintGrades = async (teamId, sprintId, groupGrade = 10) => {
         const pReview = calcPercent(myReviewScore, totalReviewScore);
 
         // 4.3 Áp dụng công thức Contribution Factor
-        let contributionFactor = 
+        const baseContribution = 
             (config.jiraWeight * pJira) + 
             (config.gitWeight * pGit) + 
             (config.reviewWeight * pReview);
 
-        // 4.4 Trần điểm (Ceiling)
-        if (!config.allowOverCeiling && contributionFactor > 1) {
-            contributionFactor = 1.0; 
+        // 4.4 CHUẨN HÓA HỆ SỐ (Nhân với số thành viên để đưa hệ số trung bình về 1.0)
+        let normalizedContribution = baseContribution * memberCount;
+
+        // 4.5 Trần điểm (Ceiling)
+        if (!config.allowOverCeiling && normalizedContribution > 1.0) {
+            normalizedContribution = 1.0; 
         }
 
-        // 4.5 Tính điểm Assignment cá nhân
-        const finalScore = Number((groupGrade * contributionFactor).toFixed(2));
+        // 4.6 Tính điểm Assignment cá nhân
+        const finalScore = Number((groupGrade * normalizedContribution).toFixed(2));
 
-        // 4.6 Upsert vào DB
+        // 4.7 Upsert vào DB
         const assessment = await SprintAssessment.findOneAndUpdate(
             { sprint_id: sprintId, member_id: mId },
             {
@@ -128,7 +131,7 @@ const calculateSprintGrades = async (teamId, sprintId, groupGrade = 10) => {
                 jira_percentage: Number(pJira.toFixed(4)),
                 git_percentage: Number(pGit.toFixed(4)),
                 review_percentage: Number(pReview.toFixed(4)),
-                contribution_factor: Number(contributionFactor.toFixed(4)),
+                contribution_factor: Number(normalizedContribution.toFixed(4)),
                 final_score: finalScore,
                 updated_at: new Date()
             },
