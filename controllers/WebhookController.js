@@ -1,5 +1,6 @@
 const models = require('../models');
 const { Sprint, JiraTask } = require('../models/JiraData');
+const { extractStoryPoint } = require('../services/JiraSyncService');
 
 /**
  * POST /api/webhooks/jira
@@ -108,7 +109,7 @@ exports.handleJiraWebhook = async (req, res) => {
           status_category: issue.fields?.status?.statusCategory?.key || '',
           assignee_account_id: assigneeAccountId || null,
           assignee_name: issue.fields?.assignee?.displayName || null,
-          story_point: issue.fields?.storyPoints || null,
+          story_point: extractStoryPoint(issue.fields || {}),
           created_at: issue.fields?.created ? new Date(issue.fields.created) : undefined,
           updated_at: issue.fields?.updated ? new Date(issue.fields.updated) : new Date()
         },

@@ -45,6 +45,32 @@ function parseAdfToString(adfData) {
 }
 
 /**
+ * Trích xuất Story Point từ issue.fields.
+ * Jira dùng customfield (10016, 10026 phổ biến) hoặc storyPoints.
+ * Fallback: quét các key customfield_* có giá trị số nhỏ (0–100).
+ * @param {Object} fields - issue.fields từ Jira API
+ * @returns {number}
+ */
+function extractStoryPoint(fields) {
+  if (!fields || typeof fields !== 'object') return 0;
+  const v = fields.customfield_10016 ?? fields.customfield_10026 ?? fields.storyPoints;
+  if (v != null && v !== '') {
+    const n = Number(v);
+    if (!isNaN(n) && n >= 0) return n;
+  }
+  for (const key of Object.keys(fields)) {
+    if (key.startsWith('customfield_') && /^\d+$/.test(key.slice(12))) {
+      const val = fields[key];
+      if (val != null) {
+        const n = Number(val);
+        if (!isNaN(n) && n >= 0 && n < 100) return n;
+      }
+    }
+  }
+  return 0;
+}
+
+/**
  * JiraSyncService - Sync dữ liệu từ Jira với Auto-Refresh Token
  * Tự động retry khi gặp lỗi 401 Unauthorized
  *
@@ -704,7 +730,7 @@ async function fetchAllBoardIssues({ accessToken, cloudId, boardId, onTokenRefre
         params: {
           startAt,
           maxResults: 50,
-          fields: 'summary,status,assignee,description,duedate,reporter,customfield_10026,customfield_10020'
+          fields: 'summary,status,assignee,description,duedate,reporter,customfield_10016,customfield_10026,customfield_10020'
         }
       });
 
@@ -736,7 +762,7 @@ async function fetchAllBoardIssues({ accessToken, cloudId, boardId, onTokenRefre
           assignee_account_id: issue.fields.assignee ? issue.fields.assignee.accountId : null,
           reporter_account_id: issue.fields.reporter ? issue.fields.reporter.accountId : null,
           due_date: issue.fields.duedate,
-          story_point: issue.fields.customfield_10026 || 0,
+          story_point: extractStoryPoint(issue.fields),
           jira_sprint_id: currentSprintId
         };
       });
@@ -1252,7 +1278,7 @@ async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, t
           description: parseAdfToString(issue.fields?.description),
           status_name: issue.fields?.status?.name ?? '',
           status_category: issue.fields?.status?.statusCategory?.key ?? '',
-          story_point: issue.fields?.customfield_10026 ?? 0,
+          story_point: extractStoryPoint(issue.fields || {}),
           assignee_account_id: assigneeAccountId ?? null,
           assignee_name: issue.fields?.assignee?.displayName ?? null,
           assignee_id: assigneeMemberId,
@@ -1384,6 +1410,7 @@ module.exports = {
   syncWithAutoRefresh,
   syncProjectJiraData,
   extractJiraSprintIdFromIssue,
+  extractStoryPoint,
 
   // Search & Fetch (REST API)
   searchIssues,

@@ -1,6 +1,7 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const Team = require('../models/Team');
+const Project = require('../models/Project');
 const TeamMember = require('../models/TeamMember');
 const Student = require('../models/Student');
 const GithubCommit = require('../models/GitData');
@@ -14,6 +15,13 @@ function pick(obj, keys) {
     const out = {};
     for (const k of keys) if (obj && obj[k] !== undefined) out[k] = obj[k];
     return out;
+}
+
+/** Kiểm tra task đã hoàn thành (Done) - không phân biệt hoa thường, hỗ trợ tiếng Việt */
+function isTaskDone(task) {
+    const cat = (task?.status_category || '').toLowerCase().trim();
+    const name = (task?.status_name || '').toLowerCase().trim();
+    return cat === 'done' || cat === 'hoàn thành' || name === 'done' || name === 'hoàn thành';
 }
 
 function genStudentCode() {
@@ -415,15 +423,21 @@ exports.getTasks = async (req, res) => {
 // 12) GET /teams/:teamId/commits?limit=10&branch=dev
 exports.getCommits = async (req, res) => {
     try {
-        const { teamId } = req.params;
+        let { teamId } = req.params;
         if (!isValidObjectId(teamId)) return res.status(400).json({ error: 'teamId không hợp lệ' });
+
+        let team = await Team.findById(teamId).lean();
+        if (!team) {
+            const proj = await Project.findById(teamId).select('team_id').lean();
+            if (proj?.team_id) teamId = proj.team_id.toString();
+        }
 
         const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 10)));
         const branch = (req.query?.branch || '').trim() || null;
 
         let query = { team_id: teamId };
         if (branch) {
-            query.$or = [{ branch }, { branches: branch }];
+            query = { team_id: teamId, $or: [{ branch }, { branches: branch }] };
         }
 
         const commits = await GithubCommit.find(query)
@@ -450,14 +464,14 @@ exports.getDashboard = async (req, res) => {
         const sprintIds = sprints.map(s => s._id);
 
         const [tasks, commits] = await Promise.all([
-            JiraTask.find({ sprint_id: { $in: sprintIds } }).select('status_category story_point').lean(),
+            JiraTask.find({ sprint_id: { $in: sprintIds } }).select('status_category status_name story_point').lean(),
             GithubCommit.find({ team_id: teamId }).select('is_counted commit_date').lean()
         ]);
 
         const totalTasks = tasks.length;
-        const doneTasks = tasks.filter(t => t.status_category === 'Done').length;
+        const doneTasks = tasks.filter(isTaskDone).length;
         const spTotal = tasks.reduce((a, t) => a + (Number(t.story_point) || 0), 0);
-        const spDone = tasks.filter(t => t.status_category === 'Done').reduce((a, t) => a + (Number(t.story_point) || 0), 0);
+        const spDone = tasks.filter(isTaskDone).reduce((a, t) => a + (Number(t.story_point) || 0), 0);
 
         const totalCommits = commits.length;
         const countedCommits = commits.filter(c => c.is_counted).length;
@@ -510,7 +524,7 @@ exports.getRanking = async (req, res) => {
         const sprintIds = sprints.map(s => s._id);
 
         const tasks = await JiraTask.find({ sprint_id: { $in: sprintIds } })
-            .select('assignee_account_id status_category story_point')
+            .select('assignee_account_id status_category status_name story_point')
             .lean();
 
         const commits = await GithubCommit.find({ team_id: teamId, is_counted: true })
@@ -532,7 +546,7 @@ exports.getRanking = async (req, res) => {
             const sp = Number(t.story_point) || 0;
             prev.total_count += 1;
             prev.total_sp += sp;
-            if (t.status_category === 'Done') {
+            if (isTaskDone(t)) {
                 prev.done_count += 1;
                 prev.done_sp += sp;
             }

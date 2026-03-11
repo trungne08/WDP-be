@@ -1,6 +1,27 @@
 const models = require('../models');
 const IntegrationService = require('../services/IntegrationService');
 const GithubService = require('../services/GithubService');
+
+/**
+ * Kiểm tra commit có thuộc về member dựa trên author_email/author_name và danh sách identifier
+ * @param {Object} commit - { author_email, author_name }
+ * @param {string[]} emails - Danh sách email (user.email, v.v.)
+ * @param {string[]} githubUsernames - Danh sách GitHub username (TeamMember.github_username, integrations.github.username)
+ */
+function commitBelongsToAuthor(commit, emails = [], githubUsernames = []) {
+  const authorEmail = (commit.author_email || '').toLowerCase();
+  const authorName = (commit.author_name || '').toLowerCase();
+  const emailSet = new Set(emails.map(e => (e || '').toLowerCase()).filter(Boolean));
+  const usernameSet = new Set(githubUsernames.map(u => (u || '').toLowerCase()).filter(Boolean));
+  if (emailSet.has(authorEmail)) return true;
+  for (const u of usernameSet) {
+    if (!u) continue;
+    if (authorEmail.includes(u) && (authorEmail.includes('noreply') || authorEmail.includes('users.noreply'))) return true;
+    if (authorName === u || authorName.includes(u)) return true;
+  }
+  return false;
+}
+
 const JiraService = require('../services/JiraService');
 const JiraAuthService = require('../services/JiraAuthService');
 const JiraSyncService = require('../services/JiraSyncService');
@@ -1259,31 +1280,45 @@ exports.getMyCommits = async (req, res) => {
       });
     }
 
-    // Tìm team từ project (thông qua TeamMember có project_id)
-    let teamId = null;
     const TeamMember = models.TeamMember;
     const teamMember = await TeamMember.findOne({
       project_id: project._id,
       student_id: user._id
-    });
-    if (teamMember) {
-      teamId = teamMember.team_id;
-    }
+    }).lean();
+    const teamId = (teamMember?.team_id || project.team_id)?.toString() || null;
 
     const GithubCommit = models.GithubCommit;
     const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
     const branch = (req.query?.branch || '').trim() || null;
 
-    let query = { team_id: teamId, author_email: user.email.toLowerCase() };
-    if (branch) {
-      query.$or = [
-        { branch: branch },
-        { branches: branch }
-      ];
+    const emails = [user.email].filter(Boolean);
+    const githubUsernames = [
+      teamMember?.github_username,
+      user.integrations?.github?.username
+    ].filter(Boolean);
+
+    const andParts = [{ team_id: teamId }];
+    if (emails.length > 0 || githubUsernames.length > 0) {
+      const authorOr = [];
+      if (emails.length > 0) {
+        authorOr.push({ author_email: { $in: emails.map(e => (e || '').toLowerCase()) } });
+      }
+      for (const u of githubUsernames) {
+        if (!u || typeof u !== 'string') continue;
+        const escaped = u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        authorOr.push({ author_email: new RegExp(escaped + '@users\\.noreply\\.github\\.com', 'i') });
+        authorOr.push({ author_email: new RegExp('\\+' + escaped + '@users\\.noreply', 'i') });
+        authorOr.push({ author_name: new RegExp('^' + escaped + '$', 'i') });
+      }
+      if (authorOr.length > 0) andParts.push({ $or: authorOr });
     }
+    if (branch) {
+      andParts.push({ $or: [{ branch: branch }, { branches: branch }] });
+    }
+    const query = andParts.length > 1 ? { $and: andParts } : andParts[0];
 
     let commits = [];
-    if (teamId && user.email) {
+    if (teamId && (emails.length > 0 || githubUsernames.length > 0)) {
       commits = await GithubCommit.find(query)
         .sort({ commit_date: -1 })
         .limit(limit)
@@ -1454,11 +1489,12 @@ exports.getTeamCommits = async (req, res) => {
       .limit(limit)
       .lean();
 
-    // Phân loại commits theo member
+    // Phân loại commits theo member (match author_email hoặc github_username)
     const commitsByMember = members.map(member => {
-      const email = (member.student_id?.email || '').toLowerCase();
-      const memberCommits = allCommits.filter(c => 
-        c.author_email?.toLowerCase() === email
+      const emails = [member.student_id?.email].filter(Boolean);
+      const githubUsernames = [member.github_username].filter(Boolean);
+      const memberCommits = allCommits.filter(c =>
+        commitBelongsToAuthor(c, emails, githubUsernames)
       );
 
       return {
