@@ -3,20 +3,35 @@ const IntegrationService = require('../services/IntegrationService');
 const GithubService = require('../services/GithubService');
 
 /**
- * Kiểm tra commit có thuộc về member dựa trên author_email/author_name và danh sách identifier
+ * Bóc tách username từ email noreply GitHub (VD: 123+Zedhuynh0210@users.noreply.github.com → Zedhuynh0210)
+ */
+function extractUsernameFromNoreplyEmail(email) {
+  if (!email || typeof email !== 'string') return null;
+  const lower = email.toLowerCase();
+  if (!lower.includes('@users.noreply') && !lower.includes('users.noreply.github.com')) return null;
+  const plusMatch = email.match(/\+([^@]+)@/);
+  if (plusMatch) return plusMatch[1];
+  const atMatch = email.match(/^([^@]+)@/);
+  return atMatch ? atMatch[1] : null;
+}
+
+/**
+ * Kiểm tra commit có thuộc về member - không phân biệt hoa/thường
  * @param {Object} commit - { author_email, author_name }
- * @param {string[]} emails - Danh sách email (user.email, v.v.)
- * @param {string[]} githubUsernames - Danh sách GitHub username (TeamMember.github_username, integrations.github.username)
+ * @param {string[]} emails - Danh sách email
+ * @param {string[]} githubUsernames - GitHub username (TeamMember, integrations.github.username)
  */
 function commitBelongsToAuthor(commit, emails = [], githubUsernames = []) {
-  const authorEmail = (commit.author_email || '').toLowerCase();
-  const authorName = (commit.author_name || '').toLowerCase();
-  const emailSet = new Set(emails.map(e => (e || '').toLowerCase()).filter(Boolean));
-  const usernameSet = new Set(githubUsernames.map(u => (u || '').toLowerCase()).filter(Boolean));
-  if (emailSet.has(authorEmail)) return true;
+  const authorEmail = (commit.author_email || '').toLowerCase().trim();
+  const authorName = (commit.author_name || '').toLowerCase().trim();
+  const emailSet = new Set(emails.map(e => (e || '').toLowerCase().trim()).filter(Boolean));
+  const usernameSet = new Set(githubUsernames.map(u => (u || '').toLowerCase().trim()).filter(Boolean));
+  if (authorEmail && emailSet.has(authorEmail)) return true;
+  const extractedFromNoreply = extractUsernameFromNoreplyEmail(commit.author_email || '');
+  if (extractedFromNoreply && usernameSet.has(extractedFromNoreply.toLowerCase())) return true;
   for (const u of usernameSet) {
     if (!u) continue;
-    if (authorEmail.includes(u) && (authorEmail.includes('noreply') || authorEmail.includes('users.noreply'))) return true;
+    if (authorEmail.includes(u) && authorEmail.includes('users.noreply')) return true;
     if (authorName === u || authorName.includes(u)) return true;
   }
   return false;
@@ -1254,7 +1269,7 @@ exports.getProjectGithubBranches = async (req, res) => {
 
 /**
  * GET /api/integrations/my-commits
- * Member: Lấy commits GitHub của chính mình
+ * Member: Lấy commits GitHub của chính mình (tất cả teams/projects)
  */
 exports.getMyCommits = async (req, res) => {
   try {
@@ -1263,45 +1278,30 @@ exports.getMyCommits = async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy user' });
     }
 
-    // Lấy project của user
+    const TeamMember = models.TeamMember;
     const Project = models.Project;
-    const project = await Project.findOne({
-      $or: [
-        { leader_id: user._id },
-        { members: user._id }
-      ]
-    });
+    const teamMembers = await TeamMember.find({ student_id: user._id }).lean();
+    const teamIds = [...new Set(teamMembers.map(tm => tm.team_id?.toString()).filter(Boolean))];
 
-    if (!project) {
-      return res.json({ 
-        total: 0,
-        commits: [],
-        message: 'Bạn chưa tham gia project nào'
-      });
+    if (teamIds.length === 0) {
+      return res.json({ total: 0, commits: [], projects: [], message: 'Bạn chưa tham gia project nào' });
     }
 
-    const TeamMember = models.TeamMember;
-    const teamMember = await TeamMember.findOne({
-      project_id: project._id,
-      student_id: user._id
-    }).lean();
-    const teamId = (teamMember?.team_id || project.team_id)?.toString() || null;
+    const emails = [user.email].filter(Boolean);
+    const githubUsernames = [
+      ...teamMembers.map(tm => tm.github_username).filter(Boolean),
+      user.integrations?.github?.username
+    ].filter(Boolean);
 
     const GithubCommit = models.GithubCommit;
     const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
     const branch = (req.query?.branch || '').trim() || null;
 
-    const emails = [user.email].filter(Boolean);
-    const githubUsernames = [
-      teamMember?.github_username,
-      user.integrations?.github?.username
-    ].filter(Boolean);
-
-    const andParts = [{ team_id: teamId }];
+    const andParts = [{ team_id: { $in: teamIds } }];
     if (emails.length > 0 || githubUsernames.length > 0) {
       const authorOr = [];
       if (emails.length > 0) {
-        authorOr.push({ author_email: { $in: emails.map(e => (e || '').toLowerCase()) } });
+        authorOr.push({ author_email: { $in: emails.map(e => (e || '').toLowerCase().trim()) } });
       }
       for (const u of githubUsernames) {
         if (!u || typeof u !== 'string') continue;
@@ -1315,25 +1315,23 @@ exports.getMyCommits = async (req, res) => {
     if (branch) {
       andParts.push({ $or: [{ branch: branch }, { branches: branch }] });
     }
-    const query = andParts.length > 1 ? { $and: andParts } : andParts[0];
+    const query = { $and: andParts };
 
     let commits = [];
-    if (teamId && (emails.length > 0 || githubUsernames.length > 0)) {
+    if (emails.length > 0 || githubUsernames.length > 0) {
       commits = await GithubCommit.find(query)
         .sort({ commit_date: -1 })
         .limit(limit)
         .lean();
     }
 
-    return res.json({
-      project: {
-        _id: project._id,
-        name: project.name
-      },
-      total: commits.length,
-      commits: commits
-    });
+    const projects = await Project.find({ team_id: { $in: teamIds } }).select('_id name team_id').lean();
 
+    return res.json({
+      projects: projects.map(p => ({ _id: p._id, name: p.name, team_id: p.team_id })),
+      total: commits.length,
+      commits
+    });
   } catch (error) {
     console.error('Get My Commits Error:', error);
     return res.status(500).json({ error: error.message });
@@ -1342,7 +1340,7 @@ exports.getMyCommits = async (req, res) => {
 
 /**
  * GET /api/integrations/my-tasks
- * Member: Lấy tasks Jira của chính mình
+ * Member: Lấy tasks Jira của chính mình (tất cả teams/projects)
  */
 exports.getMyTasks = async (req, res) => {
   try {
@@ -1351,84 +1349,61 @@ exports.getMyTasks = async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy user' });
     }
 
-    // Lấy project của user
-    const Project = models.Project;
-    const project = await Project.findOne({
-      $or: [
-        { leader_id: user._id },
-        { members: user._id }
-      ]
-    });
-
-    if (!project) {
-      return res.json({ 
-        total: 0,
-        tasks: [],
-        message: 'Bạn chưa tham gia project nào'
-      });
-    }
-
-    // Tìm team từ project (thông qua TeamMember có project_id)
-    let teamId = null;
     const TeamMember = models.TeamMember;
-    const teamMember = await TeamMember.findOne({
-      project_id: project._id,
-      student_id: user._id
-    });
-    if (teamMember) {
-      teamId = teamMember.team_id;
-    }
-
+    const Project = models.Project;
     const { Sprint, JiraTask } = require('../models/JiraData');
-    const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
 
-    // Lấy tasks của user (theo jira_account_id)
-    let tasks = [];
-    if (teamId) {
-      // Tìm team member của user
-      const teamMember = await TeamMember.findOne({
-        team_id: teamId,
-        student_id: user._id
-      });
+    const teamMembers = await TeamMember.find({ student_id: user._id }).lean();
+    const teamIds = [...new Set(teamMembers.map(tm => tm.team_id?.toString()).filter(Boolean))];
 
-      if (teamMember?.jira_account_id) {
-        const sprints = await Sprint.find({ team_id: teamId }).select('_id').lean();
-        const sprintIds = sprints.map(s => s._id);
+    const jiraAccountIds = [
+      ...teamMembers.map(tm => tm.jira_account_id).filter(Boolean),
+      user.integrations?.jira?.jiraAccountId
+    ].filter(Boolean);
+    const jiraAccountIdSet = new Set(jiraAccountIds.map(String));
 
-        // Filter theo status nếu có
-        const statusFilter = req.query.status;
-        let query = {
-          sprint_id: { $in: sprintIds },
-          assignee_account_id: teamMember.jira_account_id
-        };
-        
-        if (statusFilter) {
-          query.$or = [
-            { status_category: statusFilter },
-            { status_name: statusFilter }
-          ];
-        }
-
-        tasks = await JiraTask.find(query)
-        .populate({
-          path: 'sprint_id',
-          select: 'name state'
-        })
-        .sort({ updated_at: -1 })
-        .limit(limit)
-        .lean();
-      }
+    if (teamIds.length === 0 || jiraAccountIdSet.size === 0) {
+      const projects = await Project.find({ $or: [{ leader_id: user._id }, { members: user._id }] }).select('_id name').lean();
+      return res.json({ total: 0, tasks: [], projects: projects.map(p => ({ _id: p._id, name: p.name })), message: jiraAccountIdSet.size === 0 ? 'Chưa map Jira account. Vui lòng kết nối Jira.' : 'Bạn chưa tham gia project nào' });
     }
+
+    const sprints = await Sprint.find({ team_id: { $in: teamIds } }).select('_id').lean();
+    const sprintIds = sprints.map(s => s._id);
+    if (sprintIds.length === 0) {
+      const projects = await Project.find({ team_id: { $in: teamIds } }).select('_id name').lean();
+      return res.json({ total: 0, tasks: [], projects: projects.map(p => ({ _id: p._id, name: p.name })) });
+    }
+
+    const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
+    const statusFilter = req.query.status;
+
+    const escapeRegex = (s) => (s || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const statusRegex = statusFilter ? new RegExp('^' + escapeRegex(statusFilter) + '$', 'i') : null;
+
+    let query = {
+      sprint_id: { $in: sprintIds },
+      assignee_account_id: { $in: Array.from(jiraAccountIdSet) }
+    };
+    if (statusFilter && statusRegex) {
+      query.$or = [
+        { status_category: statusRegex },
+        { status_name: statusRegex }
+      ];
+    }
+
+    const tasks = await JiraTask.find(query)
+      .populate({ path: 'sprint_id', select: 'name state' })
+      .sort({ updated_at: -1 })
+      .limit(limit)
+      .lean();
+
+    const projects = await Project.find({ team_id: { $in: teamIds } }).select('_id name team_id').lean();
 
     return res.json({
-      project: {
-        _id: project._id,
-        name: project.name
-      },
+      projects: projects.map(p => ({ _id: p._id, name: p.name, team_id: p.team_id })),
       total: tasks.length,
-      tasks: tasks
+      tasks
     });
-
   } catch (error) {
     console.error('Get My Tasks Error:', error);
     return res.status(500).json({ error: error.message });
@@ -1668,19 +1643,38 @@ exports.getMemberCommits = async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy member trong team này' });
     }
 
-    const email = (member.student_id?.email || '').toLowerCase();
+    const emails = [member.student_id?.email].filter(Boolean);
+    const githubUsernames = [member.github_username].filter(Boolean);
+
     const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
     const branch = (req.query?.branch || '').trim() || null;
 
-    let query = { team_id: teamId, author_email: email };
-    if (branch) {
-      query.$or = [{ branch }, { branches: branch }];
+    const andParts = [{ team_id: teamId }];
+    if (emails.length > 0 || githubUsernames.length > 0) {
+      const authorOr = [];
+      if (emails.length > 0) {
+        authorOr.push({ author_email: { $in: emails.map(e => (e || '').toLowerCase().trim()) } });
+      }
+      for (const u of githubUsernames) {
+        if (!u || typeof u !== 'string') continue;
+        const escaped = u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+        authorOr.push({ author_email: new RegExp(escaped + '@users\\.noreply\\.github\\.com', 'i') });
+        authorOr.push({ author_email: new RegExp('\\+' + escaped + '@users\\.noreply', 'i') });
+        authorOr.push({ author_name: new RegExp('^' + escaped + '$', 'i') });
+      }
+      if (authorOr.length > 0) andParts.push({ $or: authorOr });
     }
-
-    const commits = await GithubCommit.find(query)
-      .sort({ commit_date: -1 })
-      .limit(limit)
-      .lean();
+    if (branch) {
+      andParts.push({ $or: [{ branch }, { branches: branch }] });
+    }
+    let commits = [];
+    if (emails.length > 0 || githubUsernames.length > 0) {
+      const query = andParts.length > 1 ? { $and: andParts } : andParts[0];
+      commits = await GithubCommit.find(query)
+        .sort({ commit_date: -1 })
+        .limit(limit)
+        .lean();
+    }
 
     return res.json({
       member: {
