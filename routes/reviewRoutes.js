@@ -153,4 +153,69 @@ router.get('/api/reviews/team/:teamId', authenticateToken, ReviewController.getT
  *         description: Lỗi máy chủ nội bộ.
  */
 router.post('/api/reviews/calculate', authenticateToken, ReviewController.calculateSprintGrades);
+
+/**
+ * @swagger
+ * /api/reviews/teams/{teamId}/my-grades:
+ *   get:
+ *     summary: Sinh viên xem điểm Assignment cá nhân
+ *     tags: [Reviews]
+ *     security:
+ *       - bearerAuth: []
+ *     description: |
+ *       API dành cho sinh viên xem điểm đóng góp cá nhân của mình
+ *       trong các Assignment/Sprint của nhóm.
+ *     parameters:
+ *       - in: path
+ *         name: teamId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID của nhóm
+ *     responses:
+ *       200:
+ *         description: Trả về danh sách điểm của sinh viên
+ *       404:
+ *         description: Không tìm thấy thành viên trong nhóm
+ *       500:
+ *         description: Lỗi máy chủ nội bộ
+ */
+router.get('/api/reviews/teams/:teamId/my-grades', authenticateToken, ReviewController.getMyAssignmentGrades);
+
+/**
+ * @swagger
+ * /api/reviews/classes/{classId}/grades:
+ *   get:
+ *     summary: Giảng viên xem bảng điểm Assignment của cả lớp
+ *     tags: [Reviews]
+ *     security:
+ *       - bearerAuth: []
+ *     description: |
+ *       API dành cho **Giảng viên / Admin**.
+ *
+ *       Trả về danh sách tất cả sinh viên trong lớp
+ *       kèm theo điểm của từng Assignment/Sprint.
+ *
+ *       Dữ liệu này thường được dùng để:
+ *       - Xuất file Excel bảng điểm tổng kết
+ *       - Theo dõi đóng góp cá nhân của sinh viên
+ *     parameters:
+ *       - in: path
+ *         name: classId
+ *         required: true
+ *         schema:
+ *           type: string
+ *         description: ID của lớp học
+ *     responses:
+ *       200:
+ *         description: Lấy bảng điểm của lớp thành công
+ *       403:
+ *         description: Không có quyền truy cập
+ *       404:
+ *         description: Không tìm thấy lớp học
+ *       500:
+ *         description: Lỗi máy chủ nội bộ
+ */
+router.get('/api/reviews/classes/:classId/grades', authenticateToken, ReviewController.getClassGrades);
+
 module.exports = router;
