@@ -845,7 +845,7 @@ async function createIssue({ client, projectKey, data }) {
     const payload = {
       fields: {
         project: { key: projectKey },
-        issuetype: { name: 'Task' },
+        issuetype: { name: data.issueType || data.issuetypeName || 'Task' },
         summary: data.summary,
         description: textToADF(data.description || ''),
         
@@ -921,6 +921,48 @@ async function deleteIssue({ client, issueKey }) {
     console.error('❌ [Jira API] Lỗi delete issue:', error.message);
     throw error;
   }
+}
+
+/**
+ * Tạo issue Jira Cloud (REST v3) — wrapper dùng OAuth accessToken + cloudId.
+ * @param {string} cloudId
+ * @param {string} accessToken
+ * @param {string} projectId - **Jira project key** (VD: SCRUM), cùng nghĩa với `jiraProjectKey` trên WDP Project
+ * @param {string} summary
+ * @param {string} [issueType] - Task, Bug, Story, ...
+ * @param {string} [description]
+ * @param {Function} [onTokenRefresh] - Giống createJiraApiClient
+ * @returns {Promise<{id?: string, key?: string, self?: string}>}
+ */
+async function createJiraIssue(cloudId, accessToken, projectId, summary, issueType, description, onTokenRefresh) {
+  const client = createJiraApiClient({ accessToken, cloudId, onTokenRefresh });
+  return createIssue({
+    client,
+    projectKey: projectId,
+    data: {
+      summary,
+      description: description || '',
+      issueType: issueType || 'Task'
+    }
+  });
+}
+
+/**
+ * Đổi trạng thái issue bằng transition (tên transition khớp newStatus).
+ */
+async function updateJiraIssueStatus(cloudId, accessToken, issueKey, newStatus, onTokenRefresh) {
+  const client = createJiraApiClient({ accessToken, cloudId, onTokenRefresh });
+  await transitionIssue({ client, issueKey, targetStatusName: newStatus });
+  return { success: true };
+}
+
+/**
+ * Xóa issue theo key hoặc id.
+ */
+async function deleteJiraIssue(cloudId, accessToken, issueKey, onTokenRefresh) {
+  const client = createJiraApiClient({ accessToken, cloudId, onTokenRefresh });
+  await deleteIssue({ client, issueKey });
+  return { success: true };
 }
 
 // =========================
@@ -1502,5 +1544,10 @@ module.exports = {
   deleteIssueV2,
   transitionIssue,
   deleteSprint,
-  getCustomFieldId
+  getCustomFieldId,
+
+  // High-level Jira Cloud v3 (cloudId + token — dùng AI function calling, script, ...)
+  createJiraIssue,
+  updateJiraIssueStatus,
+  deleteJiraIssue
 };
