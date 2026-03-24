@@ -85,7 +85,8 @@ module.exports = (app) => {
      *     description: |
      *       **Bước 1 OAuth:** User đã đăng nhập gọi API này để lấy URL Atlassian authorize.
      *       Frontend sẽ nhận được `redirectUrl` và tự redirect bằng `window.location.href = redirectUrl`.
-     *       Scope: `read:jira-user`, `read:jira-work`, `offline_access`.
+     *       Trong đó có các scope webhook: `read:webhook:jira`, `write:webhook:jira`, `delete:webhook:jira` (cùng các scope Jira/Agile khác; danh sách phân cách bằng space trong query string).
+     *       **Quan trọng:** Nếu đã từng kết nối Jira trước khi có các scope webhook, user **phải ngắt kết nối và kết nối lại Jira** (OAuth lại) để Atlassian cấp đủ quyền đăng ký/quản lý webhook.
      *     parameters:
      *       - in: query
      *         name: redirect_uri

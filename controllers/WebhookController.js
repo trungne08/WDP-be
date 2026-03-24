@@ -10,38 +10,29 @@ function escapeRegex(s) {
 
 /**
  * POST /api/webhooks/jira
- * Webhook endpoint để nhận real-time updates từ Jira
- * 
- * Jira sẽ gửi webhook khi có:
- * - issue_created
- * - issue_updated
- * - issue_deleted
- * - sprint_created
- * - sprint_updated
- * - sprint_closed
+ * Nhận Jira dynamic webhook (không dùng authenticateToken).
+ * Payload: webhookEvent, issue (fields.summary, status, assignee, customfield_10016 / story points qua extractStoryPoint).
  */
-exports.handleJiraWebhook = async (req, res) => {
+exports.receiveJiraWebhook = async (req, res) => {
   try {
-    // Jira webhook signature verification (optional but recommended)
-    // const signature = req.headers['x-atlassian-webhook-signature'];
-    // if (!verifyWebhookSignature(signature, req.body)) {
-    //   return res.status(401).json({ error: 'Invalid webhook signature' });
-    // }
+    const body = req.body || {};
+    const eventType = body.webhookEvent;
+    const issue = body.issue;
+    const project = issue?.fields?.project;
 
-    const webhookEvent = req.body;
-    const eventType = webhookEvent.webhookEvent; // e.g., "jira:issue_created", "jira:issue_updated"
-    const issue = webhookEvent.issue;
-    const project = webhookEvent.issue?.fields?.project;
-
-    console.log(`📥 [Jira Webhook] Nhận event: ${eventType}`);
-    console.log(`   Issue: ${issue?.key} (${issue?.id})`);
-    console.log(`   Project: ${project?.key} (${project?.id})`);
-
-    if (!issue || !project) {
-      return res.status(400).json({ error: 'Thiếu thông tin issue hoặc project' });
+    if (!eventType || !issue || !project) {
+      return res.status(200).send('Jira Webhook received');
     }
 
-    // Tìm Project trong DB theo jiraProjectKey
+    const issueId = issue.id;
+    const issueKey = issue.key;
+    const summary = issue.fields?.summary ?? '';
+    const status = issue.fields?.status?.name ?? '';
+    const assigneeEmail = issue.fields?.assignee?.emailAddress;
+    const storyPoints = extractStoryPoint(issue.fields || {});
+
+    console.log(`📥 [Jira Webhook] ${eventType} — ${issueKey} (${issueId}) | SP=${storyPoints} | assigneeEmail=${assigneeEmail || '—'}`);
+
     const projectKey = project.key;
     const dbProject = await models.Project.findOne({
       jiraProjectKey: projectKey
@@ -49,13 +40,9 @@ exports.handleJiraWebhook = async (req, res) => {
 
     if (!dbProject) {
       console.log(`⚠️ [Jira Webhook] Không tìm thấy Project với key: ${projectKey}`);
-      return res.json({ 
-        message: 'Project không tồn tại trong hệ thống',
-        ignored: true 
-      });
+      return res.status(200).send('Jira Webhook received');
     }
 
-    // Tìm team từ project (thông qua TeamMember có project_id)
     const teamMember = await models.TeamMember.findOne({
       project_id: dbProject._id,
       is_active: true
@@ -63,18 +50,30 @@ exports.handleJiraWebhook = async (req, res) => {
 
     if (!teamMember) {
       console.log(`⚠️ [Jira Webhook] Không tìm thấy Team cho project: ${dbProject._id}`);
-      return res.json({ 
-        message: 'Team không tồn tại',
-        ignored: true 
-      });
+      return res.status(200).send('Jira Webhook received');
     }
 
     const teamId = teamMember.team_id;
 
-    // Xử lý theo loại event
+    const emitKanbanUpdate = () => {
+      const io = req.app.get('io');
+      if (io) {
+        io.emit('JIRA_ISSUE_UPDATED', {
+          message: 'Bảng Kanban Jira vừa có cập nhật!',
+          issueKey,
+          status
+        });
+      }
+    };
+
+    if (eventType === 'jira:issue_deleted') {
+      await JiraTask.deleteOne({ issue_id: issueId });
+      console.log(`✅ [Jira Webhook] Đã xóa task: ${issueKey}`);
+      emitKanbanUpdate();
+      return res.status(200).send('Jira Webhook received');
+    }
+
     if (eventType === 'jira:issue_created' || eventType === 'jira:issue_updated') {
-      // Tìm hoặc tạo sprint mặc định
-      let sprintId = null;
       const defaultSprint = await Sprint.findOneAndUpdate(
         { team_id: teamId, name: 'Default Sprint' },
         {
@@ -88,11 +87,11 @@ exports.handleJiraWebhook = async (req, res) => {
         },
         { upsert: true, new: true }
       );
-      sprintId = defaultSprint._id;
+      const sprintId = defaultSprint._id;
 
-      // Map assignee
       let assigneeMemberId = null;
       const assigneeAccountId = issue.fields?.assignee?.accountId;
+
       if (assigneeAccountId && teamId) {
         const member = await models.TeamMember.findOne({
           team_id: teamId,
@@ -102,68 +101,48 @@ exports.handleJiraWebhook = async (req, res) => {
         assigneeMemberId = member ? member._id : null;
       }
 
-      // Upsert JiraTask
+      if (!assigneeMemberId && assigneeEmail && teamId) {
+        const members = await models.TeamMember.find({
+          team_id: teamId,
+          is_active: true
+        })
+          .populate('student_id', 'email')
+          .lean();
+        const lower = assigneeEmail.toLowerCase();
+        const found = members.find(
+          (m) => (m.student_id?.email || '').toLowerCase() === lower
+        );
+        assigneeMemberId = found ? found._id : null;
+      }
+
       await JiraTask.findOneAndUpdate(
-        { issue_id: issue.id },
+        { issue_id: issueId },
         {
+          team_id: teamId,
           sprint_id: sprintId,
           assignee_id: assigneeMemberId,
-          issue_key: issue.key,
-          issue_id: issue.id,
-          summary: issue.fields?.summary || '',
-          status_name: issue.fields?.status?.name || '',
+          issue_key: issueKey,
+          issue_id: issueId,
+          summary,
+          status_name: status,
           status_category: issue.fields?.status?.statusCategory?.key || '',
           assignee_account_id: assigneeAccountId || null,
           assignee_name: issue.fields?.assignee?.displayName || null,
-          story_point: extractStoryPoint(issue.fields || {}),
+          story_point: storyPoints,
           created_at: issue.fields?.created ? new Date(issue.fields.created) : undefined,
           updated_at: issue.fields?.updated ? new Date(issue.fields.updated) : new Date()
         },
         { upsert: true, new: true }
       );
 
-      console.log(`✅ [Jira Webhook] Đã cập nhật task: ${issue.key}`);
-
-      // Emit Socket.io event để FE update real-time
-      if (global._io) {
-        global._io.to(`team:${teamId}`).emit('jira_task_updated', {
-          action: eventType === 'jira:issue_created' ? 'created' : 'updated',
-          issue_key: issue.key,
-          issue_id: issue.id,
-          project_id: dbProject._id
-        });
-      }
-
-    } else if (eventType === 'jira:issue_deleted') {
-      // Xóa task khỏi DB
-      await JiraTask.deleteOne({ issue_id: issue.id });
-      console.log(`✅ [Jira Webhook] Đã xóa task: ${issue.key}`);
-
-      // Emit Socket.io event
-      if (global._io) {
-        global._io.to(`team:${teamId}`).emit('jira_task_updated', {
-          action: 'deleted',
-          issue_key: issue.key,
-          issue_id: issue.id,
-          project_id: dbProject._id
-        });
-      }
+      console.log(`✅ [Jira Webhook] Đã cập nhật task: ${issueKey}`);
+      emitKanbanUpdate();
     }
 
-    // Trả về 200 để Jira biết đã nhận được
-    return res.status(200).json({ 
-      message: 'Webhook processed successfully',
-      event: eventType,
-      issue_key: issue.key
-    });
-
+    return res.status(200).send('Jira Webhook received');
   } catch (error) {
-    console.error('❌ [Jira Webhook] Error:', error);
-    // Vẫn trả về 200 để Jira không retry (tránh spam)
-    return res.status(200).json({ 
-      error: 'Webhook processing failed',
-      message: error.message
-    });
+    console.error('❌ [Jira Webhook]', error);
+    return res.status(200).send('Jira Webhook received');
   }
 };
 

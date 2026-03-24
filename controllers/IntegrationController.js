@@ -356,6 +356,18 @@ exports.jiraCallback = async (req, res) => {
     
     await user.save();
 
+    try {
+      const backendBase = GithubService.getWebhookBackendBaseUrl(req);
+      if (backendBase) {
+        await JiraSyncService.createJiraWebhook(cloudId, accessToken, backendBase);
+        console.log(`✅ [Jira Callback] Đã đăng ký webhook → ${backendBase}/api/webhooks/jira`);
+      } else {
+        console.warn('⚠️ [Jira Callback] Thiếu SERVER_URL/RENDER_EXTERNAL_URL/BACKEND_URL — bỏ qua đăng ký webhook');
+      }
+    } catch (whErr) {
+      console.warn('⚠️ [Jira Callback] Đăng ký Jira webhook thất bại:', whErr.message);
+    }
+
     // 7) Best-effort: auto map Jira accountId cho TeamMember
     try {
       const updatedMembers = await models.TeamMember.find({

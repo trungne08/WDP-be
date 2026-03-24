@@ -1400,6 +1400,69 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
 }
 
 // =========================
+// 5b. JIRA CLOUD WEBHOOK (Auto-Register)
+// =========================
+
+/**
+ * Đăng ký Jira Cloud dynamic webhook (REST API v3).
+ * @param {string} cloudId
+ * @param {string} accessToken - OAuth (cần scope write:webhook:jira; read/delete dùng khi liệt kê/xóa webhook)
+ * @param {string} backendUrl - Base URL backend, không có slash cuối
+ * @returns {Promise<any>} Response từ API Atlassian
+ */
+async function createJiraWebhook(cloudId, accessToken, backendUrl) {
+  if (!cloudId || !accessToken) {
+    throw new Error('cloudId và accessToken là bắt buộc');
+  }
+  const base = (backendUrl || '').trim().replace(/\/$/, '');
+  if (!base) {
+    throw new Error('backendUrl là bắt buộc để đăng ký webhook');
+  }
+
+  const payload = {
+    url: `${base}/api/webhooks/jira`,
+    webhooks: [
+      {
+        jqlFilter: 'project IS NOT EMPTY',
+        events: [
+          'jira:issue_created',
+          'jira:issue_updated',
+          'jira:issue_deleted'
+        ]
+      }
+    ]
+  };
+
+  try {
+    const response = await axios.post(
+      `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/webhook`,
+      payload,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken.trim()}`,
+          Accept: 'application/json',
+          'Content-Type': 'application/json'
+        },
+        timeout: 30000
+      }
+    );
+    return response.data;
+  } catch (error) {
+    const status = error.response?.status;
+    const msg =
+      error.response?.data?.message ||
+      (Array.isArray(error.response?.data?.errors)
+        ? error.response.data.errors.map((e) => e.message || e).join('; ')
+        : null) ||
+      error.message;
+    if (status === 401 || status === 403) {
+      throw new Error('Jira token không đủ quyền webhook (cần read:webhook:jira, write:webhook:jira, delete:webhook:jira). Vui lòng ngắt kết nối và OAuth lại Jira.');
+    }
+    throw new Error(msg || `Lỗi đăng ký Jira webhook (${status || 'unknown'})`);
+  }
+}
+
+// =========================
 // 6. EXPORTS
 // =========================
 
@@ -1411,6 +1474,7 @@ module.exports = {
   syncProjectJiraData,
   extractJiraSprintIdFromIssue,
   extractStoryPoint,
+  createJiraWebhook,
 
   // Search & Fetch (REST API)
   searchIssues,

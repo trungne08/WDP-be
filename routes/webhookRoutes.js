@@ -14,11 +14,8 @@ module.exports = (app) => {
      *       - issue_updated
      *       - issue_deleted
      *       
-     *       **Cấu hình Webhook trên Jira:**
-     *       1. Vào Jira Settings → System → Webhooks
-     *       2. Tạo webhook mới với URL: `https://your-domain.com/api/webhooks/jira`
-     *       3. Chọn events: Issue Created, Issue Updated, Issue Deleted
-     *       4. Chọn projects: Chọn project cụ thể hoặc All Projects
+     *       **Auto-register:** Sau OAuth Jira thành công, BE gọi API đăng ký dynamic webhook (scopes `read:webhook:jira`, `write:webhook:jira`, `delete:webhook:jira` — user phải OAuth lại nếu token cũ thiếu quyền).
+     *       **Schema:** `webhookEvent`, `issue`, `issue.fields.*` (summary, status, assignee, story points qua customfield).
      *     requestBody:
      *       required: true
      *       content:
@@ -28,11 +25,9 @@ module.exports = (app) => {
      *             description: Jira webhook payload
      *     responses:
      *       200:
-     *         description: Webhook processed successfully
-     *       400:
-     *         description: Invalid webhook payload
+     *         description: Plain text `Jira Webhook received` (luôn 200 để tránh retry)
      */
-    app.post('/api/webhooks/jira', WebhookController.handleJiraWebhook);
+    app.post('/api/webhooks/jira', WebhookController.receiveJiraWebhook);
 
     /**
      * @swagger
