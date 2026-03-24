@@ -42,10 +42,12 @@ const io = new Server(server, {
 
 // 3. Lưu biến io ra biến toàn cục (Global) để dùng ở bất cứ file nào
 global._io = io;
+// Gắn vào Express app để controller lấy qua req.app.get('io')
+app.set('io', io);
 
 // 4. Lắng nghe kết nối từ Client
 io.on('connection', (socket) => {
-  console.log('⚡ Client connected:', socket.id);
+  console.log('🟢 Client connected to Socket.io');
 
   // Client gửi 'join_class' kèm classId để vào phòng lớp
   socket.on('join_class', (classId) => {

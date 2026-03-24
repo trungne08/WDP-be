@@ -18,7 +18,7 @@ module.exports = (app) => {
      *     description: |
      *       **Bước 1 OAuth:** User đã đăng nhập gọi API này để lấy URL GitHub authorize.
      *       Frontend sẽ nhận được `redirectUrl` và tự redirect bằng `window.location.href = redirectUrl`.
-     *       Scope: `repo`, `user`.
+     *       Scope: `repo`, `user`, `write:repo_hook` (tự động tạo webhook push).
      *     parameters:
      *       - in: query
      *         name: redirect_uri

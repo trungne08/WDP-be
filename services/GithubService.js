@@ -310,6 +310,78 @@ async function fetchCommitsFromDefaultBranch(repoUrl, token) {
 // =========================
 
 /**
+ * Chuẩn hóa URL repo GitHub để so khớp (loại .git, slash cuối)
+ * @param {string} url
+ * @returns {string}
+ */
+function normalizeGithubRepoUrl(url) {
+    if (!url || typeof url !== 'string') return '';
+    return url.trim().replace(/\.git$/i, '').replace(/\/$/, '');
+}
+
+/**
+ * Public URL của backend dùng trong config webhook (ưu tiên env production).
+ * @param {import('express').Request} [req]
+ * @returns {string}
+ */
+function getWebhookBackendBaseUrl(req) {
+    const fromEnv = (process.env.SERVER_URL || process.env.RENDER_EXTERNAL_URL || process.env.BACKEND_URL || '')
+        .trim()
+        .replace(/\/$/, '');
+    if (fromEnv) return fromEnv;
+    if (req && typeof req.get === 'function' && req.protocol) {
+        return `${req.protocol}://${req.get('host')}`.replace(/\/$/, '');
+    }
+    return '';
+}
+
+/**
+ * Đăng ký webhook push trên repo GitHub (Real-time sync về BE)
+ * @param {string} owner
+ * @param {string} repo
+ * @param {string} githubAccessToken - OAuth token user (cần scope write:repo_hook hoặc repo)
+ * @param {string} backendUrl - Base URL backend (không có slash cuối), ví dụ https://api.example.com
+ * @returns {Promise<object>} Response data từ GitHub API (hook object)
+ */
+async function createGithubWebhook(owner, repo, githubAccessToken, backendUrl) {
+    if (!owner || !repo) {
+        throw new Error('owner và repo là bắt buộc');
+    }
+    if (!githubAccessToken || typeof githubAccessToken !== 'string' || !githubAccessToken.trim()) {
+        throw new Error('GitHub access token là bắt buộc');
+    }
+    const base = (backendUrl || '').trim().replace(/\/$/, '');
+    if (!base) {
+        throw new Error('backendUrl là bắt buộc để đăng ký webhook');
+    }
+
+    const client = createGithubClient(githubAccessToken.trim());
+    const hookUrl = `${base}/api/webhooks/github`;
+    const payload = {
+        name: 'web',
+        active: true,
+        events: ['push'],
+        config: {
+            url: hookUrl,
+            content_type: 'json',
+            insecure_ssl: '0'
+        }
+    };
+
+    try {
+        const response = await client.post(`/repos/${owner}/${repo}/hooks`, payload);
+        return response.data;
+    } catch (error) {
+        const status = error.response?.status;
+        const msg = error.response?.data?.message || error.message;
+        if (status === 401 || status === 403) {
+            throw new Error('GitHub token không đủ quyền tạo webhook (cần write:repo_hook / repo). Vui lòng kết nối lại GitHub.');
+        }
+        throw new Error(msg || `Lỗi tạo webhook GitHub (${status || 'unknown'})`);
+    }
+}
+
+/**
  * Tạo repository mới trên GitHub (dùng tham số nâng cao của GitHub REST API)
  * @param {string} accessToken - GitHub OAuth access token
  * @param {string} repoName - Tên repo (slug hợp lệ: chữ, số, dấu gạch ngang/dưới)
@@ -414,6 +486,11 @@ module.exports = {
 
     // Create repo (auto-provisioning)
     createRepository,
+
+    // Webhook (auto-register push → BE)
+    createGithubWebhook,
+    normalizeGithubRepoUrl,
+    getWebhookBackendBaseUrl,
 
     // Commit details (patch/diff)
     getCommitDetails,

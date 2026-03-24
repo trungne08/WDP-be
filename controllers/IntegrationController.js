@@ -171,7 +171,7 @@ exports.githubConnect = async (req, res) => {
       frontendRedirectUri // Lưu URL frontend (có thể là web hoặc deep link mobile) để redirect về sau
     });
 
-    const scope = 'repo user';
+    const scope = 'repo user write:repo_hook';
     const url = IntegrationService.buildGithubAuthUrl({ clientId, redirectUri, scope, state });
     
     // Trả về JSON với URL thay vì redirect để frontend tự redirect (tránh lỗi CORS khi dùng XHR)
@@ -446,6 +446,19 @@ exports.createGithubRepo = async (req, res) => {
     );
 
     const repoUrl = response.html_url;
+
+    try {
+      const backendBase = GithubService.getWebhookBackendBaseUrl(req);
+      if (backendBase) {
+        const { owner, repo } = GithubService.parseRepoUrl(repoUrl);
+        await GithubService.createGithubWebhook(owner, repo, token, backendBase);
+        console.log(`✅ [createGithubRepo] Đã đăng ký webhook push → ${backendBase}/api/webhooks/github (${owner}/${repo})`);
+      } else {
+        console.warn('⚠️ [createGithubRepo] Thiếu SERVER_URL/RENDER_EXTERNAL_URL/BACKEND_URL — bỏ qua đăng ký webhook');
+      }
+    } catch (whErr) {
+      console.warn('⚠️ [createGithubRepo] Đăng ký webhook GitHub thất bại:', whErr.message);
+    }
 
     if (projectId && mongoose.Types.ObjectId.isValid(projectId)) {
       const project = await models.Project.findOneAndUpdate(

@@ -1,5 +1,6 @@
 const models = require('../models');
 const mongoose = require('mongoose');
+const GithubService = require('../services/GithubService');
 
 // POST /api/projects
 // Leader tạo project mới dựa trên danh sách members + repo Jira/GitHub đã chọn
@@ -294,6 +295,22 @@ exports.createProject = async (req, res) => {
       },
       { project_id: project._id }
     );
+
+    const ghToken = user?.integrations?.github?.accessToken;
+    if (githubRepoUrl && ghToken) {
+      try {
+        const backendBase = GithubService.getWebhookBackendBaseUrl(req);
+        if (backendBase) {
+          const { owner, repo } = GithubService.parseRepoUrl(githubRepoUrl);
+          await GithubService.createGithubWebhook(owner, repo, ghToken, backendBase);
+          console.log(`✅ [CreateProject] Đã đăng ký webhook push cho ${owner}/${repo}`);
+        } else {
+          console.warn('⚠️ [CreateProject] Thiếu SERVER_URL/RENDER_EXTERNAL_URL/BACKEND_URL — bỏ qua đăng ký webhook');
+        }
+      } catch (whErr) {
+        console.warn('⚠️ [CreateProject] Đăng ký webhook GitHub thất bại:', whErr.message);
+      }
+    }
 
     // 7) Populate project để trả về đầy đủ thông tin (class_id, team_id, semester_id, subject_id)
     const populatedProject = await models.Project.findById(project._id)

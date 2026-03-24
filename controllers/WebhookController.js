@@ -1,6 +1,12 @@
 const models = require('../models');
 const { Sprint, JiraTask } = require('../models/JiraData');
 const { extractStoryPoint } = require('../services/JiraSyncService');
+const GithubService = require('../services/GithubService');
+const { commitBelongsToAuthor } = require('../utils/commitUtils');
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 /**
  * POST /api/webhooks/jira
@@ -158,5 +164,142 @@ exports.handleJiraWebhook = async (req, res) => {
       error: 'Webhook processing failed',
       message: error.message
     });
+  }
+};
+
+/**
+ * POST /api/webhooks/github
+ * Nhận payload push từ GitHub (không dùng Bearer JWT — GitHub gọi trực tiếp).
+ */
+exports.receiveGithubWebhook = async (req, res) => {
+  try {
+    const event = (req.get('X-GitHub-Event') || '').trim();
+    if (event !== 'push') {
+      return res.status(200).send('Webhook received');
+    }
+
+    const payload = req.body || {};
+    const commitsRaw = Array.isArray(payload.commits) ? payload.commits : [];
+    const repoHtmlUrl = payload.repository?.html_url;
+
+    if (!repoHtmlUrl || commitsRaw.length === 0) {
+      return res.status(200).send('Webhook received');
+    }
+
+    let owner;
+    let repo;
+    try {
+      ({ owner, repo } = GithubService.parseRepoUrl(repoHtmlUrl));
+    } catch {
+      return res.status(200).send('Webhook received');
+    }
+
+    const urlPattern = new RegExp(
+      `(?:https?:\\/\\/)?(?:www\\.)?github\\.com\\/${escapeRegex(owner)}\\/${escapeRegex(repo)}(?:\\.git)?/?$`,
+      'i'
+    );
+
+    const project = await models.Project.findOne({
+      githubRepoUrl: urlPattern
+    }).lean();
+
+    if (!project) {
+      console.log(`⚠️ [GitHub Webhook] Không tìm thấy project gắn repo ${owner}/${repo}`);
+      return res.status(200).send('Webhook received');
+    }
+
+    const teamMembers = await models.TeamMember.find({
+      project_id: project._id,
+      is_active: true
+    })
+      .populate('student_id', 'email')
+      .lean();
+
+    if (!teamMembers.length) {
+      return res.status(200).send('Webhook received');
+    }
+
+    const teamId = teamMembers[0].team_id;
+    const GithubCommit = models.GithubCommit;
+    const jiraRegex = /[A-Z][A-Z0-9]+-\d+/g;
+    const branch = (payload.ref || '').replace(/^refs\/heads\//, '') || null;
+
+    let commitsSaved = 0;
+
+    for (const c of commitsRaw) {
+      if (!c.id) continue;
+
+      const commitLike = {
+        author_email: c.author?.email,
+        author_name: c.author?.name
+      };
+
+      let matched = false;
+      for (const m of teamMembers) {
+        const emails = m.student_id?.email ? [m.student_id.email] : [];
+        const githubUsernames = [m.github_username].filter(Boolean);
+        if (commitBelongsToAuthor(commitLike, emails, githubUsernames)) {
+          matched = true;
+          break;
+        }
+      }
+
+      if (!matched) continue;
+
+      const commit = {
+        hash: c.id,
+        message: c.message,
+        author_email: c.author?.email,
+        author_name: c.author?.name,
+        commit_date: c.timestamp ? new Date(c.timestamp) : new Date(),
+        url: c.url,
+        branch,
+        branches: branch ? [branch] : []
+      };
+
+      const checkResult = await GithubCommit.processCommit(commit, teamId);
+      const branchesToAdd = branch ? [branch] : [];
+      const extractedJiraIssues = [...new Set((commit.message || '').match(jiraRegex) || [])];
+
+      const updateDoc = {
+        $set: {
+          team_id: teamId,
+          author_email: commit.author_email,
+          author_name: commit.author_name,
+          message: commit.message,
+          commit_date: commit.commit_date,
+          url: commit.url,
+          branch,
+          is_counted: checkResult.is_counted,
+          rejection_reason: checkResult.reason
+        }
+      };
+
+      const addToSetFields = {};
+      if (branchesToAdd.length > 0) addToSetFields.branches = { $each: branchesToAdd };
+      if (extractedJiraIssues.length > 0) addToSetFields.jira_issues = { $each: extractedJiraIssues };
+      if (Object.keys(addToSetFields).length > 0) updateDoc.$addToSet = addToSetFields;
+
+      await GithubCommit.findOneAndUpdate(
+        { team_id: teamId, hash: commit.hash },
+        updateDoc,
+        { upsert: true, new: true }
+      );
+      commitsSaved += 1;
+    }
+
+    const io = req.app.get('io');
+    if (io && commitsSaved > 0) {
+      io.emit('GITHUB_NEW_COMMITS', {
+        message: 'Có code mới vừa được push lên GitHub!',
+        commitsCount: commitsSaved,
+        projectName: project.name || ''
+      });
+    }
+
+    return res.status(200).send('Webhook received');
+  } catch (error) {
+    console.error('❌ [GitHub Webhook]', error);
+    return res.status(200).send('Webhook received');
   }
 };

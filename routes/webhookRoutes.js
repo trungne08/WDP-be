@@ -33,4 +33,16 @@ module.exports = (app) => {
      *         description: Invalid webhook payload
      */
     app.post('/api/webhooks/jira', WebhookController.handleJiraWebhook);
+
+    /**
+     * @swagger
+     * /api/webhooks/github:
+     *   post:
+     *     summary: Webhook GitHub (push) — đồng bộ commit real-time
+     *     tags: [21. Webhooks]
+     *     description: |
+     *       GitHub gọi endpoint này khi có push (Content-Type application/json).
+     *       Không dùng JWT Bearer; URL được đăng ký tự động khi liên kết repo với project.
+     */
+    app.post('/api/webhooks/github', WebhookController.receiveGithubWebhook);
 };
