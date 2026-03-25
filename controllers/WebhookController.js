@@ -1,11 +1,159 @@
 const models = require('../models');
+const mongoose = require('mongoose');
 const { Sprint, JiraTask } = require('../models/JiraData');
 const { extractStoryPoint } = require('../services/JiraSyncService');
 const GithubService = require('../services/GithubService');
 const { commitBelongsToAuthor } = require('../utils/commitUtils');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { reviewGithubCommitWithGemini } = require('../services/AiChatService');
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function taskLooksDoneByStatus(statusCategory, statusName) {
+  const cat = String(statusCategory || '').toLowerCase();
+  if (cat === 'done' || cat === 'completed') return true;
+  const name = String(statusName || '').toLowerCase();
+  return /done|closed|complete|resolved|hoàn thành|đã xong|đóng/i.test(name);
+}
+
+async function calculateTeamContribution(teamId) {
+  const teamObjectId = mongoose.Types.ObjectId.isValid(String(teamId))
+    ? new mongoose.Types.ObjectId(teamId)
+    : teamId;
+
+  // Weights theo cấu hình Class (nếu có)
+  let jiraWeight = 0.5;
+  let gitWeight = 0.5;
+  const teamDoc = await models.Team.findById(teamObjectId).lean();
+  const classDoc = teamDoc?.class_id ? await models.Class.findById(teamDoc.class_id).lean() : null;
+  const cfg = classDoc?.contributionConfig || null;
+  if (cfg) {
+    jiraWeight = typeof cfg.jiraWeight === 'number' ? cfg.jiraWeight : jiraWeight;
+    gitWeight = typeof cfg.gitWeight === 'number' ? cfg.gitWeight : gitWeight;
+  }
+  const sumWeights = (jiraWeight + gitWeight) || 1;
+  const wJira = jiraWeight / sumWeights;
+  const wGit = gitWeight / sumWeights;
+
+  const teamMembers = await models.TeamMember.find({
+    team_id: teamObjectId,
+    is_active: true
+  })
+    .populate('student_id', 'student_code email full_name')
+    .lean();
+
+  const memberById = new Map(teamMembers.map((m) => [String(m._id), m]));
+  const emailToMember = new Map(
+    teamMembers.map((m) => [String(m.student_id?.email || '').toLowerCase().trim(), m])
+  );
+
+  // 1) Jira done story points aggregate theo assignee_id (TeamMember)
+  const jiraAgg = await JiraTask.aggregate([
+    {
+      $match: {
+        team_id: teamObjectId,
+        $or: [
+          { status_category: { $regex: /^(done|completed)$/i } },
+          { status_name: { $regex: /(done|closed|complete|resolved|hoàn thành|đã xong|đóng)/i } }
+        ]
+      }
+    },
+    {
+      $group: {
+        _id: '$assignee_id',
+        totalStoryPoints: { $sum: '$story_point' }
+      }
+    }
+  ]);
+
+  const jiraPointsByMemberId = new Map();
+  for (const row of jiraAgg || []) {
+    if (!row?._id) continue;
+    jiraPointsByMemberId.set(String(row._id), Number(row.totalStoryPoints || 0));
+  }
+
+  const totalJiraPoints = Array.from(jiraPointsByMemberId.values()).reduce((a, b) => a + b, 0);
+
+  // 2) GitHub ai_score aggregate theo author_email (lowercase)
+  const gitAgg = await models.GithubCommit.aggregate([
+    {
+      $match: {
+        team_id: teamObjectId,
+        ai_score: { $ne: null },
+        author_email: { $ne: null }
+      }
+    },
+    { $addFields: { author_email_lc: { $toLower: '$author_email' } } },
+    {
+      $group: {
+        _id: '$author_email_lc',
+        totalAiScore: { $sum: '$ai_score' }
+      }
+    }
+  ]);
+
+  const gitScoreByEmail = new Map();
+  for (const row of gitAgg || []) {
+    if (!row?._id) continue;
+    gitScoreByEmail.set(String(row._id).toLowerCase(), Number(row.totalAiScore || 0));
+  }
+  const totalGitScore = Array.from(gitScoreByEmail.values()).reduce((a, b) => a + b, 0);
+
+  const leaderboard = teamMembers.map((m) => {
+    const memberId = String(m._id);
+    const email = String(m.student_id?.email || '').toLowerCase().trim();
+
+    const donePoints = Number(jiraPointsByMemberId.get(memberId) || 0);
+    const aiScoreTotal = Number(gitScoreByEmail.get(email) || 0);
+
+    const jiraPercent = totalJiraPoints > 0 ? donePoints / totalJiraPoints : 0;
+    const gitPercent = totalGitScore > 0 ? aiScoreTotal / totalGitScore : 0;
+
+    let percent = 0;
+    if (totalJiraPoints > 0 && totalGitScore > 0) {
+      // Theo trọng số %Jira + %GitHub (peer tạm 0%)
+      percent = (jiraPercent * wJira + gitPercent * wGit) * 100;
+    } else if (totalJiraPoints > 0) {
+      percent = jiraPercent * 100;
+    } else if (totalGitScore > 0) {
+      percent = gitPercent * 100;
+    }
+
+    return {
+      team_member_id: memberId,
+      student_code: m.student_id?.student_code || null,
+      email: m.student_id?.email || null,
+      full_name: m.student_id?.full_name || null,
+      percent: Math.round(percent * 100) / 100,
+      jira_done_story_points: donePoints,
+      github_ai_score: aiScoreTotal
+    };
+  });
+
+  // Persist leaderboard -> TeamMember để phục vụ tính điểm cuối kỳ
+  await Promise.all(
+    leaderboard.map(async (row) => {
+      try {
+        if (!row.team_member_id) return;
+        await models.TeamMember.findByIdAndUpdate(
+          row.team_member_id,
+          {
+            $set: {
+              contribution_percent: row.percent,
+              jira_story_points: row.jira_done_story_points,
+              github_ai_score: row.github_ai_score
+            }
+          }
+        );
+      } catch (e) {
+        console.warn('[calculateTeamContribution] Update TeamMember failed:', e.message || e);
+      }
+    })
+  );
+
+  return { teamId: String(teamId), leaderboard };
 }
 
 /**
@@ -191,8 +339,8 @@ exports.receiveGithubWebhook = async (req, res) => {
       project_id: project._id,
       is_active: true
     })
-      .populate('student_id', 'email')
-      .lean();
+      .populate('student_id', 'email integrations')
+      .exec();
 
     if (!teamMembers.length) {
       return res.status(200).send('Webhook received');
@@ -204,6 +352,7 @@ exports.receiveGithubWebhook = async (req, res) => {
     const branch = (payload.ref || '').replace(/^refs\/heads\//, '') || null;
 
     let commitsSaved = 0;
+    const commitsToGrade = new Set();
 
     for (const c of commitsRaw) {
       if (!c.id) continue;
@@ -265,6 +414,7 @@ exports.receiveGithubWebhook = async (req, res) => {
         { upsert: true, new: true }
       );
       commitsSaved += 1;
+      commitsToGrade.add(commit.hash);
     }
 
     const io = req.app.get('io');
@@ -274,6 +424,62 @@ exports.receiveGithubWebhook = async (req, res) => {
         commitsCount: commitsSaved,
         projectName: project.name || ''
       });
+    }
+
+    // Background AI grading + leaderboard update (không chặn webhook response)
+    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || '';
+    const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
+    const THROTTLE_MS = Number(process.env.GEMINI_THROTTLE_MS || 1000);
+
+    const backgroundCommitHashes = Array.from(commitsToGrade);
+    if (backgroundCommitHashes.length > 0 && geminiKey && project?._id) {
+      const githubUser =
+        teamMembers.find((tm) => tm?.student_id?.integrations?.github?.accessToken)?.student_id ||
+        null;
+
+      // Nếu không có accessToken nào trong nhóm thì skip AI chấm điểm.
+      if (githubUser) {
+        const projectIdStr = String(project._id);
+        const teamIdStr = String(teamId);
+
+        setImmediate(async () => {
+          try {
+            const genAI = new GoogleGenerativeAI(geminiKey);
+
+            for (const hash of backgroundCommitHashes) {
+              try {
+                // Chỉ review khi commit chưa có ai_score (để tránh chấm lặp)
+                const existing = await models.GithubCommit.findOne({
+                  team_id: teamId,
+                  hash
+                }).select('ai_score').lean();
+                if (existing?.ai_score != null) continue;
+
+                await reviewGithubCommitWithGemini(
+                  projectIdStr,
+                  hash,
+                  githubUser,
+                  genAI,
+                  geminiModel
+                );
+
+                await new Promise((r) => setTimeout(r, THROTTLE_MS));
+              } catch (e) {
+                console.warn('[GitHub Webhook] AI review error:', e?.message || e);
+              }
+            }
+
+            const leaderboardData = await calculateTeamContribution(teamIdStr);
+            if (io) {
+              io.emit('LEADERBOARD_UPDATED', leaderboardData);
+            } else if (global._io) {
+              global._io.emit('LEADERBOARD_UPDATED', leaderboardData);
+            }
+          } catch (e) {
+            console.warn('[GitHub Webhook] Background job error:', e?.message || e);
+          }
+        });
+      }
     }
 
     return res.status(200).send('Webhook received');

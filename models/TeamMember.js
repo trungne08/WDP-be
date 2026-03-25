@@ -46,6 +46,11 @@ const TeamMemberSchema = new Schema({
         total_score: { type: Number, default: 0 }
     },
 
+    // 5b. Cache đóng góp % (được cập nhật real-time từ GitHub webhook + AI review)
+    contribution_percent: { type: Number, default: 0 },
+    jira_story_points: { type: Number, default: 0 },
+    github_ai_score: { type: Number, default: 0 },
+
     // 6. Liên kết với Project (mỗi team member thuộc 0 hoặc 1 project)
     project_id: {
         type: mongoose.Schema.Types.ObjectId,

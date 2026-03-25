@@ -27,7 +27,11 @@ const GithubCommitSchema = new Schema({
     
     // LOGIC TÍNH ĐIỂM (QUALIFIED)
     is_counted: { type: Boolean, default: false },
-    rejection_reason: String // 'Spam', 'Too soon', 'Empty'
+    rejection_reason: String, // 'Spam', 'Too soon', 'Empty'
+
+    // AI grading (lưu điểm & nhận xét code review Gemini)
+    ai_score: { type: Number, default: null },
+    ai_review: { type: String, default: null }
 });
 
 // Đảm bảo 1 commit hash chỉ unique trong PHẠM VI 1 team,

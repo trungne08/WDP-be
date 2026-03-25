@@ -150,6 +150,8 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey) {
 async function executeProjectChatToolRound(req, functionCalls, ctx) {
   const { jiraProjectKey, projectId, genAI, geminiModel } = ctx;
   const outputs = [];
+  let reviewCount = 0;
+  const THROTTLE_MS = Number(process.env.GEMINI_THROTTLE_MS || 1000);
 
   for (const fc of functionCalls) {
     if (fc.name === 'create_jira_task') {
@@ -157,6 +159,11 @@ async function executeProjectChatToolRound(req, functionCalls, ctx) {
       outputs.push(one);
     } else if (fc.name === 'review_github_commit') {
       try {
+        // Throttle để tránh lỗi Rate Limit 429 khi review nhiều commit liên tiếp.
+        if (reviewCount > 0) {
+          await new Promise((res) => setTimeout(res, THROTTLE_MS));
+        }
+        reviewCount += 1;
         const res = await reviewGithubCommitWithGemini(
           projectId,
           fc.args?.commitHash,

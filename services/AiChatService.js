@@ -45,6 +45,38 @@ async function getGithubCommitMessage(repoUrl, accessToken, sha) {
 
 const MAX_DIFF_CHARS = 120000;
 
+function stripMarkdownFences(text) {
+  return String(text || '')
+    .replace(/```(?:json)?/gi, '')
+    .replace(/```/g, '')
+    .trim();
+}
+
+function extractFirstJsonObject(text) {
+  const cleaned = stripMarkdownFences(text);
+  // Nếu model trả đúng 1 object JSON thì parse luôn
+  if (cleaned.startsWith('{') && cleaned.endsWith('}')) {
+    try {
+      return JSON.parse(cleaned);
+    } catch {
+      // fallthrough
+    }
+  }
+
+  // Nếu có thêm text xung quanh, cắt phần object JSON đầu tiên
+  const match = cleaned.match(/{[\s\S]*}/);
+  if (!match) return null;
+  try {
+    return JSON.parse(match[0]);
+  } catch {
+    return null;
+  }
+}
+
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
 /**
  * Tool: lấy diff commit + chấm/review bằng Gemini (không gọi Python).
  * @param {import('@google/generative-ai').GoogleGenerativeAI} genAI
@@ -107,23 +139,70 @@ async function reviewGithubCommitWithGemini(projectId, commitHash, user, genAI, 
   const reviewer = genAI.getGenerativeModel({
     model: modelName,
     systemInstruction:
-      'Bạn là reviewer code chuyên nghiệp. Phân tích diff, nêu ưu/điểm cần cải thiện. Cho điểm tổng thể thang 0–10 (ghi rõ số điểm). Trả lời tiếng Việt, Markdown ngắn gọn.'
+      'BẠT BUỘC CHỈ TRẢ VỀ 1 JSON OBJECT HỢP LỆ (không kèm text khác ngoài JSON).\n' +
+      'JSON có cấu trúc chính xác: { "score": <number 0..10>, "review": "<string nhận xét chi tiết>" }.\n' +
+      '\n' +
+      'Chấm điểm công bằng theo 2 tiêu chí (thang 10):\n' +
+      '1) Tiêu chí 1 (20%): Format commit message (ưu tiên Conventional Commits).\n' +
+      '- Nếu commit message không rõ ràng / sai chuẩn Conventional Commits => giảm điểm CHỈ ở phần Format.\n' +
+      '- Sai tên/format commit message KHÔNG được phép kéo final score về 0 nếu code diff tốt.\n' +
+      '2) Tiêu chí 2 (80%): Chất lượng code diff.\n' +
+      '- Nếu diff xử lý logic tốt, tối ưu, không có lỗi nghiêm trọng => BẮT BUỘC chấm điểm cao cho tiêu chí 2.\n' +
+      '\n' +
+      'Quy tắc bắt buộc:\n' +
+      '- Tuyệt đối KHÔNG chấm 0 điểm chỉ vì sai format commit message.\n' +
+      '- Luôn chấm tiêu chí 2 nếu diff tồn tại (không bỏ qua).\n' +
+      '- Final score phải phản ánh đúng trọng số 20%/80%. Nếu code diff tốt thì final score phải cao (không được “quên” tiêu chí 2).\n' +
+      '\n' +
+      'Không dùng Markdown code fence. Trả lời tiếng Việt trong trường "review", viết rõ ràng, phân tích vừa đủ chi tiết và có đề xuất cải thiện cụ thể.'
   });
 
   const prompt = `Commit message:\n${commitMessage}\n\nDiff (patch):\n${diffTruncated}`;
   const result = await reviewer.generateContent(prompt);
-  const reviewText = (result?.response?.text?.() || '').trim();
-
-  if (!reviewText) {
-    return { ok: false, error: 'Gemini không trả về nội dung review.' };
+  const rawText = (result?.response?.text?.() || '').trim();
+  if (!rawText) {
+    return { ok: false, error: 'Gemini không trả về nội dung JSON.' };
   }
 
-  return {
-    ok: true,
-    commitHash: sha,
-    commitMessage,
-    review: reviewText
-  };
+  const parsed = extractFirstJsonObject(rawText);
+  if (!parsed || typeof parsed !== 'object') {
+    return { ok: false, error: 'Không parse được JSON từ Gemini response.' };
+  }
+
+  const score = typeof parsed.score === 'number' ? parsed.score : Number(parsed.score);
+  const review = typeof parsed.review === 'string' ? parsed.review.trim() : '';
+
+  if (Number.isNaN(score) || score < 0 || score > 10 || !review) {
+    return { ok: false, error: 'JSON từ Gemini thiếu score/review hợp lệ.' };
+  }
+
+  const teamId = project.team_id;
+  if (!teamId) {
+    return { ok: false, error: 'Không tìm thấy team_id để lưu ai_score.' };
+  }
+
+  // Tìm commit trong DB theo hash (ưu tiên match exact, fallback match theo prefix nếu ai gửi short SHA)
+  let resolvedHash = sha;
+  let commitDoc = await models.GithubCommit.findOne({ team_id: teamId, hash: resolvedHash }).lean();
+  if (!commitDoc && sha.length < 40) {
+    const re = new RegExp('^' + escapeRegex(sha));
+    commitDoc = await models.GithubCommit.findOne({ team_id: teamId, hash: re }).lean();
+    if (commitDoc?.hash) resolvedHash = commitDoc.hash;
+  }
+
+  if (!commitDoc && sha.length < 40) {
+    // Nếu ai_score yêu cầu commit đã tồn tại, thiếu commit sẽ báo rõ để debug
+    return { ok: false, error: 'Không tìm thấy commit trong DB để lưu điểm.' };
+  }
+
+  // Upsert theo hash resolved (nếu có)
+  await models.GithubCommit.findOneAndUpdate(
+    { team_id: teamId, hash: resolvedHash },
+    { $set: { ai_score: score, ai_review: review } },
+    { new: true }
+  );
+
+  return `Đã review xong. Điểm: ${score}/10.\nNhận xét: ${review}`;
 }
 
 /**
