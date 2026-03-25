@@ -108,7 +108,7 @@ router.get('/api/reviews/team/:teamId', authenticateToken, ReviewController.getT
  * @swagger
  * /api/reviews/calculate:
  *   post:
- *     summary: Giảng viên chốt điểm cá nhân cho Assignment/Sprint
+ *     summary: Giảng viên chốt điểm cá nhân cho toàn dự án
  *     tags: [Reviews]
  *     security:
  *       - bearerAuth: []
@@ -116,7 +116,7 @@ router.get('/api/reviews/team/:teamId', authenticateToken, ReviewController.getT
  *       API dành cho **GIẢNG VIÊN** để tính điểm cá nhân của từng sinh viên.
  *
  *       Hệ thống sẽ lấy **điểm nhóm (groupGrade)** và nhân với hệ số đóng góp
- *       (% Jira, % Git, % Peer Review) để tính ra **điểm cá nhân cuối cùng**.
+ *       (% Kỹ thuật từ AI, hệ số Peer Review) để tính ra **điểm cá nhân cuối cùng**.
  *     requestBody:
  *       required: true
  *       content:
@@ -125,17 +125,12 @@ router.get('/api/reviews/team/:teamId', authenticateToken, ReviewController.getT
  *             type: object
  *             required:
  *               - teamId
- *               - sprintId
  *               - groupGrade
  *             properties:
  *               teamId:
  *                 type: string
  *                 example: "60d5ecb8b392d700153ef123"
  *                 description: ID của nhóm
- *               sprintId:
- *                 type: string
- *                 example: "60d5eccfb392d700153ef456"
- *                 description: ID của Sprint / Assignment
  *               groupGrade:
  *                 type: number
  *                 example: 8.5
@@ -148,7 +143,7 @@ router.get('/api/reviews/team/:teamId', authenticateToken, ReviewController.getT
  *       403:
  *         description: Không có quyền truy cập (chỉ Giảng viên/Admin).
  *       404:
- *         description: Không tìm thấy nhóm hoặc Sprint.
+ *         description: Không tìm thấy nhóm.
  *       500:
  *         description: Lỗi máy chủ nội bộ.
  */

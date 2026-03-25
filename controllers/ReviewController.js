@@ -162,11 +162,12 @@ exports.getTeamReviewsForLecturer = async (req, res) => {
 
 exports.calculateSprintGrades = async (req, res) => {
     try {
-        const { teamId, sprintId, groupGrade } = req.body;
+        // Đã bỏ sprintId đi, chỉ còn lấy teamId và groupGrade
+        const { teamId, groupGrade } = req.body;
 
         // 1. Validation đầu vào
-        if (!teamId || !sprintId || groupGrade === undefined) {
-            return res.status(400).json({ error: 'Thiếu thông tin teamId, sprintId hoặc groupGrade' });
+        if (!teamId || groupGrade === undefined) {
+            return res.status(400).json({ error: 'Thiếu thông tin teamId hoặc groupGrade' });
         }
 
         // 2. Phân quyền: Thường chỉ LECTURER hoặc ADMIN mới được chốt điểm
@@ -174,17 +175,18 @@ exports.calculateSprintGrades = async (req, res) => {
             return res.status(403).json({ error: 'Chỉ giảng viên mới có quyền chốt điểm.' });
         }
 
-        // 3. Gọi Service để tính toán điểm
-        const results = await GradingService.calculateSprintGrades(teamId, sprintId, Number(groupGrade));
+        // 3. Gọi Service để tính toán điểm tổng kết
+        // Lưu ý: GradingService bây giờ chỉ nhận 2 tham số
+        const results = await GradingService.calculateSprintGrades(teamId, Number(groupGrade));
 
         return res.status(200).json({
-            message: '✅ Đã tính điểm và lưu thành công!',
+            message: '✅ Đã tính điểm Assignment cho toàn dự án thành công!',
             total_members_assessed: results.length,
             data: results
         });
 
     } catch (error) {
-        console.error("❌ Lỗi tính điểm Sprint/Assignment:", error);
+        console.error("❌ Lỗi tính điểm Assignment:", error);
         return res.status(500).json({ error: error.message });
     }
 };
