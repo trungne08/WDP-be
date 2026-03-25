@@ -1425,13 +1425,15 @@ exports.getTeamCommits = async (req, res) => {
     }
 
     // Kiểm tra user có phải leader không
-    const teamMember = await TeamMember.findOne({
-      team_id: teamId,
-      student_id: user._id
-    });
+    if (req.role === 'STUDENT') {
+      const teamMember = await TeamMember.findOne({
+        team_id: teamId,
+        student_id: user._id
+      });
 
-    if (!teamMember || teamMember.role_in_team !== 'Leader') {
-      return res.status(403).json({ error: 'Chỉ Leader mới có quyền xem commits của cả team' });
+      if (!teamMember || teamMember.role_in_team !== 'Leader') {
+        return res.status(403).json({ error: 'Chỉ Leader hoặc Giảng viên mới có quyền xem dữ liệu của cả team' });
+      }
     }
 
     // Lấy tất cả members
@@ -1517,13 +1519,15 @@ exports.getTeamTasks = async (req, res) => {
     }
 
     // Kiểm tra user có phải leader không
-    const teamMember = await TeamMember.findOne({
-      team_id: teamId,
-      student_id: user._id
-    });
+    if (req.role === 'STUDENT') {
+      const teamMember = await TeamMember.findOne({
+        team_id: teamId,
+        student_id: user._id
+      });
 
-    if (!teamMember || teamMember.role_in_team !== 'Leader') {
-      return res.status(403).json({ error: 'Chỉ Leader mới có quyền xem tasks của cả team' });
+      if (!teamMember || teamMember.role_in_team !== 'Leader') {
+        return res.status(403).json({ error: 'Chỉ Leader hoặc Giảng viên mới có quyền xem dữ liệu của cả team' });
+      }
     }
 
     // Lấy tất cả members
@@ -1616,13 +1620,15 @@ exports.getMemberCommits = async (req, res) => {
     }
 
     // Kiểm tra user có phải leader không
-    const currentUserMember = await TeamMember.findOne({
-      team_id: teamId,
-      student_id: user._id
-    });
+    if (req.role === 'STUDENT') {
+      const teamMember = await TeamMember.findOne({
+        team_id: teamId,
+        student_id: user._id
+      });
 
-    if (!currentUserMember || currentUserMember.role_in_team !== 'Leader') {
-      return res.status(403).json({ error: 'Chỉ Leader mới có quyền xem commits của member khác' });
+      if (!teamMember || teamMember.role_in_team !== 'Leader') {
+        return res.status(403).json({ error: 'Chỉ Leader hoặc Giảng viên mới có quyền xem dữ liệu của cả team' });
+      }
     }
 
     // Lấy member cần xem
@@ -1708,13 +1714,15 @@ exports.getMemberTasks = async (req, res) => {
     }
 
     // Kiểm tra user có phải leader không
-    const currentUserMember = await TeamMember.findOne({
-      team_id: teamId,
-      student_id: user._id
-    });
+    if (req.role === 'STUDENT') {
+      const teamMember = await TeamMember.findOne({
+        team_id: teamId,
+        student_id: user._id
+      });
 
-    if (!currentUserMember || currentUserMember.role_in_team !== 'Leader') {
-      return res.status(403).json({ error: 'Chỉ Leader mới có quyền xem tasks của member khác' });
+      if (!teamMember || teamMember.role_in_team !== 'Leader') {
+        return res.status(403).json({ error: 'Chỉ Leader hoặc Giảng viên mới có quyền xem dữ liệu của cả team' });
+      }
     }
 
     // Lấy member cần xem
