@@ -1,4 +1,5 @@
 const axios = require('axios');
+const mongoose = require('mongoose');
 const models = require('../models');
 const GithubService = require('./GithubService');
 
@@ -229,7 +230,43 @@ async function gatherProjectContext(projectId) {
   return JSON.stringify(payload);
 }
 
+/**
+ * Gom context cho cả lớp (dùng cho LECTURER).
+ * Tìm tất cả Project thuộc classId, sau đó Promise.all gọi gatherProjectContext cho từng project.
+ * @param {string} classId
+ * @returns {Promise<string|null>}
+ */
+async function gatherClassContext(classId) {
+  if (!classId || !mongoose.Types.ObjectId.isValid(String(classId))) return null;
+
+  const projects = await models.Project.find({ class_id: classId })
+    .select('_id')
+    .lean();
+
+  if (!projects || projects.length === 0) return null;
+
+  const contexts = await Promise.all(
+    projects.map(async (p) => {
+      try {
+        const ctxStr = await gatherProjectContext(p._id);
+        if (!ctxStr) return null;
+        return JSON.parse(ctxStr);
+      } catch {
+        return null;
+      }
+    })
+  );
+
+  const normalized = contexts.filter(Boolean);
+  return JSON.stringify({
+    class_id: String(classId),
+    total_projects: normalized.length,
+    projects: normalized
+  });
+}
+
 module.exports = {
   gatherProjectContext,
+  gatherClassContext,
   reviewGithubCommitWithGemini
 };

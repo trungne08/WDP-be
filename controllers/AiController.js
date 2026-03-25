@@ -8,6 +8,7 @@ const {
 const models = require('../models');
 const {
   gatherProjectContext,
+  gatherClassContext,
   reviewGithubCommitWithGemini
 } = require('../services/AiChatService');
 const JiraSyncService = require('../services/JiraSyncService');
@@ -190,11 +191,8 @@ async function executeProjectChatToolRound(req, functionCalls, ctx) {
  */
 exports.projectChat = async (req, res) => {
   try {
-    const { projectId, message } = req.body || {};
+    const { projectId: projectIdFromBody, classId, message } = req.body || {};
 
-    if (!projectId || !mongoose.Types.ObjectId.isValid(String(projectId))) {
-      return res.status(400).json({ error: 'projectId hợp lệ là bắt buộc.' });
-    }
     if (!message || typeof message !== 'string' || !message.trim()) {
       return res.status(400).json({ error: 'message là bắt buộc.' });
     }
@@ -205,29 +203,164 @@ exports.projectChat = async (req, res) => {
       });
     }
 
-    const project = await models.Project.findById(projectId).lean();
-    if (!project) {
-      return res.status(404).json({ error: 'Không tìm thấy project.' });
+    const userId = req.user?._id?.toString();
+    if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+    let contextData = null;
+    let toolProjectId = null;
+    let jiraProjectKey = '';
+    const role = req.role;
+
+    if (role === 'LECTURER') {
+      if (!classId || !mongoose.Types.ObjectId.isValid(String(classId))) {
+        return res.status(400).json({ error: 'classId hợp lệ là bắt buộc cho LECTURER.' });
+      }
+
+      const dbClass = await models.Class.findById(classId).lean();
+      if (!dbClass) return res.status(404).json({ error: 'Không tìm thấy class.' });
+      if (dbClass.lecturer_id?.toString() !== userId) {
+        return res.status(403).json({ error: 'Bạn không phải giảng viên của class này.' });
+      }
+
+      contextData = await gatherClassContext(classId);
+      if (contextData === null) {
+        return res.status(404).json({ error: 'Không tìm thấy dữ liệu cho lớp này.' });
+      }
+
+      // Chọn project "mặc định" để tool (Jira/GitHub) có nơi thực thi.
+      let activeProject = null;
+      if (projectIdFromBody && mongoose.Types.ObjectId.isValid(String(projectIdFromBody))) {
+        activeProject = await models.Project.findById(projectIdFromBody).lean();
+        if (activeProject?.class_id?.toString() !== String(classId)) {
+          return res.status(400).json({ error: 'projectId không thuộc classId.' });
+        }
+      }
+      if (!activeProject) {
+        activeProject = await models.Project.findOne({ class_id: classId })
+          .select('_id jiraProjectKey')
+          .lean();
+      }
+      if (activeProject) {
+        toolProjectId = activeProject._id;
+        jiraProjectKey = (activeProject.jiraProjectKey || '').trim();
+      }
+    } else if (role === 'STUDENT') {
+      // Student branch: nếu không có projectId thì tự tìm theo classId.
+      let activeProject = null;
+
+      if (projectIdFromBody && mongoose.Types.ObjectId.isValid(String(projectIdFromBody))) {
+        activeProject = await models.Project.findById(projectIdFromBody).lean();
+        if (!activeProject) return res.status(404).json({ error: 'Không tìm thấy project.' });
+        if (!canUserAccessProjectChat(req, activeProject)) {
+          return res.status(403).json({ error: 'Bạn không có quyền truy cập project này.' });
+        }
+      } else {
+        if (!classId || !mongoose.Types.ObjectId.isValid(String(classId))) {
+          return res.status(400).json({ error: 'classId là bắt buộc khi không truyền projectId.' });
+        }
+
+        const teamDocs = await models.Team.find({ class_id: classId })
+          .select('_id')
+          .lean();
+        const teamIds = (teamDocs || []).map((t) => t._id);
+
+        let detectedProjectId = null;
+        if (teamIds.length > 0) {
+          const tm = await models.TeamMember.findOne({
+            student_id: userId,
+            team_id: { $in: teamIds },
+            is_active: true,
+            project_id: { $ne: null }
+          })
+            .sort({ updatedAt: -1 })
+            .select('project_id')
+            .lean();
+          detectedProjectId = tm?.project_id || null;
+        }
+
+        if (!detectedProjectId) {
+          // Fallback: query trực tiếp Project theo membership
+          activeProject = await models.Project.findOne({
+            class_id: classId,
+            $or: [{ leader_id: userId }, { members: userId }]
+          })
+            .sort({ createdAt: -1 })
+            .lean();
+        } else {
+          activeProject = await models.Project.findById(detectedProjectId).lean();
+        }
+
+        if (!activeProject) {
+          return res.status(404).json({
+            error: 'Không tìm thấy project của bạn trong class này.'
+          });
+        }
+      }
+
+      toolProjectId = activeProject._id;
+      jiraProjectKey = (activeProject.jiraProjectKey || '').trim();
+      contextData = await gatherProjectContext(String(activeProject._id));
+      if (contextData === null) {
+        return res.status(404).json({ error: 'Không tìm thấy dữ liệu project.' });
+      }
+    } else if (role === 'ADMIN') {
+      // Admin: ưu tiên projectId, fallback classId.
+      let activeProject = null;
+      if (projectIdFromBody && mongoose.Types.ObjectId.isValid(String(projectIdFromBody))) {
+        activeProject = await models.Project.findById(projectIdFromBody).lean();
+      }
+
+      if (activeProject) {
+        toolProjectId = activeProject._id;
+        jiraProjectKey = (activeProject.jiraProjectKey || '').trim();
+        contextData = await gatherProjectContext(String(activeProject._id));
+      } else if (classId && mongoose.Types.ObjectId.isValid(String(classId))) {
+        contextData = await gatherClassContext(classId);
+        const active = await models.Project.findOne({ class_id: classId })
+          .select('_id jiraProjectKey')
+          .lean();
+        if (active) {
+          toolProjectId = active._id;
+          jiraProjectKey = (active.jiraProjectKey || '').trim();
+        }
+      }
+
+      if (contextData === null) {
+        return res.status(404).json({ error: 'Không tìm thấy dữ liệu context.' });
+      }
+    } else {
+      return res.status(403).json({ error: 'Role không hợp lệ.' });
     }
 
-    if (!canUserAccessProjectChat(req, project)) {
-      return res.status(403).json({ error: 'Bạn không có quyền truy cập project này.' });
-    }
-
-    const contextData = await gatherProjectContext(projectId);
-    if (contextData === null) {
-      return res.status(404).json({ error: 'Không tìm thấy project.' });
+    if (!contextData) {
+      return res.status(404).json({ error: 'Không tìm thấy dữ liệu context.' });
     }
 
     const userMessage = message.trim();
     const quotedQuestion = JSON.stringify(userMessage);
-    const jiraProjectKey = (project.jiraProjectKey || '').trim();
+    const activeProjectKeyForTools = jiraProjectKey || '(chưa cấu hình)';
 
-    const systemInstruction = `Bạn là AI Scrum Master kiêm Giảng viên chấm điểm Đồ án.
-Dưới đây là DỮ LIỆU THỰC TẾ TRÍCH XUẤT TỪ DATABASE (Jira & GitHub) của nhóm:
+    const systemInstruction =
+      role === 'LECTURER'
+        ? `Bạn là AI Trợ giảng.
+Dưới đây là dữ liệu tổng hợp của TẤT CẢ các nhóm trong lớp. Hãy báo cáo tiến độ, so sánh các nhóm, hoặc xem chi tiết một nhóm theo yêu cầu của giảng viên:
 ${contextData}
 
-Jira project key của nhóm trên WDP (dùng khi tạo issue mới): ${jiraProjectKey || '(chưa cấu hình)'}
+Lưu ý: Các tool Jira/GitHub khi được gọi sẽ thực thi trên project đang được chọn để làm “mặc định” (projectId trong request hoặc project đầu tiên của lớp). Jira project key dùng cho tool: ${activeProjectKeyForTools}
+
+Nhiệm vụ của bạn:
+1. Dựa VÀO CHÍNH XÁC dữ liệu trên để trả lời câu hỏi: ${quotedQuestion}
+2. TUYỆT ĐỐI KHÔNG BỊA ĐẶT DỮ LIỆU.
+3. Trả lời bằng tiếng Việt, định dạng Markdown rõ ràng, chuyên nghiệp nhưng thẳng thắn.
+5. Nếu user yêu cầu thao tác Jira (tạo task), hãy gọi tool create_jira_task.
+6. Nếu user yêu cầu review GitHub commit, hãy gọi tool review_github_commit với commitHash thuộc “project mặc định”.
+
+`
+        : `Bạn là AI Scrum Master của dự án.
+Dữ liệu của nhóm (được trích xuất từ DB Jira & GitHub):
+${contextData}
+
+Jira project key của nhóm trên WDP (dùng khi tạo issue mới): ${activeProjectKeyForTools}
 
 Nhiệm vụ của bạn:
 1. Dựa VÀO CHÍNH XÁC dữ liệu trên để trả lời câu hỏi: ${quotedQuestion}
@@ -259,7 +392,7 @@ Nhiệm vụ của bạn:
 
     const toolCtx = {
       jiraProjectKey,
-      projectId: String(projectId),
+      projectId: toolProjectId ? String(toolProjectId) : null,
       genAI,
       geminiModel: GEMINI_MODEL
     };
