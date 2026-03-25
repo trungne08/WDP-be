@@ -452,3 +452,73 @@ Nhiệm vụ của bạn:
     });
   }
 };
+
+/**
+ * GET /api/ai/project/:projectId/export-srs
+ * Xuất báo cáo SRS (Markdown) cho project.
+ */
+exports.exportSrs = async (req, res) => {
+  try {
+    const { projectId } = req.params || {};
+
+    if (!projectId || !mongoose.Types.ObjectId.isValid(String(projectId))) {
+      return res.status(400).json({ error: 'projectId hợp lệ là bắt buộc.' });
+    }
+
+    if (!GEMINI_API_KEY) {
+      return res.status(503).json({
+        error: 'Chưa cấu hình GEMINI_API_KEY (hoặc GOOGLE_AI_API_KEY) trên server.'
+      });
+    }
+
+    const project = await models.Project.findById(projectId).lean();
+    if (!project) {
+      return res.status(404).json({ error: 'Không tìm thấy project.' });
+    }
+
+    if (!canUserAccessProjectChat(req, project)) {
+      return res.status(403).json({ error: 'Bạn không có quyền truy cập project này.' });
+    }
+
+    const contextData = await gatherProjectContext(String(projectId));
+    if (!contextData) {
+      return res.status(404).json({ error: 'Không tìm thấy dữ liệu context để tạo SRS.' });
+    }
+
+    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
+
+    const prompt = `Dưới đây là dữ liệu thực tế của dự án từ Jira và GitHub: ${contextData}
+
+Hãy đóng vai là một Chuyên gia Phân tích Nghiệp vụ (Business Analyst).
+Dựa vào dữ liệu trên, hãy viết một tài liệu Đặc tả Yêu cầu Phần mềm (SRS) hoàn chỉnh bằng định dạng Markdown.
+
+Cấu trúc bắt buộc:
+1. Giới thiệu (Mục đích, Phạm vi dự án)
+2. Tính năng hệ thống (Liệt kê dựa trên các Epic/Story/Task trong Jira)
+3. Báo cáo tiến độ và đóng góp của team (Dựa vào Jira status và số lượng GitHub Commit)
+4. Rủi ro & Đề xuất (AI tự đánh giá dựa trên task trễ hạn hoặc ít commit)
+
+Yêu cầu:
+- TUYỆT ĐỐI KHÔNG BỊA ĐẶT DỮ LIỆU. Nếu dữ liệu thiếu, hãy nêu rõ “chưa có dữ liệu”.
+- Viết bằng tiếng Việt, văn phong chuyên nghiệp, thẳng thắn, dễ đọc.
+- Đảm bảo mỗi mục có nội dung cụ thể thay vì chỉ tiêu đề.`;
+
+    const result = await model.generateContent(prompt);
+    const srsContent = result?.response?.text?.() || '';
+
+    if (!srsContent || !String(srsContent).trim()) {
+      return res.status(502).json({ error: 'Gemini không trả về nội dung SRS.' });
+    }
+
+    res.setHeader(
+      'Content-disposition',
+      'attachment; filename=SRS_Project_Report.md'
+    );
+    res.setHeader('Content-type', 'text/markdown');
+    return res.status(200).send(String(srsContent).trim());
+  } catch (error) {
+    console.error('[AiController] exportSrs error:', error.message);
+    return res.status(500).json({ error: error.message || 'Lỗi xuất SRS.' });
+  }
+};
