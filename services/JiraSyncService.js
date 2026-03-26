@@ -1486,8 +1486,7 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
   }
 
   const payload = {
-    // Đính kèm cloudId/projectKey để BE định danh, tránh cross-talk khi nhiều team trùng jiraProjectKey
-    url: `${base}/api/webhooks/jira?cloudId=${encodeURIComponent(cloudId)}&projectKey=${encodeURIComponent(projectKey)}`,
+    url: `${base}/api/webhooks/jira`,
     webhooks: [
       {
         jqlFilter: `project = "${projectKey}"`,
