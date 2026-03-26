@@ -211,8 +211,7 @@ exports.getMyAssignmentGrades = async (req, res) => {
 
         // 2. Lấy toàn bộ bảng điểm Assessment của member này
         const grades = await SprintAssessment.find({ member_id: teamMember._id })
-            .populate('sprint_id', 'name start_date end_date') // Lấy tên Assignment/Sprint
-            .sort({ created_at: 1 }); // Sắp xếp theo thời gian
+            .sort({ created_at: 1 });
 
         return res.json({
             message: '✅ Lấy bảng điểm cá nhân thành công!',
@@ -264,10 +263,9 @@ exports.getClassGrades = async (req, res) => {
         
         const memberIds = members.map(m => m._id);
 
-        // 4. Lấy tất cả điểm số của các thành viên này
-        const assessments = await SprintAssessment.find({ member_id: { $in: memberIds } })
-            .populate('sprint_id', 'name');
-
+        // 4. Lấy tất cả điểm số của các thành viên này (Đã bỏ populate sprint_id)
+        const assessments = await SprintAssessment.find({ member_id: { $in: memberIds } });
+        
         // 5. Gom nhóm dữ liệu theo từng Sinh viên để Frontend dễ vẽ bảng (Table)
         const result = members.map(member => {
             // Lọc ra các cột điểm của riêng sinh viên này
@@ -278,8 +276,8 @@ exports.getClassGrades = async (req, res) => {
                 team: member.team_id,
                 role_in_team: member.role_in_team,
                 grades: studentGrades.map(g => ({
-                    sprint_id: g.sprint_id?._id,
-                    assignment_name: g.sprint_id?.name || 'Unknown',
+                    // Đã xóa sprint_id vì không còn sử dụng
+                    assignment_name: 'Điểm tổng kết', // Cứng tên lại cho đẹp trên UI
                     group_grade: g.group_grade,
                     contribution_factor: g.contribution_factor,
                     final_score: g.final_score
