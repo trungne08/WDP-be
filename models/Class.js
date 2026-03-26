@@ -67,4 +67,4 @@ ClassSchema.index({ lecturer_id: 1, subjectName: 1, class_code: 1 }, { unique: t
 ClassSchema.index({ lecturer_id: 1, subject_id: 1, class_code: 1 }, { unique: true, partialFilterExpression: { subject_id: { $type: "objectId" } } });
 
 // Kiểm tra xem model đã tồn tại chưa để tránh lỗi OverwriteModelError
-module.exports = mongoose.models.Class || mongoose.model('Class', ClassSchema);
+module.exports = mongoose.model('Class', ClassSchema);

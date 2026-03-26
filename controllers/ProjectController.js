@@ -488,7 +488,7 @@ exports.getProjectByTeam = async (req, res) => {
 
     // Kiểm tra team tồn tại
     const team = await models.Team.findById(teamId)
-      .populate('class_id', '_id name class_code subjectName')
+      .populate('class_id', '_id name class_code subjectName lecturer_id') 
       .lean();
 
     if (!team) {

@@ -456,40 +456,6 @@ module.exports = (app) => {
 
     /**
      * @swagger
-     * /api/auth/logout:
-     *   post:
-     *     summary: Đăng xuất
-     *     tags: [Auth]
-     *     description: Đăng xuất khỏi hệ thống. Revoke refresh token và client cần xóa token khỏi localStorage/sessionStorage.
-     *     security:
-     *       - bearerAuth: []
-     *     requestBody:
-     *       required: false
-     *       content:
-     *         application/json:
-     *           schema:
-     *             type: object
-     *             properties:
-     *               refresh_token:
-     *                 type: string
-     *                 description: Refresh token để revoke (optional)
-     *     responses:
-     *       200:
-     *         description: Đăng xuất thành công
-     *         content:
-     *           application/json:
-     *             schema:
-     *               type: object
-     *               properties:
-     *                 message:
-     *                   type: string
-     *       401:
-     *         description: Token không hợp lệ
-     *       500:
-     *         description: Lỗi server
-     */
-    /**
-     * @swagger
      * /api/auth/me/classes:
      *   get:
      *     summary: Lấy danh sách các lớp mà sinh viên tham gia (với role trong mỗi team)
