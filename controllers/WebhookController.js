@@ -168,9 +168,9 @@ exports.receiveJiraWebhook = async (req, res) => {
     const issue = body.issue;
     const project = issue?.fields?.project;
 
-    if (!eventType || !issue || !project) {
-      return res.status(200).send('Jira Webhook received');
-    }
+    // if (!eventType || !issue || !project) {
+    //   return res.status(200).send('Jira Webhook received');
+    // }
 
     const issueId = issue.id;
     const issueKey = issue.key;
