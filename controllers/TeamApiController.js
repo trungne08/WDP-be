@@ -379,7 +379,13 @@ exports.updateMemberMapping = async (req, res) => {
 
 // Helper to resolve sprint filter
 async function resolveSprintIds(teamId, sprintId) {
-    if (!sprintId) {
+    // Treat "All" selections (frontend thường gửi "all") as "no filter".
+    if (
+        !sprintId ||
+        (typeof sprintId === 'string' &&
+            ['all', 'all sprint', 'all sprints', 'all-sprint', 'all-sprints', 'null', 'undefined', '']
+                .includes(sprintId.trim().toLowerCase()))
+    ) {
         const sprints = await Sprint.find({ team_id: teamId }).select('_id').lean();
         return sprints.map(s => s._id);
     }
