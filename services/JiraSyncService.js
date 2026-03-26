@@ -1,5 +1,6 @@
 const axios = require('axios');
 const JiraAuthService = require('./JiraAuthService');
+const { getWebhookBackendBaseUrl } = require('./GithubService');
 
 // Global mutex cho toàn bộ Jira OAuth refresh flow (Platform + Agile)
 // Đảm bảo mọi request 401 đều dùng chung một lần refresh token.
@@ -1162,12 +1163,14 @@ async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, t
     throw err;
   }
 
-  const key = typeof projectKey === 'string' ? projectKey.trim() : String(projectKey || '').trim();
-  if (!key) {
+  // Chuẩn hóa projectKey để dùng chung cho cả sync + đăng ký webhook.
+  projectKey = typeof projectKey === 'string' ? projectKey.trim() : String(projectKey || '').trim();
+  if (!projectKey) {
     const err = new Error('Project Key rỗng');
     err.code = 'INVALID_PROJECT_KEY';
     throw err;
   }
+  const key = projectKey;
 
   let currentAccessToken = jira.accessToken;
   const onTokenRefresh = async () => {
@@ -1282,6 +1285,14 @@ async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, t
   // ==================== BƯỚC 3: FETCH ISSUES ====================
   console.log('📌 [Jira Sync] B3: Fetch Issues (project =', key, ')');
   const restClient = createJiraApiClient({ accessToken: currentAccessToken, cloudId, onTokenRefresh });
+
+  const accessToken = currentAccessToken;
+  try {
+    await registerJiraWebhook(cloudId, accessToken, projectKey);
+    console.log(`✅ Đã đăng ký Webhook giám sát cho dự án: ${projectKey}`);
+  } catch (error) {
+    console.log(`⚠️ Bỏ qua lỗi tạo Webhook (có thể đã tồn tại):`, error.message);
+  }
   const issues = await fetchAllProjectIssues({ client: restClient, projectKey: key });
 
   // ==================== BƯỚC 4: MAP TASK VÀO ĐÚNG SPRINT ====================
@@ -1449,23 +1460,24 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
  * Đăng ký Jira Cloud dynamic webhook (REST API v3).
  * @param {string} cloudId
  * @param {string} accessToken - OAuth (cần scope write:webhook:jira; read/delete dùng khi liệt kê/xóa webhook)
- * @param {string} backendUrl - Base URL backend, không có slash cuối
+ * @param {string} projectKey - Jira project key (VD: SCRUM)
  * @returns {Promise<any>} Response từ API Atlassian
  */
-async function createJiraWebhook(cloudId, accessToken, backendUrl) {
-  if (!cloudId || !accessToken) {
-    throw new Error('cloudId và accessToken là bắt buộc');
+async function registerJiraWebhook(cloudId, accessToken, projectKey) {
+  if (!cloudId || !accessToken || !projectKey) {
+    throw new Error('cloudId, accessToken và projectKey là bắt buộc');
   }
-  const base = (backendUrl || '').trim().replace(/\/$/, '');
+
+  const base = (getWebhookBackendBaseUrl() || '').trim().replace(/\/$/, '');
   if (!base) {
-    throw new Error('backendUrl là bắt buộc để đăng ký webhook');
+    throw new Error('Không tìm thấy backend URL (SERVER_URL/RENDER_EXTERNAL_URL/BACKEND_URL).');
   }
 
   const payload = {
     url: `${base}/api/webhooks/jira`,
     webhooks: [
       {
-        jqlFilter: `project = "${projectKey}"`, 
+        jqlFilter: `project = "${projectKey}"`,
         events: [
           'jira:issue_created',
           'jira:issue_updated',
@@ -1546,7 +1558,7 @@ module.exports = {
   syncProjectJiraData,
   extractJiraSprintIdFromIssue,
   extractStoryPoint,
-  createJiraWebhook,
+  registerJiraWebhook,
 
   // Search & Fetch (REST API)
   searchIssues,
