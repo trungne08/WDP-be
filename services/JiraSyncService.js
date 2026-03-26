@@ -1465,7 +1465,7 @@ async function createJiraWebhook(cloudId, accessToken, backendUrl) {
     url: `${base}/api/webhooks/jira`,
     webhooks: [
       {
-        jqlFilter: "summary IS NOT EMPTY", 
+        jqlFilter: `project = "${projectKey}"`, 
         events: [
           'jira:issue_created',
           'jira:issue_updated',
