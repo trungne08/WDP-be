@@ -1491,15 +1491,34 @@ async function createJiraWebhook(cloudId, accessToken, backendUrl) {
     return response.data;
   } catch (error) {
     const status = error.response?.status;
+    const data = error.response?.data;
+    const errorMessages = Array.isArray(data?.errorMessages) ? data.errorMessages.filter(Boolean) : [];
+    const errors =
+      data?.errors && typeof data.errors === 'object'
+        ? Object.entries(data.errors).map(([k, v]) => `${k}: ${v}`)
+        : [];
     const msg =
-      error.response?.data?.message ||
-      (Array.isArray(error.response?.data?.errors)
-        ? error.response.data.errors.map((e) => e.message || e).join('; ')
-        : null) ||
+      data?.message ||
+      (errorMessages.length ? errorMessages.join('; ') : null) ||
+      (errors.length ? errors.join('; ') : null) ||
       error.message;
+
+    // Log đầy đủ để debug permission vs scope
+    console.warn('⚠️ [Jira Webhook Register] Failed', {
+      status,
+      message: msg,
+      data
+    });
+
     if (status === 401 || status === 403) {
-      throw new Error('Jira token không đủ quyền webhook (cần read:webhook:jira, write:webhook:jira, delete:webhook:jira). Vui lòng ngắt kết nối và OAuth lại Jira.');
+      // Không auto kết luận thiếu scope — Jira hay trả 403 cho cả thiếu quyền admin/global permission.
+      const hint =
+        'Không đăng ký được Jira Dynamic Webhook. ' +
+        'Nguyên nhân thường gặp: (1) user không có quyền Admin / permission phù hợp trên Jira site/project, hoặc (2) token thiếu scope webhook. ' +
+        'Hãy kiểm tra error message phía Jira và thử OAuth lại nếu vừa mới thêm scope.';
+      throw new Error(`${hint} Jira says: ${msg}`);
     }
+
     throw new Error(msg || `Lỗi đăng ký Jira webhook (${status || 'unknown'})`);
   }
 }
