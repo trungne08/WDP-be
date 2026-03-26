@@ -1465,7 +1465,8 @@ async function createJiraWebhook(cloudId, accessToken, backendUrl) {
     url: `${base}/api/webhooks/jira`,
     webhooks: [
       {
-        jqlFilter: 'issuetype IS NOT EMPTY',
+        // 🌟 THỦ THUẬT: Bắt mọi task được tạo từ năm 2024 (Luôn đúng, không bị cấm)
+        jqlFilter: "created >= '2024-01-01'", 
         events: [
           'jira:issue_created',
           'jira:issue_updated',
@@ -1488,7 +1489,17 @@ async function createJiraWebhook(cloudId, accessToken, backendUrl) {
         timeout: 30000
       }
     );
-    console.log('✅ [Jira Webhook Register] THÀNH CÔNG! Dữ liệu Jira trả về:', JSON.stringify(response.data));
+
+    // 🛡️ CHỐNG LỪA ĐẢO TỪ JIRA: Kiểm tra xem nó có thực sự tạo thành công không
+    const results = response.data?.webhookRegistrationResult || [];
+    const hasError = results.some(r => r.errors && r.errors.length > 0);
+    
+    if (hasError) {
+      console.error('❌ [Jira Webhook Register] LỖI JIRA TỪ CHỐI TẠO:', JSON.stringify(results));
+      throw new Error('Jira từ chối tạo Webhook do JQL không hợp lệ');
+    }
+
+    console.log('✅ [Jira Webhook Register] THÀNH CÔNG THẬT SỰ! Đã sinh ra ID:', results[0].createdWebhookId);
     return response.data;
   } catch (error) {
     const status = error.response?.status;
