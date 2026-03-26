@@ -43,6 +43,7 @@ const TeamMemberSchema = new Schema({
         jira_score: { type: Number, default: 0 },
         commit_score: { type: Number, default: 0 },
         review_score: { type: Number, default: 0 },
+        ai_score: { type: Number, default: 0 },
         total_score: { type: Number, default: 0 }
     },
 
@@ -50,6 +51,11 @@ const TeamMemberSchema = new Schema({
     contribution_percent: { type: Number, default: 0 },
     jira_story_points: { type: Number, default: 0 },
     github_ai_score: { type: Number, default: 0 },
+
+    // 5c. AI grading per member (human-readable)
+    ai_grade: { type: Number, default: null },
+    ai_review_comment: { type: String, default: '' },
+    ai_graded_at: { type: Date, default: null },
 
     // 6. Liên kết với Project (mỗi team member thuộc 0 hoặc 1 project)
     project_id: {

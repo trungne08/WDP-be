@@ -18,6 +18,62 @@ function taskLooksDoneByStatus(statusCategory, statusName) {
   return /done|closed|complete|resolved|hoàn thành|đã xong|đóng/i.test(name);
 }
 
+function stripMarkdownFences(text) {
+  return String(text || '')
+    .replace(/```(?:json)?/gi, '')
+    .replace(/```/g, '')
+    .trim();
+}
+
+function tryParseJsonArray(text) {
+  const cleaned = stripMarkdownFences(text);
+  try {
+    const parsed = JSON.parse(cleaned);
+    return Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function gradeTeamMembersWithGemini({ teamId, leaderboard, genAI, modelName }) {
+  const list = Array.isArray(leaderboard) ? leaderboard : [];
+  if (list.length === 0) return [];
+
+  const grader = genAI.getGenerativeModel({
+    model: modelName,
+    systemInstruction:
+      'BẮT BUỘC CHỈ TRẢ VỀ 1 JSON ARRAY HỢP LỆ (không kèm Markdown, không kèm giải thích).\n' +
+      'Mỗi phần tử đúng cấu trúc: {"student_code": "SE...", "grade": 8.5, "review_comment": "..."}\n' +
+      'Không được trả về object bao ngoài. Không được thêm text trước/sau JSON.\n' +
+      'grade là number 0..10.'
+  });
+
+  const input = list.map((r) => ({
+    student_code: r.student_code || null,
+    full_name: r.full_name || null,
+    contribution_percent: typeof r.percent === 'number' ? r.percent : 0,
+    jira_done_story_points: typeof r.jira_done_story_points === 'number' ? r.jira_done_story_points : 0,
+    github_ai_score: typeof r.github_ai_score === 'number' ? r.github_ai_score : 0
+  }));
+
+  const prompt =
+    'Dưới đây là dữ liệu đóng góp của các thành viên trong nhóm.\n' +
+    'Hãy chấm điểm cá nhân (0..10) và ghi nhận xét ngắn gọn cho từng thành viên.\n' +
+    'Trả về JSON ARRAY theo đúng cấu trúc yêu cầu.\n\n' +
+    JSON.stringify({ teamId: String(teamId), members: input });
+
+  const result = await grader.generateContent(prompt);
+  const raw = (result?.response?.text?.() || '').trim();
+  const arr = tryParseJsonArray(raw);
+  if (!arr) {
+    const err = new Error('Không parse được JSON array từ AI grading output.');
+    err.raw = raw;
+    throw err;
+  }
+
+  return arr;
+}
+
 async function calculateTeamContribution(teamId) {
   const teamObjectId = mongoose.Types.ObjectId.isValid(String(teamId))
     ? new mongoose.Types.ObjectId(teamId)
@@ -470,6 +526,50 @@ exports.receiveGithubWebhook = async (req, res) => {
             }
 
             const leaderboardData = await calculateTeamContribution(teamIdStr);
+
+            // AI grading per member -> persist into TeamMember (ai_grade + ai_review_comment)
+            try {
+              if (leaderboardData?.leaderboard?.length) {
+                const grades = await gradeTeamMembersWithGemini({
+                  teamId: teamIdStr,
+                  leaderboard: leaderboardData.leaderboard,
+                  genAI,
+                  modelName: geminiModel
+                });
+
+                for (const row of grades) {
+                  try {
+                    const studentCode = String(row?.student_code || '').trim();
+                    if (!studentCode) continue;
+                    const grade = typeof row.grade === 'number' ? row.grade : Number(row.grade);
+                    if (!Number.isFinite(grade)) continue;
+                    const reviewComment =
+                      typeof row.review_comment === 'string' ? row.review_comment.trim() : '';
+
+                    const student = await models.Student.findOne({ student_code: studentCode })
+                      .select('_id student_code')
+                      .lean();
+                    if (!student?._id) continue;
+
+                    await models.TeamMember.findOneAndUpdate(
+                      { team_id: teamId, student_id: student._id, is_active: true },
+                      {
+                        $set: {
+                          ai_grade: grade,
+                          ai_review_comment: reviewComment,
+                          ai_graded_at: new Date()
+                        }
+                      }
+                    );
+                  } catch (e) {
+                    console.warn('[GitHub Webhook] Persist AI member grade failed:', e?.message || e);
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn('[GitHub Webhook] AI member grading error:', e?.message || e);
+            }
+
             if (io) {
               io.emit('LEADERBOARD_UPDATED', leaderboardData);
             } else if (global._io) {
