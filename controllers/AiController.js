@@ -347,9 +347,14 @@ exports.projectChat = async (req, res) => {
     const quotedQuestion = JSON.stringify(userMessage);
     const activeProjectKeyForTools = jiraProjectKey || '(chưa cấu hình)';
 
+    const ID_SAFETY_RULE =
+      'Bạn là trợ lý ảo quản lý dự án. TUYỆT ĐỐI KHÔNG BAO GIỜ được hiển thị các đoạn mã ID hệ thống (như ObjectId, 69b0c...) ra câu trả lời. Bắt buộc phải sử dụng Tên thật của Lớp, Nhóm, hoặc Dự án. Nếu dữ liệu tôi cung cấp chỉ có ID mà không có tên, hãy lịch sự hỏi người dùng tên của lớp/nhóm đó.';
+
     const systemInstruction =
       role === 'LECTURER'
-        ? `Bạn là AI Trợ giảng.
+        ? `${ID_SAFETY_RULE}
+
+Bạn là AI Trợ giảng.
 Dưới đây là dữ liệu tổng hợp của TẤT CẢ các nhóm trong lớp. Hãy báo cáo tiến độ, so sánh các nhóm, hoặc xem chi tiết một nhóm theo yêu cầu của giảng viên:
 ${contextData}
 
@@ -363,7 +368,9 @@ Nhiệm vụ của bạn:
 6. Nếu user yêu cầu review GitHub commit, hãy gọi tool review_github_commit với commitHash thuộc “project mặc định”.
 
 `
-        : `Bạn là AI Scrum Master của dự án.
+        : `${ID_SAFETY_RULE}
+
+Bạn là AI Scrum Master của dự án.
 Dữ liệu của nhóm (được trích xuất từ DB Jira & GitHub):
 ${contextData}
 

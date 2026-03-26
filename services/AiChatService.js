@@ -211,7 +211,9 @@ async function reviewGithubCommitWithGemini(projectId, commitHash, user, genAI, 
  * @returns {Promise<string|null>} JSON.stringify gọn hoặc null nếu không có project
  */
 async function gatherProjectContext(projectId) {
-  const project = await models.Project.findById(projectId).lean();
+  const project = await models.Project.findById(projectId)
+    .populate('class_id', 'name')
+    .lean();
   if (!project) return null;
 
   const teamId = project.team_id;
@@ -226,7 +228,6 @@ async function gatherProjectContext(projectId) {
   const members = teamMembers.map((tm) => ({
     role_in_team: tm.role_in_team || null,
     github_username: tm.github_username || null,
-    jira_account_id: tm.jira_account_id || null,
     student_code: tm.student_id?.student_code || null,
     email: tm.student_id?.email || null,
     full_name: tm.student_id?.full_name || null
@@ -249,7 +250,6 @@ async function gatherProjectContext(projectId) {
     status_category: t.status_category || '',
     assignee: {
       name: t.assignee_name || null,
-      account_id: t.assignee_account_id || null
     },
     story_points: typeof t.story_point === 'number' ? t.story_point : 0,
     due_date: t.due_date || null,
@@ -276,10 +276,7 @@ async function gatherProjectContext(projectId) {
   const doneTasksByAssignee = {};
   for (const t of jiraTasksRaw) {
     if (!taskLooksDone(t)) continue;
-    const key =
-      (t.assignee_name && String(t.assignee_name).trim()) ||
-      (t.assignee_account_id && `account:${t.assignee_account_id}`) ||
-      'Unassigned';
+    const key = (t.assignee_name && String(t.assignee_name).trim()) || 'Unassigned';
     doneTasksByAssignee[key] = (doneTasksByAssignee[key] || 0) + 1;
   }
 
@@ -292,8 +289,8 @@ async function gatherProjectContext(projectId) {
 
   const payload = {
     project: {
-      id: String(project._id),
       name: project.name,
+      class_name: project.class_id?.name || null,
       jiraProjectKey: project.jiraProjectKey || '',
       githubRepoUrl: project.githubRepoUrl || ''
     },
@@ -318,6 +315,10 @@ async function gatherProjectContext(projectId) {
 async function gatherClassContext(classId) {
   if (!classId || !mongoose.Types.ObjectId.isValid(String(classId))) return null;
 
+  const classDoc = await models.Class.findById(classId)
+    .select('name')
+    .lean();
+
   const projects = await models.Project.find({ class_id: classId })
     .select('_id')
     .lean();
@@ -338,7 +339,7 @@ async function gatherClassContext(classId) {
 
   const normalized = contexts.filter(Boolean);
   return JSON.stringify({
-    class_id: String(classId),
+    class_name: classDoc?.name || null,
     total_projects: normalized.length,
     projects: normalized
   });
