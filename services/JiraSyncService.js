@@ -1465,8 +1465,7 @@ async function createJiraWebhook(cloudId, accessToken, backendUrl) {
     url: `${base}/api/webhooks/jira`,
     webhooks: [
       {
-        // 🌟 THỦ THUẬT: Bắt mọi task được tạo từ năm 2024 (Luôn đúng, không bị cấm)
-        jqlFilter: "created >= '2024-01-01'", 
+        jqlFilter: "summary IS NOT EMPTY", 
         events: [
           'jira:issue_created',
           'jira:issue_updated',
