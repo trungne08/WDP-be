@@ -611,7 +611,7 @@ async function fetchSprints({ accessToken, cloudId, boardId, onTokenRefresh }) {
 async function createSprint({ accessToken, cloudId, boardId, name, startDate, endDate, onTokenRefresh }) {
   try {
     const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
-    
+
     const payload = {
       name,
       originBoardId: boardId,
@@ -641,7 +641,7 @@ async function createSprint({ accessToken, cloudId, boardId, name, startDate, en
 async function startSprint({ accessToken, cloudId, sprintId, startDate, endDate, onTokenRefresh }) {
   try {
     const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
-    
+
     const payload = {
       state: 'active',
       startDate,
@@ -720,7 +720,7 @@ async function deleteSprint({ accessToken, cloudId, sprintId, onTokenRefresh }) 
 async function fetchAllBoardIssues({ accessToken, cloudId, boardId, onTokenRefresh }) {
   try {
     const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
-    
+
     let allIssues = [];
     let startAt = 0;
     let isLast = false;
@@ -735,7 +735,7 @@ async function fetchAllBoardIssues({ accessToken, cloudId, boardId, onTokenRefre
       });
 
       const issues = response.data.issues || [];
-      
+
       // Map issues với sprint info
       const mappedIssues = issues.map(issue => {
         let currentSprintId = null;
@@ -743,7 +743,7 @@ async function fetchAllBoardIssues({ accessToken, cloudId, boardId, onTokenRefre
 
         if (sprintsData && Array.isArray(sprintsData) && sprintsData.length > 0) {
           const lastSprint = sprintsData[sprintsData.length - 1];
-          
+
           if (lastSprint && lastSprint.id) {
             currentSprintId = lastSprint.id;
           } else if (typeof lastSprint === 'string') {
@@ -848,17 +848,17 @@ async function createIssue({ client, projectKey, data }) {
         issuetype: { name: data.issueType || data.issuetypeName || 'Task' },
         summary: data.summary,
         description: textToADF(data.description || ''),
-        
+
         ...(data.assigneeAccountId && { assignee: { accountId: data.assigneeAccountId } }),
         ...(data.reporterAccountId && { reporter: { accountId: data.reporterAccountId } }),
         ...(data.duedate && { duedate: data.duedate }),
-        
+
         // Custom fields
-        ...(data.storyPoint && data.storyPointFieldId && { 
-          [data.storyPointFieldId]: Number(data.storyPoint) 
+        ...(data.storyPoint && data.storyPointFieldId && {
+          [data.storyPointFieldId]: Number(data.storyPoint)
         }),
-        ...(data.startDate && data.startDateFieldId && { 
-          [data.startDateFieldId]: data.startDate 
+        ...(data.startDate && data.startDateFieldId && {
+          [data.startDateFieldId]: data.startDate
         })
       }
     };
@@ -1388,12 +1388,12 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
     console.log('🔄 [Jira Sync] onTokenRefresh called');
     console.log('   - Has refreshToken?', !!jira.refreshToken);
     console.log('   - RefreshToken type:', typeof jira.refreshToken);
-    
+
     if (!jira.refreshToken) {
       console.error('❌ [Jira Sync] RefreshToken is NULL or UNDEFINED!');
       console.error('   - This means offline_access scope was NOT granted');
       console.error('   - User MUST reconnect Jira with offline_access scope');
-      
+
       const error = new Error('Không có refresh_token. Vui lòng đăng nhập lại Jira.');
       error.code = 'REFRESH_TOKEN_MISSING';
       throw error;
@@ -1488,6 +1488,7 @@ async function createJiraWebhook(cloudId, accessToken, backendUrl) {
         timeout: 30000
       }
     );
+    console.log('✅ [Jira Webhook Register] THÀNH CÔNG! Dữ liệu Jira trả về:', JSON.stringify(response.data));
     return response.data;
   } catch (error) {
     const status = error.response?.status;
