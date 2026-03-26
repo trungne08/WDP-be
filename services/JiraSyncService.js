@@ -1485,8 +1485,82 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
     throw new Error('Không tìm thấy backend URL (SERVER_URL/RENDER_EXTERNAL_URL/BACKEND_URL).');
   }
 
+  const hookUrlBase = `${base}/api/webhooks/jira`;
+  const desiredHookUrl = `${hookUrlBase}/${encodeURIComponent(cloudId)}`;
+
+  const jiraWebhookApiBase = `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/webhook`;
+  const headers = {
+    Authorization: `Bearer ${accessToken.trim()}`,
+    Accept: 'application/json',
+    'Content-Type': 'application/json'
+  };
+
+  async function listRegisteredWebhooks() {
+    // Jira trả về list webhooks dynamic (có thể là { values: [...] } hoặc mảng trực tiếp)
+    const res = await axios.get(jiraWebhookApiBase, { headers, timeout: 30000 });
+    const data = res.data;
+    if (Array.isArray(data)) return data;
+    if (Array.isArray(data?.values)) return data.values;
+    if (Array.isArray(data?.webhooks)) return data.webhooks;
+    return [];
+  }
+
+  async function deleteWebhooksByIds(ids) {
+    const list = (ids || []).filter(Boolean);
+    if (list.length === 0) return;
+    // Jira: DELETE /rest/api/3/webhook?ids=1,2,3
+    await axios.delete(jiraWebhookApiBase, {
+      headers,
+      timeout: 30000,
+      params: { ids: list.join(',') }
+    });
+  }
+
+  // 1) LIST + CHECK EXISTENCE (idempotent)
+  try {
+    const existing = await listRegisteredWebhooks();
+    const normalize = (u) => String(u || '').trim().replace(/\/$/, '');
+    const baseNorm = normalize(hookUrlBase);
+    const desiredNorm = normalize(desiredHookUrl);
+
+    const matched = existing.find((w) => {
+      const u = normalize(w?.url);
+      return u === baseNorm || u === desiredNorm || u.startsWith(baseNorm + '/');
+    });
+
+    if (matched) {
+      console.log('✅ Webhook đã tồn tại trên Jira, bỏ qua bước tạo mới');
+      return { skipped: true };
+    }
+
+    // 3) CLEANUP IF FULL (max 5)
+    if (existing.length >= 5) {
+      // Ưu tiên xóa các webhook cũ trỏ về base URL nhưng KHÔNG đúng format path variable mới
+      const outdatedIds = existing
+        .filter((w) => {
+          const u = normalize(w?.url);
+          if (!u || !u.startsWith(baseNorm)) return false;
+          return u !== desiredNorm; // khác cloudId hiện tại
+        })
+        .map((w) => w?.id || w?.webhookId || w?.webhookIdOrNull)
+        .filter(Boolean);
+
+      if (outdatedIds.length > 0) {
+        try {
+          await deleteWebhooksByIds(outdatedIds.slice(0, 5));
+          console.log(`🧹 [Jira Webhook] Đã xóa ${Math.min(outdatedIds.length, 5)} webhook cũ để nhường chỗ.`);
+        } catch (e) {
+          console.warn('⚠️ [Jira Webhook] Xóa webhook cũ thất bại:', e.response?.data || e.message);
+        }
+      }
+    }
+  } catch (e) {
+    // Nếu list webhooks fail (scope/permission) thì vẫn thử tạo như trước (nhưng có thể bị Jira chặn).
+    console.warn('⚠️ [Jira Webhook] Không list được webhook hiện có:', e.response?.data || e.message);
+  }
+
   const payload = {
-    url: `${base}/api/webhooks/jira/${encodeURIComponent(cloudId)}`,
+    url: desiredHookUrl,
     webhooks: [
       {
         jqlFilter: `project = "${projectKey}"`,
@@ -1501,14 +1575,10 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
 
   try {
     const response = await axios.post(
-      `https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/webhook`,
+      jiraWebhookApiBase,
       payload,
       {
-        headers: {
-          Authorization: `Bearer ${accessToken.trim()}`,
-          Accept: 'application/json',
-          'Content-Type': 'application/json'
-        },
+        headers,
         timeout: 30000
       }
     );
