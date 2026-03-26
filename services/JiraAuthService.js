@@ -38,7 +38,8 @@ const ATLASSIAN_RESOURCES_URL = 'https://api.atlassian.com/oauth/token/accessibl
 const JIRA_SCOPES =
   'offline_access ' + // Refresh Token
   'read:jira-work write:jira-work read:jira-user read:me ' + // Classic scopes cho Project/Issue/User
-  'read:webhook:jira write:webhook:jira delete:webhook:jira ' + // Dynamic webhooks (param scope: space-separated; URL-encoded %20)
+  'manage:jira-webhook ' +
+  // 'read:webhook:jira write:webhook:jira delete:webhook:jira ' + // Dynamic webhooks (param scope: space-separated; URL-encoded %20)
   // Agile scopes cho Board/Sprint (bao gồm delete sprint)
   'read:board-scope:jira-software read:sprint:jira-software write:sprint:jira-software delete:sprint:jira-software write:board-scope:jira-software read:project:jira';
 
