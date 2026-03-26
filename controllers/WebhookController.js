@@ -18,35 +18,6 @@ function taskLooksDoneByStatus(statusCategory, statusName) {
   return /done|closed|complete|resolved|hoàn thành|đã xong|đóng/i.test(name);
 }
 
-function extractCloudIdFromJiraWebhookPayload(body) {
-  const candidates = [];
-
-  if (typeof body?.issue?.self === 'string') candidates.push(body.issue.self);
-  if (typeof body?.issue?.fields?.project?.self === 'string') candidates.push(body.issue.fields.project.self);
-  if (typeof body?.issue?.self === 'string') candidates.push(body.issue.self);
-
-  // Jira cloud REST URLs thường có dạng:
-  // https://api.atlassian.com/ex/jira/<cloudId>/...
-  // => lấy <cloudId> ngay sau `/ex/jira/`
-  const cloudIdRegex = /\/ex\/jira\/([^\/?#]+)/i;
-
-  for (const c of candidates) {
-    const match = String(c).match(cloudIdRegex);
-    if (match?.[1]) return match[1];
-  }
-
-  // Fallback: scan toàn bộ payload để tìm /ex/jira/<cloudId>/
-  try {
-    const raw = JSON.stringify(body || {});
-    const match = raw.match(/\/ex\/jira\/([^\/?#]+)\//i);
-    if (match?.[1]) return match[1];
-  } catch {
-    // ignore
-  }
-
-  return '';
-}
-
 function stripMarkdownFences(text) {
   return String(text || '')
     .replace(/```(?:json)?/gi, '')
@@ -266,9 +237,9 @@ exports.receiveJiraWebhook = async (req, res) => {
 
     console.log(`📥 [Jira Webhook] ${eventType} — ${issueKey} (${issueId}) | SP=${storyPoints} | assigneeEmail=${assigneeEmail || '—'}`);
 
-    const webhookCloudId = extractCloudIdFromJiraWebhookPayload(body);
+    const webhookCloudId = (req.params?.webhookCloudId || '').toString().trim();
     if (!webhookCloudId) {
-      console.warn('⚠️ [Jira Webhook] Không trích xuất được cloudId từ payload. Skip để tránh cross-talk.');
+      console.warn('⚠️ [Jira Webhook] Thiếu webhookCloudId (path param). Skip để tránh cross-talk.');
       return res.status(200).send('Jira Webhook received');
     }
 

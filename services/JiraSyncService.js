@@ -1486,7 +1486,7 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
   }
 
   const payload = {
-    url: `${base}/api/webhooks/jira`,
+    url: `${base}/api/webhooks/jira/${encodeURIComponent(cloudId)}`,
     webhooks: [
       {
         jqlFilter: `project = "${projectKey}"`,

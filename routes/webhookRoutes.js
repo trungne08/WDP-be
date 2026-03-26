@@ -28,7 +28,7 @@ module.exports = (app) => {
      *       200:
      *         description: Plain text `Jira Webhook received` (luôn 200 để tránh retry)
      */
-    app.post('/api/webhooks/jira', WebhookController.receiveJiraWebhook);
+    app.post('/api/webhooks/jira/:webhookCloudId', WebhookController.receiveJiraWebhook);
 
     /**
      * @swagger
