@@ -1194,6 +1194,18 @@ async function syncProjectJiraData({ user, clientId, clientSecret, projectKey, t
 
   const cloudId = jira.cloudId;
 
+  // Best-effort: backfill jiraCloudId vào Project để chống cross-talk webhook
+  try {
+    if (teamId) {
+      await models.Project.findOneAndUpdate(
+        { team_id: teamId, jiraProjectKey: key },
+        { $set: { jiraCloudId: cloudId } }
+      );
+    }
+  } catch (e) {
+    console.warn('⚠️ [Jira Sync] Backfill Project.jiraCloudId thất bại:', e.message);
+  }
+
   // ==================== BƯỚC 1: LẤY BOARD ID ====================
   console.log('📌 [Jira Sync] B1: Lấy board theo projectKey:', key);
   const boards = await fetchBoards({ accessToken: currentAccessToken, cloudId, projectKey: key, onTokenRefresh });
@@ -1474,7 +1486,8 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
   }
 
   const payload = {
-    url: `${base}/api/webhooks/jira`,
+    // Đính kèm cloudId/projectKey để BE định danh, tránh cross-talk khi nhiều team trùng jiraProjectKey
+    url: `${base}/api/webhooks/jira?cloudId=${encodeURIComponent(cloudId)}&projectKey=${encodeURIComponent(projectKey)}`,
     webhooks: [
       {
         jqlFilter: `project = "${projectKey}"`,

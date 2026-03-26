@@ -17,6 +17,8 @@ const SprintSchema = new Schema({
 const JiraTaskSchema = new Schema({
     team_id: { type: Schema.Types.ObjectId, ref: 'Team' },
     sprint_id: { type: Schema.Types.ObjectId, ref: 'Sprint', default: null },
+    // Jira Cloud ID (để chống cross-talk giữa các Jira site/projectKey trùng nhau)
+    cloud_id: { type: String, default: '' },
     issue_id: { type: String, required: true, unique: true },
     issue_key: { type: String, required: true },
     summary: { type: String },

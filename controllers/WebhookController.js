@@ -237,13 +237,20 @@ exports.receiveJiraWebhook = async (req, res) => {
 
     console.log(`📥 [Jira Webhook] ${eventType} — ${issueKey} (${issueId}) | SP=${storyPoints} | assigneeEmail=${assigneeEmail || '—'}`);
 
+    const webhookCloudId = (req.query?.cloudId || '').toString().trim();
+    if (!webhookCloudId) {
+      console.warn('⚠️ [Jira Webhook] Thiếu cloudId (webhook URL chưa kèm ?cloudId=...). Skip để tránh cross-talk.');
+      return res.status(200).send('Jira Webhook received');
+    }
+
     const projectKey = project.key;
     const dbProject = await models.Project.findOne({
-      jiraProjectKey: projectKey
+      jiraProjectKey: projectKey,
+      jiraCloudId: webhookCloudId
     }).lean();
 
     if (!dbProject) {
-      console.log(`⚠️ [Jira Webhook] Không tìm thấy Project với key: ${projectKey}`);
+      console.log(`⚠️ [Jira Webhook] Không tìm thấy Project với key: ${projectKey} (cloudId=${webhookCloudId})`);
       return res.status(200).send('Jira Webhook received');
     }
 
@@ -271,7 +278,7 @@ exports.receiveJiraWebhook = async (req, res) => {
     };
 
     if (eventType === 'jira:issue_deleted') {
-      await JiraTask.deleteOne({ issue_id: issueId });
+      await JiraTask.deleteOne({ issue_key: issueKey, cloud_id: webhookCloudId });
       console.log(`✅ [Jira Webhook] Đã xóa task: ${issueKey}`);
       emitKanbanUpdate();
       return res.status(200).send('Jira Webhook received');
@@ -320,11 +327,12 @@ exports.receiveJiraWebhook = async (req, res) => {
       }
 
       await JiraTask.findOneAndUpdate(
-        { issue_id: issueId },
+        { issue_key: issueKey, cloud_id: webhookCloudId },
         {
           team_id: teamId,
           sprint_id: sprintId,
           assignee_id: assigneeMemberId,
+          cloud_id: webhookCloudId,
           issue_key: issueKey,
           issue_id: issueId,
           summary,

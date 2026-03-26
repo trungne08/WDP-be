@@ -26,6 +26,7 @@ const ProjectSchema = new Schema(
     // Thông tin tích hợp (chọn từ dropdown)
     githubRepoUrl: { type: String, default: '' },
     jiraProjectKey: { type: String, default: '' },
+    jiraCloudId: { type: String, default: '' },
 
     created_at: { type: Date, default: Date.now }
   },
