@@ -62,6 +62,13 @@ io.on('connection', (socket) => {
     console.log(`Socket ${socket.id} đã join vào phòng user: ${room}`);
   });
 
+  // Client gửi 'join_project' kèm projectId để nhận realtime theo dự án
+  socket.on('join_project', (projectId) => {
+    const room = String(projectId);
+    socket.join(room);
+    console.log(`Socket ${socket.id} đã join vào phòng project: ${room}`);
+  });
+
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });

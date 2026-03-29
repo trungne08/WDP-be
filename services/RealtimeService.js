@@ -4,15 +4,59 @@ const Project = require('../models/Project');
 
 const watchTeamMembers = () => {
   console.log("👀 Đang bật chế độ theo dõi DB Toàn Diện (Members, Teams, Projects)...");
+  const RESTART_DELAY_MS = 5000;
+
+  const createResilientStream = (label, streamFactory, onChange) => {
+    let stream = null;
+    let restarting = false;
+
+    const scheduleRestart = (reason, error) => {
+      if (restarting) return;
+      restarting = true;
+      if (error) {
+        console.error(`❌ [${label}] ChangeStream lỗi (${reason}):`, error);
+      } else {
+        console.warn(`⚠️ [${label}] ChangeStream ${reason}. Sẽ thử khởi tạo lại sau ${RESTART_DELAY_MS / 1000}s`);
+      }
+
+      try {
+        if (stream) stream.removeAllListeners();
+        if (stream && !stream.closed) stream.close().catch(() => {});
+      } catch (_) {}
+
+      setTimeout(() => {
+        restarting = false;
+        start();
+      }, RESTART_DELAY_MS);
+    };
+
+    const start = () => {
+      try {
+        stream = streamFactory();
+      } catch (error) {
+        return scheduleRestart('khởi tạo thất bại', error);
+      }
+
+      stream.on('change', onChange);
+      stream.on('error', (error) => scheduleRestart('mất kết nối MongoDB', error));
+      stream.on('end', () => scheduleRestart('đã kết thúc'));
+      stream.on('close', () => scheduleRestart('đã đóng'));
+      console.log(`✅ [${label}] ChangeStream đã sẵn sàng`);
+    };
+
+    start();
+    return () => stream;
+  };
 
   // ============================================================
   // 1. THEO DÕI TEAM MEMBER (HYBRID: Change Stream + Controller thủ công cho Import)
   // ============================================================
   // Bật Change Stream để tự động bắt insert/update/delete từng người
   // Import hàng loạt sẽ dùng refresh_class từ Controller (tránh spam 100 events)
-  const memberStream = TeamMember.watch([], { fullDocument: 'updateLookup' });
-
-  memberStream.on('change', async (change) => {
+  createResilientStream(
+    'TeamMember',
+    () => TeamMember.watch([], { fullDocument: 'updateLookup' }),
+    async (change) => {
     try {
       // Xử lý INSERT (Thêm mới 1 người)
       if (change.operationType === 'insert') {
@@ -107,14 +151,16 @@ const watchTeamMembers = () => {
     } catch (err) {
       console.error("❌ Error watching members:", err);
     }
-  });
+    }
+  );
 
   // ============================================================
   // 2. THEO DÕI TEAM (Đổi tên nhóm, Khóa nhóm...)
   // ============================================================
-  const teamStream = Team.watch([], { fullDocument: 'updateLookup' });
-  
-  teamStream.on('change', async (change) => {
+  createResilientStream(
+    'Team',
+    () => Team.watch([], { fullDocument: 'updateLookup' }),
+    async (change) => {
     if (change.operationType === 'update') {
       const doc = change.fullDocument;
       if (!doc) return;
@@ -129,14 +175,16 @@ const watchTeamMembers = () => {
         console.log(`📡 Team updated (ID: ${doc._id}) -> Room ${classId}`);
       }
     }
-  });
+    }
+  );
 
   // ============================================================
   // 3. THEO DÕI PROJECT (Đổi tên, Deadline...)
   // ============================================================
-  const projectStream = Project.watch([], { fullDocument: 'updateLookup' });
-
-  projectStream.on('change', async (change) => {
+  createResilientStream(
+    'Project',
+    () => Project.watch([], { fullDocument: 'updateLookup' }),
+    async (change) => {
     if (change.operationType === 'update' || change.operationType === 'insert') {
       const doc = change.fullDocument;
       if (!doc) return;
@@ -158,7 +206,8 @@ const watchTeamMembers = () => {
         console.log(`📡 Project updated (ID: ${doc._id})`);
       }
     }
-  });
+    }
+  );
 };
 
 module.exports = { watchTeamMembers };

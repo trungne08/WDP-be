@@ -266,21 +266,25 @@ exports.receiveJiraWebhook = async (req, res) => {
 
     const teamId = teamMember.team_id;
 
-    const emitKanbanUpdate = () => {
+    const emitTaskEvent = (eventName, taskData) => {
       const io = req.app.get('io');
       if (io) {
-        io.emit('JIRA_ISSUE_UPDATED', {
-          message: 'Bảng Kanban Jira vừa có cập nhật!',
-          issueKey,
-          status
-        });
+        const projectRoom = String(dbProject._id);
+        io.to(projectRoom).emit(eventName, taskData);
+        io.emit(eventName, taskData);
       }
     };
 
     if (eventType === 'jira:issue_deleted') {
       await JiraTask.deleteOne({ issue_key: issueKey, cloud_id: webhookCloudId });
       console.log(`✅ [Jira Webhook] Đã xóa task: ${issueKey}`);
-      emitKanbanUpdate();
+      emitTaskEvent('task_updated', {
+        issueKey,
+        issueId,
+        status,
+        projectId: String(dbProject._id),
+        action: 'delete'
+      });
       return res.status(200).send('Jira Webhook received');
     }
 
@@ -326,7 +330,7 @@ exports.receiveJiraWebhook = async (req, res) => {
         assigneeMemberId = found ? found._id : null;
       }
 
-      await JiraTask.findOneAndUpdate(
+      const savedTask = await JiraTask.findOneAndUpdate(
         { issue_key: issueKey, cloud_id: webhookCloudId },
         {
           team_id: teamId,
@@ -348,7 +352,11 @@ exports.receiveJiraWebhook = async (req, res) => {
       );
 
       console.log(`✅ [Jira Webhook] Đã cập nhật task: ${issueKey}`);
-      emitKanbanUpdate();
+      const eventName = eventType === 'jira:issue_created' ? 'task_created' : 'task_updated';
+      emitTaskEvent(eventName, {
+        ...savedTask.toObject(),
+        projectId: String(dbProject._id)
+      });
     }
 
     return res.status(200).send('Jira Webhook received');

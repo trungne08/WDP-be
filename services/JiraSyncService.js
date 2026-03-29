@@ -1525,7 +1525,7 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
 
     const matched = existing.find((w) => {
       const u = normalize(w?.url);
-      return u === baseNorm || u === desiredNorm || u.startsWith(baseNorm + '/');
+      return u === desiredNorm || u === baseNorm || u.startsWith(baseNorm + '/');
     });
 
     if (matched) {
@@ -1622,6 +1622,26 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
         'Nguyên nhân thường gặp: (1) user không có quyền Admin / permission phù hợp trên Jira site/project, hoặc (2) token thiếu scope webhook. ' +
         'Hãy kiểm tra error message phía Jira và thử OAuth lại nếu vừa mới thêm scope.';
       throw new Error(`${hint} Jira says: ${msg}`);
+    }
+
+    const onlySingleUrlAllowed =
+      typeof msg === 'string' &&
+      /only a single url allowed/i.test(msg);
+
+    // Jira đôi khi trả lỗi này dù webhook đã tồn tại trước đó.
+    if (onlySingleUrlAllowed) {
+      try {
+        const existingAfterFail = await listRegisteredWebhooks();
+        const normalize = (u) => String(u || '').trim().replace(/\/$/, '');
+        const desiredNorm = normalize(desiredHookUrl);
+        const alreadyExists = existingAfterFail.some((w) => normalize(w?.url) === desiredNorm);
+        if (alreadyExists) {
+          console.log('✅ [Jira Webhook Register] Webhook đã tồn tại (Jira báo duplicate URL), bỏ qua tạo mới.');
+          return { skipped: true, reason: 'webhook_exists' };
+        }
+      } catch (verifyErr) {
+        console.warn('⚠️ [Jira Webhook Register] Không verify được webhook sau lỗi duplicate URL:', verifyErr.response?.data || verifyErr.message);
+      }
     }
 
     throw new Error(msg || `Lỗi đăng ký Jira webhook (${status || 'unknown'})`);
