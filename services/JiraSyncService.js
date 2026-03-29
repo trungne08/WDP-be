@@ -1508,11 +1508,11 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
   async function deleteWebhooksByIds(ids) {
     const list = (ids || []).filter(Boolean);
     if (list.length === 0) return;
-    // Jira: DELETE /rest/api/3/webhook?ids=1,2,3
+    // Jira REST v3: DELETE /rest/api/3/webhook với body { webhookIds: [...] }
     await axios.delete(jiraWebhookApiBase, {
       headers,
       timeout: 30000,
-      params: { ids: list.join(',') }
+      data: { webhookIds: list }
     });
   }
 
