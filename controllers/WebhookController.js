@@ -277,7 +277,8 @@ exports.receiveJiraWebhook = async (req, res) => {
     };
 
     if (eventType === 'jira:issue_deleted') {
-      await JiraTask.deleteOne({ issue_key: issueKey, cloud_id: webhookCloudId });
+      // Upsert ở create/update dùng issue_id + cloud_id nên delete cũng dùng cùng bộ khóa để tránh lệch khi issue_key thay đổi
+      await JiraTask.deleteOne({ issue_id: issueId, cloud_id: webhookCloudId });
       console.log(`✅ [Jira Webhook] Đã xóa task: ${issueKey}`);
       emitTaskEvent('task_updated', {
         issueKey,
@@ -332,7 +333,9 @@ exports.receiveJiraWebhook = async (req, res) => {
       }
 
       const savedTask = await JiraTask.findOneAndUpdate(
-        { issue_key: issueKey, cloud_id: webhookCloudId },
+        // Unique constraint trong JiraTaskSchema là issue_id (unique:true)
+        // Upsert theo issue_id để tránh lỗi DuplicateKey khi issue_key thay đổi.
+        { issue_id: issueId, cloud_id: webhookCloudId },
         {
           team_id: teamId,
           sprint_id: sprintId,

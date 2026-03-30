@@ -129,9 +129,7 @@ const connectDB = async () => {
     const mongoUri = normalizeMongoUri(process.env.MONGO_URI);
     await mongoose.connect(mongoUri, {
       serverSelectionTimeoutMS: 5000,
-      socketTimeoutMS: 45000,
-      keepAlive: true,
-      keepAliveInitialDelay: 300000
+      socketTimeoutMS: 45000
     });
     console.log("✅ Đã kết nối MongoDB thành công!");
     
