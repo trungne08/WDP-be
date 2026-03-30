@@ -1223,7 +1223,18 @@ const addStudentToClass = async (req, res) => {
                 }
                 // Đã xóa mềm trước đó -> Khôi phục (soft restore)
                 let role = 'Member';
+                let oldLeaderIds = [];
+                const touchedProjectIds = new Set();
                 if (is_leader) {
+                    oldLeaderIds = await models.TeamMember.find(
+                        {
+                            team_id: team._id,
+                            role_in_team: 'Leader',
+                            is_active: true,
+                            _id: { $ne: existingMember._id }
+                        }
+                    ).select('_id').lean();
+
                     await models.TeamMember.updateMany(
                         { team_id: team._id, role_in_team: 'Leader', _id: { $ne: existingMember._id } },
                         { role_in_team: 'Member' }
@@ -1255,15 +1266,74 @@ const addStudentToClass = async (req, res) => {
                             { $addToSet: { members: student._id } }
                         );
                         console.log(`   ✅ [RestoreStudent] Đã thêm student ${student._id} vào project "${teamProject.name}" của nhóm (team ${team._id})`);
+                        touchedProjectIds.add(teamProject._id.toString());
                     }
                 }
-                
+
+                // Manual Socket Emission: restore member + update affected project
+                if (global._io) {
+                    const classRoom = String(team.class_id);
+
+                    const restoredMember = await models.TeamMember.findById(existingMember._id)
+                        .populate('student_id', 'full_name student_code avatar_url email')
+                        .populate('team_id', 'project_name')
+                        .lean();
+
+                    if (restoredMember) {
+                        global._io.to(classRoom).emit('team_member_changed', {
+                            action: 'update',
+                            data: restoredMember
+                        });
+                    }
+
+                    if (oldLeaderIds.length > 0) {
+                        for (const leader of oldLeaderIds) {
+                            const oldLeaderMember = await models.TeamMember.findById(leader._id)
+                                .populate('student_id', 'full_name student_code avatar_url email')
+                                .populate('team_id', 'project_name')
+                                .lean();
+
+                            if (oldLeaderMember) {
+                                global._io.to(classRoom).emit('team_member_changed', {
+                                    action: 'update',
+                                    data: oldLeaderMember
+                                });
+                            }
+                        }
+                    }
+
+                    for (const pid of touchedProjectIds) {
+                        const projectDoc = await models.Project.findById(pid).lean();
+                        if (!projectDoc) continue;
+
+                        const projectRoom = `project:${pid}`;
+                        global._io.to(projectRoom).emit('project_updated', {
+                            action: 'update',
+                            data: projectDoc
+                        });
+                        global._io.emit('project_updated', {
+                            action: 'update',
+                            data: projectDoc
+                        });
+                    }
+                }
+
                 return res.status(200).json({ message: '✅ Đã khôi phục sinh viên vào lớp (Enrolled)!' });
             }
 
             // 3. Nếu set Leader, check xem team có Leader chưa
             let role = 'Member';
+            let oldLeaderIds = [];
+            const touchedProjectIds = new Set();
             if (is_leader) {
+                oldLeaderIds = await models.TeamMember.find(
+                    {
+                        team_id: team._id,
+                        role_in_team: 'Leader',
+                        is_active: true
+                    }
+                ).select('_id').lean();
+
                 await models.TeamMember.updateMany(
                     { team_id: team._id, role_in_team: 'Leader', is_active: true },
                     { role_in_team: 'Member' }
@@ -1272,7 +1342,7 @@ const addStudentToClass = async (req, res) => {
             }
 
             // 4. Enroll (tạo mới)
-            await models.TeamMember.create({
+            const createdMember = await models.TeamMember.create({
                 team_id: team._id,
                 student_id: student._id,
                 role_in_team: role,
@@ -1298,6 +1368,55 @@ const addStudentToClass = async (req, res) => {
                         { $addToSet: { members: student._id } }
                     );
                     console.log(`   ✅ [AddStudent] Đã thêm student ${student._id} vào project "${teamProject.name}" của nhóm (team ${team._id})`);
+                    touchedProjectIds.add(teamProject._id.toString());
+                }
+            }
+
+            // Manual Socket Emission: insert member + update affected project
+            if (global._io) {
+                const classRoom = String(team.class_id);
+
+                const newMember = await models.TeamMember.findById(createdMember._id)
+                    .populate('student_id', 'full_name student_code avatar_url email')
+                    .populate('team_id', 'project_name')
+                    .lean();
+
+                if (newMember) {
+                    global._io.to(classRoom).emit('team_member_changed', {
+                        action: 'insert',
+                        data: newMember
+                    });
+                }
+
+                if (oldLeaderIds.length > 0) {
+                    for (const leader of oldLeaderIds) {
+                        const oldLeaderMember = await models.TeamMember.findById(leader._id)
+                            .populate('student_id', 'full_name student_code avatar_url email')
+                            .populate('team_id', 'project_name')
+                            .lean();
+
+                        if (oldLeaderMember) {
+                            global._io.to(classRoom).emit('team_member_changed', {
+                                action: 'update',
+                                data: oldLeaderMember
+                            });
+                        }
+                    }
+                }
+
+                for (const pid of touchedProjectIds) {
+                    const projectDoc = await models.Project.findById(pid).lean();
+                    if (!projectDoc) continue;
+
+                    const projectRoom = `project:${pid}`;
+                    global._io.to(projectRoom).emit('project_updated', {
+                        action: 'update',
+                        data: projectDoc
+                    });
+                    global._io.emit('project_updated', {
+                        action: 'update',
+                        data: projectDoc
+                    });
                 }
             }
 
@@ -1380,6 +1499,8 @@ const updateStudentInClass = async (req, res) => {
             let targetTeamId = member.team_id._id;
 
             const oldTeamId = member.team_id._id.toString();
+            let oldLeaderIds = [];
+            const touchedProjectIds = new Set();
             
             if (currentGroup !== newGroup) {
                 // Chuyển nhóm -> Tìm/Tạo team mới
@@ -1396,6 +1517,7 @@ const updateStudentInClass = async (req, res) => {
                 }).lean();
                 
                 if (oldTeamProjects.length > 0) {
+                    oldTeamProjects.forEach((p) => touchedProjectIds.add(p._id.toString()));
                     for (const oldProject of oldTeamProjects) {
                         await models.Project.updateOne(
                             { _id: oldProject._id },
@@ -1424,6 +1546,7 @@ const updateStudentInClass = async (req, res) => {
                             { $addToSet: { members: student_id } }
                         );
                         console.log(`   ✅ [UpdateStudent] Đã thêm student ${student_id} vào project "${newTeamProject.name}" của nhóm mới (team ${targetTeamId})`);
+                        touchedProjectIds.add(newTeamProject._id.toString());
                     }
                 }
             }
@@ -1434,6 +1557,16 @@ const updateStudentInClass = async (req, res) => {
                 
                 // Nếu set lên Leader -> Hạ Leader cũ của targetTeam
                 if (newRole === 'Leader') {
+                    // Cache leader bị hạ để emit đúng cho FE
+                    oldLeaderIds = await models.TeamMember.find(
+                        {
+                            team_id: targetTeamId,
+                            role_in_team: 'Leader',
+                            is_active: true,
+                            _id: { $ne: member._id }
+                        }
+                    ).select('_id').lean();
+
                     await models.TeamMember.updateMany(
                         { team_id: targetTeamId, role_in_team: 'Leader', is_active: true, _id: { $ne: member._id } },
                         { role_in_team: 'Member' }
@@ -1444,8 +1577,60 @@ const updateStudentInClass = async (req, res) => {
 
             await member.save();
 
-            // Không cần bắn Socket thủ công nữa - RealtimeService sẽ tự động bắt được
-            // (Hybrid Strategy: Change Stream lo việc này)
+            // Manual Socket Emission: khôi phục realtime 100% khi đã tắt ChangeStream
+            if (global._io) {
+                const teamDoc = await models.Team.findById(targetTeamId).select('class_id').lean();
+                const classRoom = teamDoc?.class_id ? String(teamDoc.class_id) : null;
+
+                if (classRoom) {
+                    const updatedMember = await models.TeamMember.findById(member._id)
+                        .populate('student_id', 'full_name student_code avatar_url email')
+                        .populate('team_id', 'project_name')
+                        .lean();
+
+                    if (updatedMember) {
+                        global._io.to(classRoom).emit('team_member_changed', {
+                            action: 'update',
+                            data: updatedMember
+                        });
+                    }
+
+                    // Emit cho leader cũ bị hạ role (đảm bảo FE cập nhật đúng nhãn Leader/Member)
+                    if (Array.isArray(oldLeaderIds) && oldLeaderIds.length > 0) {
+                        for (const leader of oldLeaderIds) {
+                            const oldLeaderMember = await models.TeamMember.findById(leader._id)
+                                .populate('student_id', 'full_name student_code avatar_url email')
+                                .populate('team_id', 'project_name')
+                                .lean();
+
+                            if (oldLeaderMember) {
+                                global._io.to(classRoom).emit('team_member_changed', {
+                                    action: 'update',
+                                    data: oldLeaderMember
+                                });
+                            }
+                        }
+                    }
+                }
+
+                // Emit project updates khi chuyển nhóm (cleanup project cũ + add vào project mới)
+                if (touchedProjectIds.size > 0) {
+                    for (const pid of touchedProjectIds) {
+                        const projectDoc = await models.Project.findById(pid).lean();
+                        if (!projectDoc) continue;
+
+                        const projectRoom = `project:${pid}`;
+                        global._io.to(projectRoom).emit('project_updated', {
+                            action: 'update',
+                            data: projectDoc
+                        });
+                        global._io.emit('project_updated', {
+                            action: 'update',
+                            data: projectDoc
+                        });
+                    }
+                }
+            }
 
             return res.json({ message: '✅ Cập nhật sinh viên thành công!' });
 
@@ -1484,12 +1669,19 @@ const removeStudentFromClass = async (req, res) => {
                 return res.status(404).json({ error: 'Không tìm thấy lớp hoặc chưa có team.' });
             }
 
+            // Cache project bị ảnh hưởng để emit project_updated thay thế ChangeStream
+            const affectedProjects = await models.Project.find({
+                class_id: classId,
+                $or: [{ members: student_id }, { leader_id: student_id }]
+            }).select('_id').lean();
+            const affectedProjectIds = new Set((affectedProjects || []).map(p => p._id.toString()));
+
             // 1. Lấy danh sách TeamMember cần deactivate (để unassign JiraTask)
             const members = await models.TeamMember.find({
                 team_id: { $in: classTeamIds },
                 student_id,
                 is_active: true
-            }).select('_id').lean();
+            }).select('_id student_id').lean();
 
             if (members.length === 0) {
                 return res.status(404).json({ error: 'Không tìm thấy sinh viên trong lớp hoặc đã bị xóa trước đó.' });
@@ -1502,6 +1694,17 @@ const removeStudentFromClass = async (req, res) => {
                 { _id: { $in: teamMemberIds } },
                 { $set: { is_active: false } }
             );
+
+            // Manual Socket Emission: soft-delete (is_active=false) => FE nhận action: 'delete'
+            if (global._io) {
+                const classRoom = String(classId);
+                for (const m of members) {
+                    global._io.to(classRoom).emit('team_member_changed', {
+                        action: 'delete',
+                        data: { _id: m._id, student_id: m.student_id }
+                    });
+                }
+            }
 
             // 3. $pull student khỏi members của mọi Project trong lớp
             const pullRes = await models.Project.updateMany(
@@ -1528,7 +1731,23 @@ const removeStudentFromClass = async (req, res) => {
                 console.log(`   🔧 [RemoveStudent] Đã unassign ${unassignRes.modifiedCount} JiraTask(s)`);
             }
 
-            // RealtimeService bắt event update TeamMember → bắn action: 'delete'
+            // Manual Socket Emission: project_updated cho các project bị ảnh hưởng
+            if (global._io && affectedProjectIds.size > 0) {
+                for (const pid of affectedProjectIds) {
+                    const projectDoc = await models.Project.findById(pid).lean();
+                    if (!projectDoc) continue;
+
+                    const projectRoom = `project:${pid}`;
+                    global._io.to(projectRoom).emit('project_updated', {
+                        action: 'update',
+                        data: projectDoc
+                    });
+                    global._io.emit('project_updated', {
+                        action: 'update',
+                        data: projectDoc
+                    });
+                }
+            }
             return res.json({ message: '✅ Đã xóa sinh viên khỏi lớp!' });
 
         } else if (pending_id) {

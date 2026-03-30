@@ -323,6 +323,23 @@ exports.createProject = async (req, res) => {
       .populate('subject_id', '_id name code')
       .lean();
 
+    // Manual Socket Emission: project_updated thay thế ChangeStream
+    if (global._io) {
+      const projectDoc = await models.Project.findById(project._id).lean();
+      if (projectDoc) {
+        const pid = project._id.toString();
+        const projectRoom = `project:${pid}`;
+        global._io.to(projectRoom).emit('project_updated', {
+          action: 'insert',
+          data: projectDoc
+        });
+        global._io.emit('project_updated', {
+          action: 'insert',
+          data: projectDoc
+        });
+      }
+    }
+
     return res.status(201).json({
       message: '✅ Tạo Project thành công!',
       project: populatedProject

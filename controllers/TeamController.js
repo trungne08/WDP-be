@@ -86,6 +86,15 @@ exports.updateTeamConfig = async (req, res) => {
 
         if (!updatedTeam) return res.status(404).json({ message: 'Không tìm thấy nhóm!' });
 
+        // Manual Socket Emission: khôi phục realtime khi đã tắt ChangeStream
+        if (global._io && updatedTeam.class_id) {
+            const classRoom = String(updatedTeam.class_id);
+            global._io.to(classRoom).emit('team_updated', {
+                action: 'update',
+                data: updatedTeam
+            });
+        }
+
         res.json({ message: '✅ Cập nhật cấu hình thành công!', team: updatedTeam });
 
     } catch (error) {

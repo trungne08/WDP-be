@@ -132,10 +132,9 @@ const connectDB = async () => {
       socketTimeoutMS: 45000
     });
     console.log("✅ Đã kết nối MongoDB thành công!");
-    
-    // Kích hoạt "Camera chạy bằng cơm" soi DB (Realtime Service)
-    // Chỉ kích hoạt khi đã connect DB thành công
-    require('./services/RealtimeService').watchTeamMembers();
+
+    // TẮT ChangeStream (RealtimeService) - chuyển sang event-driven bằng Jira Webhook
+    // (RealtimeService theo dõi DB thay đổi qua Mongo ChangeStream gây tải nặng/đứt kết nối trên Atlas Free Tier)
     
   } catch (err) {
     console.error("❌ Lỗi kết nối MongoDB:", err.message);

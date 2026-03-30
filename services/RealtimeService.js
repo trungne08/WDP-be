@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const TeamMember = require('../models/TeamMember');
 const Team = require('../models/Team');
 const Project = require('../models/Project');
@@ -50,6 +51,11 @@ const watchTeamMembers = () => {
 
       const start = () => {
         try {
+          // Không tạo ChangeStream khi Mongo chưa sẵn sàng (tránh uncaughtException khi network down)
+          if (mongoose.connection.readyState !== 1) {
+            return scheduleRestart('mongoose not connected');
+          }
+
           stream = streamFactory();
           stream.on('change', (change) => {
             // Luôn bọc promise để lỗi không thoát ra ngoài vòng lắng nghe
