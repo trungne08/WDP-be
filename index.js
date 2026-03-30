@@ -127,7 +127,12 @@ function normalizeMongoUri(uri) {
 const connectDB = async () => {
   try {
     const mongoUri = normalizeMongoUri(process.env.MONGO_URI);
-    await mongoose.connect(mongoUri);
+    await mongoose.connect(mongoUri, {
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      keepAlive: true,
+      keepAliveInitialDelay: 300000
+    });
     console.log("✅ Đã kết nối MongoDB thành công!");
     
     // Kích hoạt "Camera chạy bằng cơm" soi DB (Realtime Service)
