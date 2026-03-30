@@ -64,7 +64,9 @@ io.on('connection', (socket) => {
 
   // Client gửi 'join_project' kèm projectId để nhận realtime theo dự án
   socket.on('join_project', (projectId) => {
-    const room = String(projectId);
+    const raw = String(projectId);
+    // Đảm bảo format room thống nhất: "project:<projectId>"
+    const room = raw.startsWith('project:') ? raw : `project:${raw}`;
     socket.join(room);
     console.log(`Socket ${socket.id} đã join vào phòng project: ${room}`);
   });

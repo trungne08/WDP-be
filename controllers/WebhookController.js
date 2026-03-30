@@ -269,7 +269,8 @@ exports.receiveJiraWebhook = async (req, res) => {
     const emitTaskEvent = (eventName, taskData) => {
       const io = req.app.get('io');
       if (io) {
-        const projectRoom = String(dbProject._id);
+        // Đồng bộ tên room với join_project trong index.js
+        const projectRoom = `project:${String(dbProject._id)}`;
         io.to(projectRoom).emit(eventName, taskData);
         io.emit(eventName, taskData);
       }
