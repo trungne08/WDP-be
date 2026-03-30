@@ -74,6 +74,15 @@ io.on('connection', (socket) => {
   });
 });
 
+// Chặn lỗi runtime khiến Node tự thoát (đặc biệt khi Mongo/ChangeStream lỗi mạng)
+process.on('unhandledRejection', (reason) => {
+  console.error('❌ [unhandledRejection]', reason);
+});
+
+process.on('uncaughtException', (err) => {
+  console.error('❌ [uncaughtException]', err);
+});
+
 // Cho phép các web khác gọi vào API của mình (CORS) - Full CORS enabled
 app.use(cors({
     origin: function (origin, callback) {
@@ -125,7 +134,7 @@ const connectDB = async () => {
     
   } catch (err) {
     console.error("❌ Lỗi kết nối MongoDB:", err.message);
-    process.exit(1); // Lỗi thì dừng server luôn
+    // Không cho phép process tự thoát: server vẫn phải sống để nhận Webhook
   }
 };
 

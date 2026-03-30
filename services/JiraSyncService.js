@@ -1520,38 +1520,42 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
   try {
     const existing = await listRegisteredWebhooks();
     const normalize = (u) => String(u || '').trim().replace(/\/$/, '');
-    const baseNorm = normalize(hookUrlBase);
     const desiredNorm = normalize(desiredHookUrl);
+    const ourHost = 'wdp-be-ama3.onrender.com';
 
-    const matched = existing.find((w) => {
-      const u = normalize(w?.url);
-      return u === desiredNorm || u === baseNorm || u.startsWith(baseNorm + '/');
+    const outdated = existing.filter((w) => {
+      const uRaw = w?.url;
+      const u = normalize(uRaw);
+      if (!u) return false;
+      try {
+        const parsed = new URL(u);
+        return parsed.host === ourHost && u !== desiredNorm;
+      } catch {
+        return false;
+      }
     });
 
-    if (matched) {
-      console.log('✅ Webhook đã tồn tại trên Jira, bỏ qua bước tạo mới');
-      return { skipped: true };
-    }
+    if (outdated.length > 0) {
+      for (const w of outdated) {
+        // Log mỗi webhook cũ không hợp lệ theo đúng format request của bạn
+        console.log(`🗑️ Đã xóa Webhook cũ không hợp lệ: ${w?.url}`);
+      }
 
-    // 3) CLEANUP IF FULL (max 5)
-    if (existing.length >= 5) {
-      // Ưu tiên xóa các webhook cũ trỏ về base URL nhưng KHÔNG đúng format path variable mới
-      const outdatedIds = existing
-        .filter((w) => {
-          const u = normalize(w?.url);
-          if (!u || !u.startsWith(baseNorm)) return false;
-          return u !== desiredNorm; // khác cloudId hiện tại
-        })
+      const outdatedIds = outdated
         .map((w) => w?.id || w?.webhookId || w?.webhookIdOrNull)
         .filter(Boolean);
 
-      if (outdatedIds.length > 0) {
-        try {
-          await deleteWebhooksByIds(outdatedIds.slice(0, 5));
-          console.log(`🧹 [Jira Webhook] Đã xóa ${Math.min(outdatedIds.length, 5)} webhook cũ để nhường chỗ.`);
-        } catch (e) {
-          console.warn('⚠️ [Jira Webhook] Xóa webhook cũ thất bại:', e.response?.data || e.message);
-        }
+      try {
+        await deleteWebhooksByIds(outdatedIds);
+      } catch (e) {
+        console.warn('⚠️ [Jira Webhook] Xóa webhook cũ thất bại:', e.response?.data || e.message);
+      }
+    } else {
+      // Nếu không có webhook cũ sai format, chỉ bỏ qua khi URL mới đã tồn tại chính xác
+      const matched = existing.find((w) => normalize(w?.url) === desiredNorm);
+      if (matched) {
+        console.log('✅ Webhook đã tồn tại trên Jira, bỏ qua bước tạo mới');
+        return { skipped: true };
       }
     }
   } catch (e) {
@@ -1574,6 +1578,7 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
   };
 
   try {
+    console.log('🆕 Đang tạo Webhook mới chuẩn path variable...');
     const response = await axios.post(
       jiraWebhookApiBase,
       payload,
