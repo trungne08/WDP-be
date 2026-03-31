@@ -224,22 +224,6 @@ exports.receiveJiraWebhook = async (req, res) => {
     const issue = body.issue;
     const project = issue?.fields?.project;
 
-    // Tạm thời log toàn bộ các field dạng ngày (YYYY-MM-DD) để bắt đúng Start Date
-    try {
-      const fields = issue?.fields || {};
-      console.log(
-        "🕵️‍♂️ TÌM START DATE TRONG FIELDS:",
-        Object.keys(fields).filter(
-          (k) =>
-            fields[k] &&
-            typeof fields[k] === 'string' &&
-            /^\d{4}-\d{2}-\d{2}/.test(fields[k])
-        )
-      );
-    } catch (e) {
-      console.warn('⚠️ [Jira Webhook] Log Start Date fields failed:', e.message);
-    }
-
     if (!eventType || !issue || !project) {
       return res.status(200).send('Jira Webhook received');
     }
@@ -385,7 +369,10 @@ exports.receiveJiraWebhook = async (req, res) => {
 
       // Jira Start date: có thể là fields.startDate hoặc 1 customfield_xxxxx dạng date.
       // Ưu tiên explicit field, fallback rất thận trọng: nếu có đúng 1 customfield_* kiểu YYYY-MM-DD (khác duedate) thì dùng nó.
-      if (Object.prototype.hasOwnProperty.call(fields, 'startDate')) {
+      // Start Date trên Jira Cloud dự án của bạn: customfield_10015
+      if (Object.prototype.hasOwnProperty.call(fields, 'customfield_10015')) {
+        setDoc.start_date = fields.customfield_10015 ? new Date(fields.customfield_10015) : null;
+      } else if (Object.prototype.hasOwnProperty.call(fields, 'startDate')) {
         setDoc.start_date = fields.startDate ? new Date(fields.startDate) : null;
       } else if (Object.prototype.hasOwnProperty.call(fields, 'start_date')) {
         setDoc.start_date = fields.start_date ? new Date(fields.start_date) : null;
