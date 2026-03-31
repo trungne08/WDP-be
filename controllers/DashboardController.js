@@ -5,6 +5,7 @@ const TeamMember = require('../models/TeamMember');
 const { SprintAssessment } = require('../models/Assessment');
 const { JiraTask } = require('../models/JiraData'); 
 const GithubCommit = require('../models/GitData');
+const PeerReview = require('../models/PeerReview');
 
 exports.getClassDashboardOverview = async (req, res) => {
     try {
@@ -186,6 +187,7 @@ exports.getClassDashboardOverview = async (req, res) => {
 exports.getTeamDashboardOverview = async (req, res) => {
     try {
         const { teamId } = req.params;
+        const teamObjectId = new mongoose.Types.ObjectId(teamId);
 
         // 1. Lấy thông tin Team & Members
         const team = await Team.findById(teamId).populate('class_id').lean();
@@ -197,86 +199,113 @@ exports.getTeamDashboardOverview = async (req, res) => {
 
         if (members.length === 0) return res.json({ message: "Nhóm chưa có thành viên.", data: null });
 
-        // ==========================================
-        // 🚨 CHẶN CỬA BẢO MẬT (AUTHORIZATION)
-        // ==========================================
+        // [Middleware Check Role giữ nguyên...]
         if (req.role === 'STUDENT') {
-            // Nếu là sinh viên -> Phải nằm trong nhóm này VÀ phải là Leader
             const isLeader = members.find(
                 m => m.student_id?._id.toString() === req.user._id.toString() && m.role_in_team === 'Leader'
             );
-            if (!isLeader) {
-                return res.status(403).json({ error: 'Chỉ Nhóm trưởng (Leader) hoặc Giảng viên mới được xem Dashboard này.' });
-            }
+            if (!isLeader) return res.status(403).json({ error: 'Chỉ Nhóm trưởng hoặc Giảng viên mới được xem Dashboard.' });
         } else if (req.role === 'LECTURER') {
-            // Nếu là giảng viên -> Phải là người dạy lớp này
             if (team.class_id?.lecturer_id?.toString() !== req.user._id.toString()) {
                 return res.status(403).json({ error: 'Bạn không có quyền xem nhóm của lớp khác.' });
             }
         }
 
-        // 2. QUERY SONG SONG: Lấy điểm chốt, Đếm Commit, Đếm Task (Siêu tối ưu tốc độ)
-        const teamObjectId = new mongoose.Types.ObjectId(teamId);
-        
-        const [assessments, commitCountsAgg, taskCountsAgg] = await Promise.all([
+        // ==========================================
+        // 2. QUERY REAL-TIME: AGGREGATION "BẮT LƯỚI KÉP"
+        // ==========================================
+        const [assessments, reviews, gitAgg, jiraTasksAgg, jiraSpAgg] = await Promise.all([
             SprintAssessment.find({ member_id: { $in: members.map(m => m._id) } }).lean(),
+            PeerReview.find({ team_id: teamId }).lean(),
             
-            // Đếm tổng số Commit của từng email
+            // GIT: Khớp bằng tác giả email, cộng dồn điểm ai_score (ép null về 0)
             GithubCommit.aggregate([
                 { $match: { team_id: teamObjectId, author_email: { $ne: null } } },
-                { $group: { _id: { $toLower: "$author_email" }, total_commits: { $sum: 1 } } }
+                { $group: { 
+                    _id: { $toLower: { $trim: { input: "$author_email" } } }, 
+                    total_commits: { $sum: 1 },
+                    total_git_score: { $sum: { $ifNull: ["$ai_score", 0] } } 
+                }}
             ]),
 
-            // Đếm tổng số Task Jira của từng người
+            // JIRA 1: Đếm Task - Gom nhóm bằng assignee_id HOẶC assignee_account_id
             JiraTask.aggregate([
                 { $match: { team_id: teamObjectId } },
-                { $group: { _id: "$assignee_id", total_tasks: { $sum: 1 } } }
+                { $group: { 
+                    _id: { $ifNull: ["$assignee_id", "$assignee_account_id"] }, 
+                    total_tasks: { $sum: 1 } 
+                }}
+            ]),
+
+            // JIRA 2: Tính SP Done - Bắt theo các trạng thái Done/Completed
+            JiraTask.aggregate([
+                { $match: { 
+                    team_id: teamObjectId,
+                    $or: [
+                        { status_category: /^(done|completed)$/i },
+                        { status_name: /(done|closed|complete|resolved|hoàn thành|đã xong|đóng)/i }
+                    ]
+                }},
+                { $group: { 
+                    _id: { $ifNull: ["$assignee_id", "$assignee_account_id"] }, 
+                    total_sp_done: { $sum: { $ifNull: ["$story_point", 0] } } 
+                }}
             ])
         ]);
 
-        // Map kết quả đếm ra object cho dễ dò
-        const commitMap = {};
-        commitCountsAgg.forEach(c => { commitMap[c._id] = c.total_commits; });
+        // ==========================================
+        // 3. MAPPING DỮ LIỆU
+        // ==========================================
+        const gitMap = {};
+        gitAgg.forEach(g => { gitMap[g._id] = g; });
 
-        const taskMap = {};
-        taskCountsAgg.forEach(t => { if (t._id) taskMap[t._id.toString()] = t.total_tasks; });
+        // Jira Map có thể chứa Key là ObjectId (string) hoặc AccountId (string)
+        const jiraTaskMap = {};
+        jiraTasksAgg.forEach(j => { if (j._id) jiraTaskMap[j._id.toString()] = j.total_tasks; });
 
-        // 3. TÍNH SỨC KHỎE DỰ ÁN (PROJECT HEALTH)
-        let totalJiraSP = 0;
-        let totalGitScore = 0;
-        let totalReview = 0;
-        
-        // Tổng số lượng đếm được
-        let teamTotalCommits = 0;
-        let teamTotalTasks = 0;
+        const jiraSpMap = {};
+        jiraSpAgg.forEach(j => { if (j._id) jiraSpMap[j._id.toString()] = j.total_sp_done; });
 
-        members.forEach(m => {
-            totalJiraSP += (m.scores?.jira_score || 0);
-            totalGitScore += (m.scores?.commit_score || 0);
-            totalReview += (m.scores?.review_score || 0);
-
-            const email = m.student_id?.email?.toLowerCase()?.trim() || '';
-            teamTotalCommits += (commitMap[email] || 0);
-            teamTotalTasks += (taskMap[m._id.toString()] || 0);
+        // Map Review (Dựa theo schema PeerReview có evaluated_id)
+        const reviewStats = {};
+        let totalReviewGroup = 0;
+        reviews.forEach(r => {
+            const eId = r.evaluated_id?.toString();
+            if (eId && r.rating) {
+                if (!reviewStats[eId]) reviewStats[eId] = { total: 0, count: 0 };
+                reviewStats[eId].total += r.rating;
+                reviewStats[eId].count += 1;
+                totalReviewGroup += r.rating;
+            }
         });
 
+        // ==========================================
         // 4. MỔ XẺ CHI TIẾT TỪNG THÀNH VIÊN
+        // ==========================================
+        let teamTotalSp = 0, teamTotalGit = 0, teamTotalCommits = 0, teamTotalTasks = 0;
+
         const membersBreakdown = members.map(m => {
             const mId = m._id.toString();
-            const email = m.student_id?.email?.toLowerCase()?.trim() || '';
+            const email = m.student_id?.email?.toLowerCase()?.trim() || "";
+            const jiraAccId = m.jira_account_id || "";
+
+            // Khớp GIT bằng Email
+            const myGit = gitMap[email] || { total_commits: 0, total_git_score: 0 };
             
+            // Khớp JIRA: Bắt bằng ObjectId trước, nếu tạch thì bắt bằng Account ID
+            const myJiraTasks = jiraTaskMap[mId] || jiraTaskMap[jiraAccId] || 0; 
+            const myJiraSp = jiraSpMap[mId] || jiraSpMap[jiraAccId] || 0;     
+            
+            const myReview = reviewStats[mId] || { total: 0, count: 0 };
+            const avgStar = myReview.count > 0 ? (myReview.total / myReview.count) : 0;
+
+            // Cộng dồn vào Quỹ nhóm
+            teamTotalSp += myJiraSp;
+            teamTotalGit += myGit.total_git_score;
+            teamTotalCommits += myGit.total_commits;
+            teamTotalTasks += myJiraTasks;
+
             const assessment = assessments.find(a => a.member_id.toString() === mId);
-            const rawJira = m.scores?.jira_score || 0;
-            const rawGit = m.scores?.commit_score || 0;
-            const rawReview = m.scores?.review_score || 0;
-
-            const myCommits = commitMap[email] || 0;
-            const myTasks = taskMap[mId] || 0;
-
-            // Tính % đóng góp
-            const pJira = totalJiraSP > 0 ? (rawJira / totalJiraSP) : (1 / members.length);
-            const pGit = totalGitScore > 0 ? (rawGit / totalGitScore) : (1 / members.length);
-            const pReview = totalReview > 0 ? (rawReview / totalReview) : (1 / members.length);
 
             return {
                 student_id: m.student_id?._id,
@@ -284,22 +313,14 @@ exports.getTeamDashboardOverview = async (req, res) => {
                 full_name: m.student_id?.full_name,
                 avatar_url: m.student_id?.avatar_url,
                 role: m.role_in_team,
-                
-                // FE sẽ sướng rơn với cục raw_counts này
                 raw_counts: {
-                    total_commits: myCommits,
-                    total_jira_tasks: myTasks
+                    total_commits: myGit.total_commits,
+                    total_jira_tasks: myJiraTasks
                 },
-
                 raw_scores: {
-                    jira_sp_done: rawJira,
-                    git_ai_score: rawGit,
-                    peer_review_score: rawReview
-                },
-                contribution_percentages: {
-                    jira_percent: Number((pJira * 100).toFixed(1)),
-                    git_percent: Number((pGit * 100).toFixed(1)),
-                    review_percent: Number((pReview * 100).toFixed(1))
+                    jira_sp_done: myJiraSp,
+                    git_ai_score: Number(myGit.total_git_score.toFixed(2)),
+                    peer_review_score: Number(avgStar.toFixed(2))
                 },
                 grading: {
                     contribution_factor: assessment?.contribution_factor || 0,
@@ -308,23 +329,33 @@ exports.getTeamDashboardOverview = async (req, res) => {
             };
         });
 
+        // Tính % đóng góp hiển thị biểu đồ
+        membersBreakdown.forEach(mb => {
+            const pJira = teamTotalSp > 0 ? (mb.raw_scores.jira_sp_done / teamTotalSp) : (1 / members.length);
+            const pGit = teamTotalGit > 0 ? (mb.raw_scores.git_ai_score / teamTotalGit) : (1 / members.length);
+            const pReview = totalReviewGroup > 0 ? (mb.raw_scores.peer_review_score / (totalReviewGroup / members.length)) : (1 / members.length);
+
+            mb.contribution_percentages = {
+                jira_percent: Number((pJira * 100).toFixed(1)),
+                git_percent: Number((pGit * 100).toFixed(1)),
+                review_percent: Number((pReview * 100).toFixed(1))
+            };
+        });
+
         membersBreakdown.sort((a, b) => b.grading.contribution_factor - a.grading.contribution_factor);
 
-        // 5. TRẢ VỀ JSON CHUẨN MỰC
         return res.status(200).json({
             message: "Lấy dữ liệu Dashboard Nhóm thành công!",
             team_info: {
                 team_id: team._id,
                 project_name: team.project_name || `Nhóm ${team.team_name || ''}`,
-                class_name: team.class_id?.class_name || '',
+                class_name: team.class_id?.class_name || team.class_id?.name || '', 
                 member_count: members.length
             },
             project_health: {
-                total_jira_sp_done: totalJiraSP,
-                total_git_ai_score: totalGitScore,
-                average_peer_review: members.length > 0 ? Number((totalReview / members.length).toFixed(1)) : 0,
-                
-                // MỚI: Tổng cộng số lượng của cả Team
+                total_jira_sp_done: teamTotalSp,
+                total_git_ai_score: Number(teamTotalGit.toFixed(2)),
+                average_peer_review: members.length > 0 ? Number((totalReviewGroup / members.length).toFixed(1)) : 0,
                 team_total_commits: teamTotalCommits,
                 team_total_tasks: teamTotalTasks
             },
@@ -332,7 +363,7 @@ exports.getTeamDashboardOverview = async (req, res) => {
         });
 
     } catch (error) {
-        console.error("❌ Lỗi API getTeamDashboardOverview:", error);
-        return res.status(500).json({ error: "Lỗi Server khi lấy dữ liệu Dashboard Nhóm." });
+        console.error("❌ Lỗi API getTeamDashboard:", error);
+        return res.status(500).json({ error: error.message });
     }
 };
