@@ -224,6 +224,22 @@ exports.receiveJiraWebhook = async (req, res) => {
     const issue = body.issue;
     const project = issue?.fields?.project;
 
+    // Tạm thời log toàn bộ các field dạng ngày (YYYY-MM-DD) để bắt đúng Start Date
+    try {
+      const fields = issue?.fields || {};
+      console.log(
+        "🕵️‍♂️ TÌM START DATE TRONG FIELDS:",
+        Object.keys(fields).filter(
+          (k) =>
+            fields[k] &&
+            typeof fields[k] === 'string' &&
+            /^\d{4}-\d{2}-\d{2}/.test(fields[k])
+        )
+      );
+    } catch (e) {
+      console.warn('⚠️ [Jira Webhook] Log Start Date fields failed:', e.message);
+    }
+
     if (!eventType || !issue || !project) {
       return res.status(200).send('Jira Webhook received');
     }
