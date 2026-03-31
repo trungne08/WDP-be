@@ -199,7 +199,7 @@ exports.getTeamDashboardOverview = async (req, res) => {
 
         if (members.length === 0) return res.json({ message: "Nhóm chưa có thành viên.", data: null });
 
-        // [Middleware Check Role giữ nguyên...]
+        // Phân quyền: Student phải là Leader, Lecturer phải dạy lớp này
         if (req.role === 'STUDENT') {
             const isLeader = members.find(
                 m => m.student_id?._id.toString() === req.user._id.toString() && m.role_in_team === 'Leader'
@@ -212,13 +212,13 @@ exports.getTeamDashboardOverview = async (req, res) => {
         }
 
         // ==========================================
-        // 2. QUERY REAL-TIME: AGGREGATION "BẮT LƯỚI KÉP"
+        // 2. QUERY REAL-TIME: AGGREGATION
         // ==========================================
         const [assessments, reviews, gitAgg, jiraTasksAgg, jiraSpAgg] = await Promise.all([
             SprintAssessment.find({ member_id: { $in: members.map(m => m._id) } }).lean(),
             PeerReview.find({ team_id: teamId }).lean(),
             
-            // GIT: Khớp bằng tác giả email, cộng dồn điểm ai_score (ép null về 0)
+            // GIT: Đếm toàn bộ, ép ai_score null về 0
             GithubCommit.aggregate([
                 { $match: { team_id: teamObjectId, author_email: { $ne: null } } },
                 { $group: { 
@@ -228,7 +228,7 @@ exports.getTeamDashboardOverview = async (req, res) => {
                 }}
             ]),
 
-            // JIRA 1: Đếm Task - Gom nhóm bằng assignee_id HOẶC assignee_account_id
+            // JIRA 1: Đếm toàn bộ Task
             JiraTask.aggregate([
                 { $match: { team_id: teamObjectId } },
                 { $group: { 
@@ -237,7 +237,7 @@ exports.getTeamDashboardOverview = async (req, res) => {
                 }}
             ]),
 
-            // JIRA 2: Tính SP Done - Bắt theo các trạng thái Done/Completed
+            // JIRA 2: Tính tổng SP Done
             JiraTask.aggregate([
                 { $match: { 
                     team_id: teamObjectId,
@@ -254,19 +254,30 @@ exports.getTeamDashboardOverview = async (req, res) => {
         ]);
 
         // ==========================================
-        // 3. MAPPING DỮ LIỆU
+        // 3. MAPPING DỮ LIỆU & TÍNH TỔNG TEAM THỰC TẾ
         // ==========================================
+        let teamTotalCommits = 0, teamTotalGit = 0;
         const gitMap = {};
-        gitAgg.forEach(g => { gitMap[g._id] = g; });
+        gitAgg.forEach(g => { 
+            gitMap[g._id] = g; 
+            teamTotalCommits += g.total_commits; // Tổng 25 commits chui vào đây
+            teamTotalGit += g.total_git_score;
+        });
 
-        // Jira Map có thể chứa Key là ObjectId (string) hoặc AccountId (string)
+        let teamTotalTasks = 0;
         const jiraTaskMap = {};
-        jiraTasksAgg.forEach(j => { if (j._id) jiraTaskMap[j._id.toString()] = j.total_tasks; });
+        jiraTasksAgg.forEach(j => { 
+            if (j._id) jiraTaskMap[j._id.toString()] = j.total_tasks; 
+            teamTotalTasks += j.total_tasks; // Tổng 13 tasks chui vào đây
+        });
 
+        let teamTotalSp = 0;
         const jiraSpMap = {};
-        jiraSpAgg.forEach(j => { if (j._id) jiraSpMap[j._id.toString()] = j.total_sp_done; });
+        jiraSpAgg.forEach(j => { 
+            if (j._id) jiraSpMap[j._id.toString()] = j.total_sp_done; 
+            teamTotalSp += j.total_sp_done; 
+        });
 
-        // Map Review (Dựa theo schema PeerReview có evaluated_id)
         const reviewStats = {};
         let totalReviewGroup = 0;
         reviews.forEach(r => {
@@ -282,8 +293,6 @@ exports.getTeamDashboardOverview = async (req, res) => {
         // ==========================================
         // 4. MỔ XẺ CHI TIẾT TỪNG THÀNH VIÊN
         // ==========================================
-        let teamTotalSp = 0, teamTotalGit = 0, teamTotalCommits = 0, teamTotalTasks = 0;
-
         const membersBreakdown = members.map(m => {
             const mId = m._id.toString();
             const email = m.student_id?.email?.toLowerCase()?.trim() || "";
@@ -292,20 +301,19 @@ exports.getTeamDashboardOverview = async (req, res) => {
             // Khớp GIT bằng Email
             const myGit = gitMap[email] || { total_commits: 0, total_git_score: 0 };
             
-            // Khớp JIRA: Bắt bằng ObjectId trước, nếu tạch thì bắt bằng Account ID
+            // Khớp JIRA: Bắt bằng ObjectId, nếu tạch thì bắt bằng Account ID
             const myJiraTasks = jiraTaskMap[mId] || jiraTaskMap[jiraAccId] || 0; 
             const myJiraSp = jiraSpMap[mId] || jiraSpMap[jiraAccId] || 0;     
             
             const myReview = reviewStats[mId] || { total: 0, count: 0 };
             const avgStar = myReview.count > 0 ? (myReview.total / myReview.count) : 0;
 
-            // Cộng dồn vào Quỹ nhóm
-            teamTotalSp += myJiraSp;
-            teamTotalGit += myGit.total_git_score;
-            teamTotalCommits += myGit.total_commits;
-            teamTotalTasks += myJiraTasks;
-
             const assessment = assessments.find(a => a.member_id.toString() === mId);
+
+            // Tính % đóng góp hiển thị biểu đồ (Fallbacks chống chia 0)
+            const pJira = teamTotalSp > 0 ? (myJiraSp / teamTotalSp) : (1 / members.length);
+            const pGit = teamTotalGit > 0 ? (myGit.total_git_score / teamTotalGit) : (1 / members.length);
+            const pReview = totalReviewGroup > 0 ? ((avgStar * myReview.count) / totalReviewGroup) : (1 / members.length);
 
             return {
                 student_id: m.student_id?._id,
@@ -322,6 +330,11 @@ exports.getTeamDashboardOverview = async (req, res) => {
                     git_ai_score: Number(myGit.total_git_score.toFixed(2)),
                     peer_review_score: Number(avgStar.toFixed(2))
                 },
+                contribution_percentages: {
+                    jira_percent: Number((pJira * 100).toFixed(1)),
+                    git_percent: Number((pGit * 100).toFixed(1)),
+                    review_percent: Number((pReview * 100).toFixed(1))
+                },
                 grading: {
                     contribution_factor: assessment?.contribution_factor || 0,
                     final_score: assessment?.final_score || 0
@@ -329,21 +342,12 @@ exports.getTeamDashboardOverview = async (req, res) => {
             };
         });
 
-        // Tính % đóng góp hiển thị biểu đồ
-        membersBreakdown.forEach(mb => {
-            const pJira = teamTotalSp > 0 ? (mb.raw_scores.jira_sp_done / teamTotalSp) : (1 / members.length);
-            const pGit = teamTotalGit > 0 ? (mb.raw_scores.git_ai_score / teamTotalGit) : (1 / members.length);
-            const pReview = totalReviewGroup > 0 ? (mb.raw_scores.peer_review_score / (totalReviewGroup / members.length)) : (1 / members.length);
-
-            mb.contribution_percentages = {
-                jira_percent: Number((pJira * 100).toFixed(1)),
-                git_percent: Number((pGit * 100).toFixed(1)),
-                review_percent: Number((pReview * 100).toFixed(1))
-            };
-        });
-
+        // Sắp xếp: Ai gánh team (Factor cao nhất) lên đầu
         membersBreakdown.sort((a, b) => b.grading.contribution_factor - a.grading.contribution_factor);
 
+        // ==========================================
+        // 5. TRẢ VỀ JSON CHUẨN MỰC
+        // ==========================================
         return res.status(200).json({
             message: "Lấy dữ liệu Dashboard Nhóm thành công!",
             team_info: {
@@ -356,8 +360,8 @@ exports.getTeamDashboardOverview = async (req, res) => {
                 total_jira_sp_done: teamTotalSp,
                 total_git_ai_score: Number(teamTotalGit.toFixed(2)),
                 average_peer_review: members.length > 0 ? Number((totalReviewGroup / members.length).toFixed(1)) : 0,
-                team_total_commits: teamTotalCommits,
-                team_total_tasks: teamTotalTasks
+                team_total_commits: teamTotalCommits, // Trả ra đúng 25
+                team_total_tasks: teamTotalTasks      // Trả ra đúng 13
             },
             members_breakdown: membersBreakdown
         });
