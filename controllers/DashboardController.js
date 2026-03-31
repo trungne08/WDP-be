@@ -212,30 +212,18 @@ exports.getTeamDashboardOverview = async (req, res) => {
         }
 
         // ==========================================
-        // 2. QUERY REAL-TIME: AGGREGATION
+        // 2. QUERY: Lấy nguyên cục Data để tự Map
         // ==========================================
-        const [assessments, reviews, gitAgg, jiraTasksAgg, jiraSpAgg] = await Promise.all([
+        const [assessments, reviews, allCommits, jiraTasksAgg, jiraSpAgg] = await Promise.all([
             SprintAssessment.find({ member_id: { $in: members.map(m => m._id) } }).lean(),
             PeerReview.find({ team_id: teamId }).lean(),
             
-            // GIT: Đếm Tổng commit VÀ Đếm Commit được duyệt (is_counted: true)
-            GithubCommit.aggregate([
-                { $match: { team_id: teamObjectId, author_email: { $ne: null } } },
-                { $group: { 
-                    _id: { $toLower: { $trim: { input: "$author_email" } } }, 
-                    total_commits: { $sum: 1 }, 
-                    // 🔥 NẾU is_counted = true THÌ CỘNG 1, NGƯỢC LẠI CỘNG 0
-                    approved_commits: { $sum: { $cond: [{ $eq: ["$is_counted", true] }, 1, 0] } },
-                    total_git_score: { $sum: { $ifNull: ["$ai_score", 0] } } 
-                }}
-            ]),
+            // 🔥 THAY ĐỔI LỚN NHẤT: Lấy toàn bộ commit của Team (Thay vì dùng Group)
+            GithubCommit.find({ team_id: teamObjectId }).lean(),
 
             JiraTask.aggregate([
                 { $match: { team_id: teamObjectId } },
-                { $group: { 
-                    _id: { $ifNull: ["$assignee_id", "$assignee_account_id"] }, 
-                    total_tasks: { $sum: 1 } 
-                }}
+                { $group: { _id: { $ifNull: ["$assignee_id", "$assignee_account_id"] }, total_tasks: { $sum: 1 } }}
             ]),
 
             JiraTask.aggregate([
@@ -246,37 +234,29 @@ exports.getTeamDashboardOverview = async (req, res) => {
                         { status_name: /(done|closed|complete|resolved|hoàn thành|đã xong|đóng)/i }
                     ]
                 }},
-                { $group: { 
-                    _id: { $ifNull: ["$assignee_id", "$assignee_account_id"] }, 
-                    total_sp_done: { $sum: { $ifNull: ["$story_point", 0] } } 
-                }}
+                { $group: { _id: { $ifNull: ["$assignee_id", "$assignee_account_id"] }, total_sp_done: { $sum: { $ifNull: ["$story_point", 0] } } }}
             ])
         ]);
 
         // ==========================================
-        // 3. MAPPING DỮ LIỆU & TÍNH TỔNG TEAM THỰC TẾ
+        // 3. TÍNH TỔNG CỦA CẢ TEAM (PROJECT HEALTH)
         // ==========================================
-        let teamTotalCommits = 0;
-        let teamApprovedCommits = 0; // Thêm biến hứng tổng được duyệt của Team
+        let teamTotalCommits = allCommits.length; // Tổng thực tế mọi commit (Ra 25)
+        let teamApprovedCommits = 0;
         let teamTotalGit = 0;
-        
-        const gitMap = {};
-        gitAgg.forEach(g => { 
-            gitMap[g._id] = g; 
-            teamTotalCommits += g.total_commits; 
-            teamApprovedCommits += (g.approved_commits || 0); // Cộng dồn commit được duyệt
-            teamTotalGit += g.total_git_score;
+
+        allCommits.forEach(c => {
+            if (c.is_counted) teamApprovedCommits++;
+            if (c.ai_score) teamTotalGit += c.ai_score;
         });
 
-        let teamTotalTasks = 0;
-        const jiraTaskMap = {};
+        let teamTotalTasks = 0, teamTotalSp = 0;
+        const jiraTaskMap = {}, jiraSpMap = {};
+        
         jiraTasksAgg.forEach(j => { 
             if (j._id) jiraTaskMap[j._id.toString()] = j.total_tasks; 
             teamTotalTasks += j.total_tasks; 
         });
-
-        let teamTotalSp = 0;
-        const jiraSpMap = {};
         jiraSpAgg.forEach(j => { 
             if (j._id) jiraSpMap[j._id.toString()] = j.total_sp_done; 
             teamTotalSp += j.total_sp_done; 
@@ -300,20 +280,45 @@ exports.getTeamDashboardOverview = async (req, res) => {
         const membersBreakdown = members.map(m => {
             const mId = m._id.toString();
             const email = m.student_id?.email?.toLowerCase()?.trim() || "";
+            const username = m.github_username?.toLowerCase()?.trim() || "";
             const jiraAccId = m.jira_account_id || "";
 
-            // Khớp GIT bằng Email, hứng luôn cả approved_commits
-            const myGit = gitMap[email] || { total_commits: 0, approved_commits: 0, total_git_score: 0 };
+            // 🔥 THUẬT TOÁN QUÉT COMMIT CHUẨN XÁC 100% (Khớp với Integration API)
+            let myTotalCommits = 0;
+            let myApprovedCommits = 0;
+            let myGitScore = 0;
+
+            allCommits.forEach(c => {
+                const cEmail = (c.author_email || "").toLowerCase().trim();
+                const cName = (c.author_name || "").toLowerCase().trim();
+
+                // Kiểm tra xem commit này có phải của sinh viên này không (Check bằng Email hoặc Username)
+                const isMyCommit = 
+                    (email && cEmail === email) || 
+                    (username && (
+                        cEmail === `${username}@users.noreply.github.com` || 
+                        cEmail.includes(`+${username}@users.noreply`) || 
+                        cName === username
+                    ));
+
+                if (isMyCommit) {
+                    myTotalCommits++;
+                    if (c.is_counted) myApprovedCommits++;
+                    if (c.ai_score) myGitScore += c.ai_score;
+                }
+            });
+
+            // Khớp Jira
             const myJiraTasks = jiraTaskMap[mId] || jiraTaskMap[jiraAccId] || 0; 
             const myJiraSp = jiraSpMap[mId] || jiraSpMap[jiraAccId] || 0;     
             
             const myReview = reviewStats[mId] || { total: 0, count: 0 };
             const avgStar = myReview.count > 0 ? (myReview.total / myReview.count) : 0;
-
             const assessment = assessments.find(a => a.member_id.toString() === mId);
 
+            // Phần trăm (Chống chia 0)
             const pJira = teamTotalSp > 0 ? (myJiraSp / teamTotalSp) : (1 / members.length);
-            const pGit = teamTotalGit > 0 ? (myGit.total_git_score / teamTotalGit) : (1 / members.length);
+            const pGit = teamTotalGit > 0 ? (myGitScore / teamTotalGit) : (1 / members.length);
             const pReview = totalReviewGroup > 0 ? ((avgStar * myReview.count) / totalReviewGroup) : (1 / members.length);
 
             return {
@@ -322,14 +327,15 @@ exports.getTeamDashboardOverview = async (req, res) => {
                 full_name: m.student_id?.full_name,
                 avatar_url: m.student_id?.avatar_url,
                 role: m.role_in_team,
+                github_username: m.github_username, // Trả thêm ra cho FE dò
                 raw_counts: {
-                    total_commits: myGit.total_commits,             // Tổng cá nhân
-                    approved_commits: myGit.approved_commits,       // Tổng được duyệt cá nhân
+                    total_commits: myTotalCommits,           // CÁI NÀY SẼ RA ĐÚNG 24!
+                    approved_commits: myApprovedCommits,
                     total_jira_tasks: myJiraTasks
                 },
                 raw_scores: {
                     jira_sp_done: myJiraSp,
-                    git_ai_score: Number(myGit.total_git_score.toFixed(2)),
+                    git_ai_score: Number(myGitScore.toFixed(2)),
                     peer_review_score: Number(avgStar.toFixed(2))
                 },
                 contribution_percentages: {
@@ -346,9 +352,6 @@ exports.getTeamDashboardOverview = async (req, res) => {
 
         membersBreakdown.sort((a, b) => b.grading.contribution_factor - a.grading.contribution_factor);
 
-        // ==========================================
-        // 5. TRẢ VỀ JSON
-        // ==========================================
         return res.status(200).json({
             message: "Lấy dữ liệu Dashboard Nhóm thành công!",
             team_info: {
@@ -361,8 +364,8 @@ exports.getTeamDashboardOverview = async (req, res) => {
                 total_jira_sp_done: teamTotalSp,
                 total_git_ai_score: Number(teamTotalGit.toFixed(2)),
                 average_peer_review: members.length > 0 ? Number((totalReviewGroup / members.length).toFixed(1)) : 0,
-                team_total_commits: teamTotalCommits,           // Tổng Team
-                team_approved_commits: teamApprovedCommits,     // Tổng được duyệt của Team
+                team_total_commits: teamTotalCommits,
+                team_approved_commits: teamApprovedCommits,
                 team_total_tasks: teamTotalTasks
             },
             members_breakdown: membersBreakdown
