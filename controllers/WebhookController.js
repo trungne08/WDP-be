@@ -334,25 +334,79 @@ exports.receiveJiraWebhook = async (req, res) => {
         assigneeMemberId = found ? found._id : null;
       }
 
+      // 🛡️ Không được overwrite Story Points về 0 nếu payload webhook không có SP.
+      // `extractStoryPoint()` có thể trả 0 cả khi "không có field", nên phải detect "field present" trước.
+      const fields = issue.fields || {};
+      const hasStoryPointField =
+        Object.prototype.hasOwnProperty.call(fields, 'customfield_10016') ||
+        Object.prototype.hasOwnProperty.call(fields, 'customfield_10026') ||
+        Object.prototype.hasOwnProperty.call(fields, 'storyPoints') ||
+        Object.keys(fields).some(
+          (k) => k.startsWith('customfield_') && /^\d+$/.test(k.slice(12)) && fields[k] != null
+        );
+
+      const setDoc = {
+        // Những field chắc chắn có trong payload issue webhook
+        issue_key: issueKey,
+        summary: issue.fields?.summary,
+        status_name: issue.fields?.status?.name,
+        status_category: issue.fields?.status?.statusCategory?.key || '',
+
+        // Assignee: webhook có thể gửi null khi unassign => vẫn update
+        assignee_account_id: assigneeAccountId || null,
+        assignee_name: issue.fields?.assignee?.displayName || null,
+        assignee_id: assigneeMemberId,
+
+        // Luôn cập nhật updated_at để UI refresh đúng
+        updated_at: issue.fields?.updated ? new Date(issue.fields.updated) : new Date()
+      };
+
+      // ---- Start Date / Due Date ----
+      // Jira Due date: issue.fields.duedate (YYYY-MM-DD) hoặc null (khi user xóa ngày)
+      if (Object.prototype.hasOwnProperty.call(fields, 'duedate')) {
+        setDoc.due_date = fields.duedate ? new Date(fields.duedate) : null;
+      }
+
+      // Jira Start date: có thể là fields.startDate hoặc 1 customfield_xxxxx dạng date.
+      // Ưu tiên explicit field, fallback rất thận trọng: nếu có đúng 1 customfield_* kiểu YYYY-MM-DD (khác duedate) thì dùng nó.
+      if (Object.prototype.hasOwnProperty.call(fields, 'startDate')) {
+        setDoc.start_date = fields.startDate ? new Date(fields.startDate) : null;
+      } else if (Object.prototype.hasOwnProperty.call(fields, 'start_date')) {
+        setDoc.start_date = fields.start_date ? new Date(fields.start_date) : null;
+      } else {
+        const dateLike = /^\d{4}-\d{2}-\d{2}$/;
+        const candidates = Object.keys(fields)
+          .filter((k) => k.startsWith('customfield_'))
+          .map((k) => ({ key: k, value: fields[k] }))
+          // accept string date or null (null means user cleared date)
+          .filter((x) => x.value === null || (typeof x.value === 'string' && dateLike.test(x.value)))
+          .filter((x) => x.value !== fields.duedate);
+
+        if (candidates.length === 1) {
+          const v = candidates[0].value;
+          setDoc.start_date = v ? new Date(v) : null;
+        }
+      }
+
+      if (hasStoryPointField) {
+        setDoc.story_point = storyPoints;
+      }
+
       const savedTask = await JiraTask.findOneAndUpdate(
         // Unique constraint trong JiraTaskSchema là issue_id (unique:true)
         // Upsert theo issue_id để tránh lỗi DuplicateKey khi issue_key thay đổi.
         { issue_id: issueId },
         {
-          team_id: teamId,
-          sprint_id: sprintId,
-          assignee_id: assigneeMemberId,
-          cloud_id: webhookCloudId,
-          issue_key: issueKey,
-          issue_id: issueId,
-          summary,
-          status_name: status,
-          status_category: issue.fields?.status?.statusCategory?.key || '',
-          assignee_account_id: assigneeAccountId || null,
-          assignee_name: issue.fields?.assignee?.displayName || null,
-          story_point: storyPoints,
-          created_at: issue.fields?.created ? new Date(issue.fields.created) : undefined,
-          updated_at: issue.fields?.updated ? new Date(issue.fields.updated) : new Date()
+          // Chỉ set những field "có trong payload" để tránh ghi đè mất dữ liệu DB (sprint_id, SP, ...)
+          $set: setDoc,
+          // Chỉ set sprint_id khi tạo mới (issue_created / insert lần đầu)
+          $setOnInsert: {
+            issue_id: issueId,
+            cloud_id: webhookCloudId,
+            team_id: teamId,
+            sprint_id: sprintId,
+            created_at: issue.fields?.created ? new Date(issue.fields.created) : new Date()
+          }
         },
         { upsert: true, new: true }
       );
