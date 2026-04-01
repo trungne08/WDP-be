@@ -101,8 +101,22 @@ GithubCommitSchema.statics.localizeCommitForApi = function (doc) {
     };
 };
 
+/** Parse commit_date → epoch ms; null nếu không hợp lệ (tránh NaN / so sánh sai → 0 phút). */
+function commitDateToMs(value) {
+    if (value == null || value === '') return null;
+    const d = value instanceof Date ? value : new Date(value);
+    const t = d.getTime();
+    return Number.isFinite(t) ? t : null;
+}
+
 // --- LOGIC XỬ LÝ COOLDOWN 10 PHÚT (Viết ngay trong Model) ---
-GithubCommitSchema.statics.processCommit = async function(commitData, teamId) {
+/**
+ * @param {object} commitData
+ * @param {import('mongoose').Types.ObjectId|string} teamId
+ * @param {{ isSync?: boolean }} [options] — isSync=true: đồng bộ lịch sử từ GitHub, bỏ qua cooldown (chỉ merge + format).
+ */
+GithubCommitSchema.statics.processCommit = async function(commitData, teamId, options = {}) {
+    const isSync = options.isSync === true;
     const rawMessage = String(commitData.message || '').trim();
 
     // Merge commit: không tính điểm (không phải penalty cooldown)
@@ -121,29 +135,30 @@ GithubCommitSchema.statics.processCommit = async function(commitData, teamId) {
         !rawMessage ||
         rawMessage.length < 10;
 
-    // 2. Check Cooldown 30 Phút (theo schema note: "True if Cooldown > 30m")
-    // Tìm commit gần nhất ĐÃ ĐƯỢC TÍNH (is_counted = true) của email này
-    const lastValidCommit = await this.findOne({
-        team_id: teamId,
-        author_email: commitData.author_email,
-        is_counted: true
-    }).sort({ commit_date: -1 }); // Lấy cái mới nhất
+    // 2. Cooldown 10 phút — chỉ áp realtime (push/webhook); sync lịch sử không phạt “quá sát” do thứ tự/DB.
+    if (!isSync) {
+        const lastValidCommit = await this.findOne({
+            team_id: teamId,
+            author_email: commitData.author_email,
+            is_counted: true
+        }).sort({ commit_date: -1 });
 
-    if (lastValidCommit) {
-        const currentTs = new Date(commitData.commit_date).getTime();
-        const lastTs = new Date(lastValidCommit.commit_date).getTime();
-        // Luôn lấy trị tuyệt đối để tránh sai lệch timezone/order khiến ra số âm.
-        const diffInMs = Math.abs(currentTs - lastTs);
-        const diffInMinutes = diffInMs / (1000 * 60);
-
-        if (diffInMinutes < 10) {
-            const mins = Math.round(diffInMinutes);
-            return {
-                is_counted: false,
-                reason: `Đẩy commit quá sát nhau: cách lần được tính điểm trước đó khoảng ${mins} phút; cần tối thiểu 10 phút giữa hai lần tính điểm.`,
-                isMergeCommit: false,
-                scoringNoteVi: null
-            };
+        if (lastValidCommit) {
+            const currentTs = commitDateToMs(commitData.commit_date);
+            const lastTs = commitDateToMs(lastValidCommit.commit_date);
+            if (currentTs != null && lastTs != null) {
+                const diffInMs = Math.abs(currentTs - lastTs);
+                const diffInMinutes = diffInMs / (1000 * 60);
+                if (Number.isFinite(diffInMinutes) && diffInMinutes < 10) {
+                    const mins = Math.round(diffInMinutes);
+                    return {
+                        is_counted: false,
+                        reason: `Đẩy commit quá sát nhau: cách lần được tính điểm trước đó khoảng ${mins} phút; cần tối thiểu 10 phút giữa hai lần tính điểm.`,
+                        isMergeCommit: false,
+                        scoringNoteVi: null
+                    };
+                }
+            }
         }
     }
 

@@ -52,7 +52,7 @@ exports.syncTeamData = async (req, res) => {
                     
                     const jiraRegex = /[A-Z][A-Z0-9]+-\d+/g;
                     for (const commit of commits) {
-                        const checkResult = await GithubCommit.processCommit(commit, teamId);
+                        const checkResult = await GithubCommit.processCommit(commit, teamId, { isSync: true });
                         const branchesToAdd = (commit.branches && commit.branches.length)
                             ? commit.branches
                             : (commit.branch ? [commit.branch] : []);

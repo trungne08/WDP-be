@@ -963,7 +963,7 @@ exports.syncMyProjectData = async (req, res) => {
               continue; // Bỏ qua commit không phải của user
             }
 
-            const checkResult = await GithubCommit.processCommit(commit, teamId);
+            const checkResult = await GithubCommit.processCommit(commit, teamId, { isSync: true });
             const branchesToAdd = (commit.branches && commit.branches.length)
               ? commit.branches
               : (commit.branch ? [commit.branch] : []);
