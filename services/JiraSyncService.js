@@ -1470,10 +1470,12 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
 
 /**
  * Đăng ký Jira Cloud dynamic webhook (REST API v3).
+ * Mỗi lần gọi: GET danh sách webhook của app → DELETE toàn bộ → POST webhook mới tới
+ * `{backend}/api/webhooks/jira/{cloudId}` (không bỏ qua tạo mới khi URL đã khớp).
  * @param {string} cloudId
- * @param {string} accessToken - OAuth (cần scope write:webhook:jira; read/delete dùng khi liệt kê/xóa webhook)
+ * @param {string} accessToken - OAuth (read/write/delete:webhook:jira)
  * @param {string} projectKey - Jira project key (VD: SCRUM)
- * @returns {Promise<any>} Response từ API Atlassian
+ * @returns {Promise<any>} Response từ API Atlassian (POST)
  */
 async function registerJiraWebhook(cloudId, accessToken, projectKey) {
   if (!cloudId || !accessToken || !projectKey) {
@@ -1516,51 +1518,10 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
     });
   }
 
-  // 1) LIST + CHECK EXISTENCE (idempotent)
-  try {
-    const existing = await listRegisteredWebhooks();
-    const normalize = (u) => String(u || '').trim().replace(/\/$/, '');
-    const desiredNorm = normalize(desiredHookUrl);
-    const ourHost = 'wdp-be-ama3.onrender.com';
-
-    const outdated = existing.filter((w) => {
-      const uRaw = w?.url;
-      const u = normalize(uRaw);
-      if (!u) return false;
-      try {
-        const parsed = new URL(u);
-        return parsed.host === ourHost && u !== desiredNorm;
-      } catch {
-        return false;
-      }
-    });
-
-    if (outdated.length > 0) {
-      for (const w of outdated) {
-        // Log mỗi webhook cũ không hợp lệ theo đúng format request của bạn
-        console.log(`🗑️ Đã xóa Webhook cũ không hợp lệ: ${w?.url}`);
-      }
-
-      const outdatedIds = outdated
-        .map((w) => w?.id || w?.webhookId || w?.webhookIdOrNull)
-        .filter(Boolean);
-
-      try {
-        await deleteWebhooksByIds(outdatedIds);
-      } catch (e) {
-        console.warn('⚠️ [Jira Webhook] Xóa webhook cũ thất bại:', e.response?.data || e.message);
-      }
-    } else {
-      // Nếu không có webhook cũ sai format, chỉ bỏ qua khi URL mới đã tồn tại chính xác
-      const matched = existing.find((w) => normalize(w?.url) === desiredNorm);
-      if (matched) {
-        console.log('✅ Webhook đã tồn tại trên Jira, bỏ qua bước tạo mới');
-        return { skipped: true };
-      }
-    }
-  } catch (e) {
-    // Nếu list webhooks fail (scope/permission) thì vẫn thử tạo như trước (nhưng có thể bị Jira chặn).
-    console.warn('⚠️ [Jira Webhook] Không list được webhook hiện có:', e.response?.data || e.message);
+  function collectWebhookIds(webhooks) {
+    return (webhooks || [])
+      .map((w) => w?.id ?? w?.webhookId ?? w?.webhookIdOrNull)
+      .filter((id) => id != null && String(id).trim() !== '');
   }
 
   const payload = {
@@ -1577,28 +1538,44 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
     ]
   };
 
-  try {
-    console.log('🆕 Đang tạo Webhook mới chuẩn path variable...');
-    const response = await axios.post(
-      jiraWebhookApiBase,
-      payload,
-      {
-        headers,
-        timeout: 30000
-      }
-    );
-
-    // 🛡️ CHỐNG LỪA ĐẢO TỪ JIRA: Kiểm tra xem nó có thực sự tạo thành công không
+  async function postRegisterWebhook() {
+    const response = await axios.post(jiraWebhookApiBase, payload, {
+      headers,
+      timeout: 30000
+    });
     const results = response.data?.webhookRegistrationResult || [];
-    const hasError = results.some(r => r.errors && r.errors.length > 0);
-    
+    const hasError = results.some((r) => r.errors && r.errors.length > 0);
     if (hasError) {
       console.error('❌ [Jira Webhook Register] LỖI JIRA TỪ CHỐI TẠO:', JSON.stringify(results));
       throw new Error('Jira từ chối tạo Webhook do JQL không hợp lệ');
     }
-
-    console.log('✅ [Jira Webhook Register] THÀNH CÔNG THẬT SỰ! Đã sinh ra ID:', results[0].createdWebhookId);
+    console.log(
+      '✅ [Jira Webhook Register] Đã tạo webhook mới →',
+      desiredHookUrl,
+      '| ID:',
+      results[0]?.createdWebhookId
+    );
     return response.data;
+  }
+
+  // B1+B2: Liệt kê mọi dynamic webhook của OAuth app này → xóa sạch (tránh URL cũ / “tàng hình” trên UI)
+  try {
+    const existing = await listRegisteredWebhooks();
+    const ids = collectWebhookIds(existing);
+    if (ids.length > 0) {
+      console.log(
+        `🗑️ [Jira Webhook] Xóa ${ids.length} webhook động cũ trước khi đăng ký lại → ${desiredHookUrl}`
+      );
+      await deleteWebhooksByIds(ids);
+    }
+  } catch (e) {
+    console.warn('⚠️ [Jira Webhook] Không list/xóa được webhook cũ:', e.response?.data || e.message);
+  }
+
+  // B3: Luôn tạo mới trỏ đúng backend hiện tại
+  try {
+    console.log('🆕 [Jira Webhook] Đang POST webhook mới (sau dọn dẹp)...');
+    return await postRegisterWebhook();
   } catch (error) {
     const status = error.response?.status;
     const data = error.response?.data;
@@ -1613,7 +1590,6 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
       (errors.length ? errors.join('; ') : null) ||
       error.message;
 
-    // Log đầy đủ để debug permission vs scope
     console.warn('⚠️ [Jira Webhook Register] Failed', {
       status,
       message: msg,
@@ -1621,7 +1597,6 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
     });
 
     if (status === 401 || status === 403) {
-      // Không auto kết luận thiếu scope — Jira hay trả 403 cho cả thiếu quyền admin/global permission.
       const hint =
         'Không đăng ký được Jira Dynamic Webhook. ' +
         'Nguyên nhân thường gặp: (1) user không có quyền Admin / permission phù hợp trên Jira site/project, hoặc (2) token thiếu scope webhook. ' +
@@ -1630,22 +1605,20 @@ async function registerJiraWebhook(cloudId, accessToken, projectKey) {
     }
 
     const onlySingleUrlAllowed =
-      typeof msg === 'string' &&
-      /only a single url allowed/i.test(msg);
+      typeof msg === 'string' && /only a single url allowed/i.test(msg);
 
-    // Jira đôi khi trả lỗi này dù webhook đã tồn tại trước đó.
     if (onlySingleUrlAllowed) {
       try {
-        const existingAfterFail = await listRegisteredWebhooks();
-        const normalize = (u) => String(u || '').trim().replace(/\/$/, '');
-        const desiredNorm = normalize(desiredHookUrl);
-        const alreadyExists = existingAfterFail.some((w) => normalize(w?.url) === desiredNorm);
-        if (alreadyExists) {
-          console.log('✅ [Jira Webhook Register] Webhook đã tồn tại (Jira báo duplicate URL), bỏ qua tạo mới.');
-          return { skipped: true, reason: 'webhook_exists' };
-        }
-      } catch (verifyErr) {
-        console.warn('⚠️ [Jira Webhook Register] Không verify được webhook sau lỗi duplicate URL:', verifyErr.response?.data || verifyErr.message);
+        console.log('🔄 [Jira Webhook] Jira báo chỉ một URL — list + xóa hết rồi POST lại...');
+        const again = await listRegisteredWebhooks();
+        const ids = collectWebhookIds(again);
+        if (ids.length > 0) await deleteWebhooksByIds(ids);
+        return await postRegisterWebhook();
+      } catch (retryErr) {
+        console.warn(
+          '⚠️ [Jira Webhook Register] Retry sau duplicate URL thất bại:',
+          retryErr.response?.data || retryErr.message
+        );
       }
     }
 

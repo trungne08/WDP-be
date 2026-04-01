@@ -3,6 +3,7 @@ const Team = require('../models/Team');
 const Project = require('../models/Project');
 const GithubCommit = require('../models/GitData');
 const { persistTeamMemberGitScores } = require('../utils/memberGitScorePersistence');
+const { persistTeamMemberJiraScores } = require('../utils/memberJiraScorePersistence');
 const { Sprint, JiraTask } = require('../models/JiraData');
 const GithubService = require('../services/GithubService');
 const JiraService = require('../services/JiraService'); // Legacy - Deprecated
@@ -319,6 +320,11 @@ exports.syncTeamData = async (req, res) => {
                     }
                     
                     console.log(`✅ [Team Sync] Jira sync hoàn tất: ${results.jira_sprints} sprints, ${results.jira_tasks} tasks`);
+                    try {
+                        await persistTeamMemberJiraScores(models, teamId);
+                    } catch (persistErr) {
+                        console.warn('⚠️ [Team Sync] persistTeamMemberJiraScores:', persistErr.message || persistErr);
+                    }
                 }
 
             } catch (err) {

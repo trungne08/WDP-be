@@ -5,6 +5,7 @@ const { extractStoryPoint } = require('../services/JiraSyncService');
 const GithubService = require('../services/GithubService');
 const { commitBelongsToAuthor, pickMemberForCommit } = require('../utils/commitUtils');
 const { persistTeamMemberGitScores } = require('../utils/memberGitScorePersistence');
+const { persistTeamMemberJiraScores } = require('../utils/memberJiraScorePersistence');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { reviewGithubCommitWithGemini } = require('../services/AiChatService');
 
@@ -319,6 +320,11 @@ exports.receiveJiraWebhook = async (req, res) => {
         projectId: String(dbProject._id),
         action: 'delete'
       });
+      try {
+        await persistTeamMemberJiraScores(models, teamId);
+      } catch (e) {
+        console.warn('⚠️ [Jira Webhook] persistTeamMemberJiraScores:', e.message || e);
+      }
       return res.status(200).send('Jira Webhook received');
     }
 
@@ -450,6 +456,11 @@ exports.receiveJiraWebhook = async (req, res) => {
         ...savedTask.toObject(),
         projectId: String(dbProject._id)
       });
+      try {
+        await persistTeamMemberJiraScores(models, teamId);
+      } catch (e) {
+        console.warn('⚠️ [Jira Webhook] persistTeamMemberJiraScores:', e.message || e);
+      }
     }
 
     return res.status(200).send('Jira Webhook received');

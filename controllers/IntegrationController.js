@@ -3,6 +3,7 @@ const IntegrationService = require('../services/IntegrationService');
 const GithubService = require('../services/GithubService');
 const { commitBelongsToAuthor, pickMemberForCommit, resolveGithubUsernameForMember } = require('../utils/commitUtils');
 const { persistTeamMemberGitScores } = require('../utils/memberGitScorePersistence');
+const { persistTeamMemberJiraScores } = require('../utils/memberJiraScorePersistence');
 
 const JiraService = require('../services/JiraService');
 const JiraAuthService = require('../services/JiraAuthService');
@@ -1187,6 +1188,11 @@ exports.syncMyProjectData = async (req, res) => {
 
           results.jira = syncedTasks;
           console.log(`✅ [Sync Jira] Đã sync ${syncedTasks} tasks`);
+          try {
+            await persistTeamMemberJiraScores(models, projectTeamId);
+          } catch (persistErr) {
+            console.warn('⚠️ [Sync Jira] persistTeamMemberJiraScores:', persistErr.message || persistErr);
+          }
         }
 
       } catch (jiraErr) {
@@ -1627,14 +1633,19 @@ exports.getTeamCommits = async (req, res) => {
         }
 
         const gitScoreByMemberId = new Map();
+        const jiraScoreByMemberId = new Map();
         try {
             await persistTeamMemberGitScores(models, teamId);
-            const scoreRows = await TeamMember.find({ team_id: teamId, is_active: true }).select('_id git_score').lean();
+            await persistTeamMemberJiraScores(models, teamId);
+            const scoreRows = await TeamMember.find({ team_id: teamId, is_active: true })
+                .select('_id git_score jira_score')
+                .lean();
             for (const r of scoreRows) {
                 gitScoreByMemberId.set(String(r._id), r.git_score);
+                jiraScoreByMemberId.set(String(r._id), r.jira_score);
             }
         } catch (e) {
-            console.warn('⚠️ [getTeamCommits] persistTeamMemberGitScores:', e.message);
+            console.warn('⚠️ [getTeamCommits] persist member scores:', e.message);
         }
 
         const buildMemberRow = (m, list) => {
@@ -1645,7 +1656,8 @@ exports.getTeamCommits = async (req, res) => {
                     student: m.student_id,
                     role_in_team: m.role_in_team,
                     github_username: resolveGithubUsernameForMember(m),
-                    git_score: gitScoreByMemberId.get(String(m._id)) ?? null
+                    git_score: gitScoreByMemberId.get(String(m._id)) ?? null,
+                    jira_score: jiraScoreByMemberId.get(String(m._id)) ?? null
                 },
                 total_commits: sorted.length,
                 approved_commits: sorted.filter((x) => x.is_counted).length,

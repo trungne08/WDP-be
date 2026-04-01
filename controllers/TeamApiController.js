@@ -6,6 +6,8 @@ const Project = require('../models/Project');
 const TeamMember = require('../models/TeamMember');
 const { pickMemberForCommit, resolveGithubUsernameForMember } = require('../utils/commitUtils');
 const { persistTeamMemberGitScores } = require('../utils/memberGitScorePersistence');
+const { persistTeamMemberJiraScores, memberJiraAccountId } = require('../utils/memberJiraScorePersistence');
+const { isJiraTaskDone } = require('../utils/jiraTaskDone');
 const Student = require('../models/Student');
 const GithubCommit = require('../models/GitData');
 const { Sprint, JiraTask } = require('../models/JiraData');
@@ -18,13 +20,6 @@ function pick(obj, keys) {
     const out = {};
     for (const k of keys) if (obj && obj[k] !== undefined) out[k] = obj[k];
     return out;
-}
-
-/** Kiểm tra task đã hoàn thành (Done) - không phân biệt hoa thường, hỗ trợ tiếng Việt */
-function isTaskDone(task) {
-    const cat = (task?.status_category || '').toLowerCase().trim();
-    const name = (task?.status_name || '').toLowerCase().trim();
-    return cat === 'done' || cat === 'hoàn thành' || name === 'done' || name === 'hoàn thành';
 }
 
 function genStudentCode() {
@@ -471,17 +466,16 @@ exports.getDashboard = async (req, res) => {
         if (!team) return res.status(404).json({ error: 'Không tìm thấy team' });
 
         const sprints = await Sprint.find({ team_id: teamId }).lean();
-        const sprintIds = sprints.map(s => s._id);
 
         const [tasks, commits] = await Promise.all([
-            JiraTask.find({ sprint_id: { $in: sprintIds } }).select('status_category status_name story_point').lean(),
+            JiraTask.find({ team_id: teamId }).select('status_category status_name story_point').lean(),
             GithubCommit.find({ team_id: teamId }).select('is_counted commit_date').lean()
         ]);
 
         const totalTasks = tasks.length;
-        const doneTasks = tasks.filter(isTaskDone).length;
+        const doneTasks = tasks.filter(isJiraTaskDone).length;
         const spTotal = tasks.reduce((a, t) => a + (Number(t.story_point) || 0), 0);
-        const spDone = tasks.filter(isTaskDone).reduce((a, t) => a + (Number(t.story_point) || 0), 0);
+        const spDone = tasks.filter(isJiraTaskDone).reduce((a, t) => a + (Number(t.story_point) || 0), 0);
 
         const totalCommits = commits.length;
         const countedCommits = commits.filter(c => c.is_counted).length;
@@ -530,10 +524,7 @@ exports.getRanking = async (req, res) => {
             .populate('student_id', 'student_code email full_name avatar_url integrations git_emails')
             .lean();
 
-        const sprints = await Sprint.find({ team_id: teamId }).select('_id').lean();
-        const sprintIds = sprints.map(s => s._id);
-
-        const tasks = await JiraTask.find({ sprint_id: { $in: sprintIds } })
+        const tasks = await JiraTask.find({ team_id: teamId })
             .select('assignee_account_id status_category status_name story_point')
             .lean();
 
@@ -563,20 +554,30 @@ exports.getRanking = async (req, res) => {
             const sp = Number(t.story_point) || 0;
             prev.total_count += 1;
             prev.total_sp += sp;
-            if (isTaskDone(t)) {
+            if (isJiraTaskDone(t)) {
                 prev.done_count += 1;
                 prev.done_sp += sp;
             }
             taskAggByJiraId.set(jiraId, prev);
         }
 
+        let totalTeamDoneStoryPoints = 0;
+        for (const t of tasks) {
+            if (isJiraTaskDone(t)) totalTeamDoneStoryPoints += Number(t.story_point) || 0;
+        }
+
         const rows = members.map((m) => {
-            const jiraId = m.jira_account_id || null;
+            const jiraId = memberJiraAccountId(m);
             const taskAgg = jiraId ? taskAggByJiraId.get(jiraId) : null;
             const personalValidCommits = countedCommitsByMember.get(m._id.toString()) || 0;
             const gitScore =
                 totalTeamValidCommits > 0
                     ? (personalValidCommits / totalTeamValidCommits) * 10
+                    : 0;
+            const personalDoneSp = taskAgg ? taskAgg.done_sp : 0;
+            const jiraScore =
+                totalTeamDoneStoryPoints > 0
+                    ? (personalDoneSp / totalTeamDoneStoryPoints) * 10
                     : 0;
             const ghResolved = resolveGithubUsernameForMember(m);
             console.log(
@@ -595,7 +596,8 @@ exports.getRanking = async (req, res) => {
                     done_tasks: taskAgg ? taskAgg.done_count : 0,
                     done_story_points: taskAgg ? taskAgg.done_sp : 0,
                     total_tasks: taskAgg ? taskAgg.total_count : 0,
-                    total_story_points: taskAgg ? taskAgg.total_sp : 0
+                    total_story_points: taskAgg ? taskAgg.total_sp : 0,
+                    jira_score: Number(jiraScore.toFixed(2))
                 },
                 github: {
                     counted_commits: personalValidCommits,
@@ -614,14 +616,16 @@ exports.getRanking = async (req, res) => {
 
         try {
             await persistTeamMemberGitScores(models, teamId);
+            await persistTeamMemberJiraScores(models, teamId);
         } catch (e) {
-            console.warn('⚠️ [getRanking] persistTeamMemberGitScores:', e.message);
+            console.warn('⚠️ [getRanking] persist member scores:', e.message);
         }
 
         res.json({
             total: rows.length,
             summary: {
-                total_team_valid_commits: totalTeamValidCommits
+                total_team_valid_commits: totalTeamValidCommits,
+                total_team_done_story_points: totalTeamDoneStoryPoints
             },
             ranking: rows
         });

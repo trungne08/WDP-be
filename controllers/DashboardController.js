@@ -322,9 +322,11 @@ exports.getTeamDashboardOverview = async (req, res) => {
             if (j._id) jiraTaskMap[j._id.toString()] = j.total_tasks; 
             teamTotalTasks += j.total_tasks; 
         });
-        jiraSpAgg.forEach(j => { 
-            if (j._id) jiraSpMap[j._id.toString()] = j.total_sp_done; 
-            teamTotalSp += j.total_sp_done; 
+        jiraSpAgg.forEach((j) => {
+            teamTotalSp += Number(j.total_sp_done) || 0;
+            if (j._id != null && j._id !== '') {
+                jiraSpMap[j._id.toString()] = j.total_sp_done;
+            }
         });
 
         const reviewStats = {};
@@ -360,7 +362,8 @@ exports.getTeamDashboardOverview = async (req, res) => {
         // ==========================================
         const membersBreakdown = members.map((m) => {
             const mId = m._id.toString();
-            const jiraAccId = m.jira_account_id || '';
+            const jiraAccId =
+                (m.jira_account_id || m.student_id?.integrations?.jira?.jiraAccountId || '').toString();
             const stats = commitStatsByMemberId.get(mId) || { total: 0, approved: 0, aiScoreSum: 0 };
             const myTotalCommits = stats.total;
             const myApprovedCommits = stats.approved;
@@ -371,8 +374,9 @@ exports.getTeamDashboardOverview = async (req, res) => {
                     : 0;
 
             // Khớp Jira
-            const myJiraTasks = jiraTaskMap[mId] || jiraTaskMap[jiraAccId] || 0;
-            const myJiraSp = jiraSpMap[mId] || jiraSpMap[jiraAccId] || 0;
+            const myJiraTasks = jiraTaskMap[mId] || (jiraAccId ? jiraTaskMap[jiraAccId] : 0) || 0;
+            const myJiraSp = jiraSpMap[mId] || (jiraAccId ? jiraSpMap[jiraAccId] : 0) || 0;
+            const jiraScore = teamTotalSp > 0 ? (myJiraSp / teamTotalSp) * 10 : 0;
 
             const myReview = reviewStats[mId] || { total: 0, count: 0 };
             const avgStar = myReview.count > 0 ? myReview.total / myReview.count : 0;
@@ -401,6 +405,7 @@ exports.getTeamDashboardOverview = async (req, res) => {
                 },
                 raw_scores: {
                     jira_sp_done: myJiraSp,
+                    jira_score: Number(jiraScore.toFixed(2)),
                     git_score: Number(gitScore.toFixed(2)),
                     git_ai_score: Number(gitScore.toFixed(2)),
                     git_ai_score_sum: Number((stats.aiScoreSum || 0).toFixed(2)),
