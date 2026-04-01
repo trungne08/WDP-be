@@ -9,7 +9,9 @@ const models = require('../models');
 const {
   gatherProjectContext,
   gatherClassContext,
-  reviewGithubCommitWithGemini
+  reviewGithubCommitWithGemini,
+  generateExportReportMarkdown,
+  generateExportReportWithPdf
 } = require('../services/AiChatService');
 const JiraSyncService = require('../services/JiraSyncService');
 
@@ -67,6 +69,36 @@ const PROJECT_CHAT_TOOLS = {
           }
         },
         required: ['commitHash']
+      }
+    },
+    {
+      name: 'exportReport',
+      description:
+        'Tạo báo cáo PDF (và nội dung Markdown nguồn): SRS, tiến độ, tổng quan. Server trả downloadUrl để tải PDF. Gọi khi user muốn xuất/tải file, PDF, SRS, đặc tả, báo cáo tiến độ.',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          reportType: {
+            type: SchemaType.STRING,
+            description:
+              'Loại báo cáo: srs (SRS/đặc tả), progress (tiến độ), general (tổng quan). Suy luận từ ngôn ngữ tự nhiên của user.'
+          }
+        },
+        required: ['reportType']
+      }
+    },
+    {
+      name: 'getMemberStats',
+      description:
+        'Dùng để lấy điểm Git/Jira và mức độ đóng góp (tỷ lệ) của từng thành viên. Gọi khi user hỏi về ranking, ai đóng góp nhiều, điểm git/jira, phân bổ công việc.',
+      parameters: {
+        type: SchemaType.OBJECT,
+        properties: {
+          focus: {
+            type: SchemaType.STRING,
+            description: 'Tùy chọn: all | git | jira — mặc định all'
+          }
+        }
       }
     }
   ]
@@ -144,6 +176,52 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey) {
   });
 }
 
+/** Chuẩn hóa reportType từ NL / Gemini (srs | progress | general). */
+function normalizeReportTypeArg(raw) {
+  const s = String(raw || '')
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '');
+  if (!s.trim()) return 'general';
+  if (
+    /srs|dac ta|dặc tả|yeu cau|software requirement|spec|req|xuat srs|export srs|bao cao srs/.test(s)
+  ) {
+    return 'srs';
+  }
+  if (/tien do|tiến độ|progress|sprint|velocity|bao cao tien|file tien do/.test(s)) {
+    return 'progress';
+  }
+  return 'general';
+}
+
+/** Dữ liệu thống kê thành viên (git/jira ratio) cho tool getMemberStats. */
+async function fetchMemberStatsForProject(projectId) {
+  if (!projectId) return { ok: false, error: 'Thiếu project.' };
+  const project = await models.Project.findById(projectId).select('team_id name').lean();
+  if (!project?.team_id) return { ok: false, error: 'Project chưa gắn team.' };
+  const tms = await models.TeamMember.find({ team_id: project.team_id, is_active: true })
+    .populate('student_id', 'student_code full_name email')
+    .select('role_in_team git_score jira_score github_username')
+    .lean();
+  const members = tms.map((m) => ({
+    full_name: m.student_id?.full_name || '—',
+    student_code: m.student_id?.student_code || null,
+    role_in_team: m.role_in_team,
+    git_contribution_ratio:
+      typeof m.git_score === 'number' && !Number.isNaN(m.git_score) ? m.git_score : null,
+    jira_contribution_ratio:
+      typeof m.jira_score === 'number' && !Number.isNaN(m.jira_score) ? m.jira_score : null,
+    github_username: m.github_username || null
+  }));
+  return {
+    ok: true,
+    projectName: project.name,
+    note:
+      'git_contribution_ratio và jira_contribution_ratio là tỷ lệ đóng góp 0..1 (đã lưu trên TeamMember).',
+    members
+  };
+}
+
 /**
  * Thực thi lần lượt từng function call (giữ thứ tự; hỗn hợp Jira + review).
  */
@@ -178,6 +256,57 @@ async function executeProjectChatToolRound(req, functionCalls, ctx) {
           response: { ok: false, error: e.message || 'Lỗi review commit.' }
         });
       }
+    } else if (fc.name === 'exportReport') {
+      const pid = ctx.projectId;
+      if (!pid) {
+        outputs.push({
+          name: fc.name,
+          response: { ok: false, error: 'Chưa có project mặc định để xuất báo cáo.' }
+        });
+      } else {
+        try {
+          const contextStr = await gatherProjectContext(pid);
+          if (!contextStr) {
+            outputs.push({
+              name: fc.name,
+              response: { ok: false, error: 'Không tải được context dự án.' }
+            });
+          } else {
+            const rt = normalizeReportTypeArg(fc.args?.reportType);
+            const rep = await generateExportReportWithPdf(
+              contextStr,
+              rt,
+              ctx.genAI,
+              ctx.geminiModel,
+              { projectId: pid, req: ctx.req }
+            );
+            outputs.push({ name: fc.name, response: rep });
+          }
+        } catch (e) {
+          outputs.push({
+            name: fc.name,
+            response: { ok: false, error: e.message || 'Lỗi exportReport.' }
+          });
+        }
+      }
+    } else if (fc.name === 'getMemberStats') {
+      const pid = ctx.projectId;
+      if (!pid) {
+        outputs.push({
+          name: fc.name,
+          response: { ok: false, error: 'Chưa có project để lấy thống kê thành viên.' }
+        });
+      } else {
+        try {
+          const st = await fetchMemberStatsForProject(pid);
+          outputs.push({ name: fc.name, response: st });
+        } catch (e) {
+          outputs.push({
+            name: fc.name,
+            response: { ok: false, error: e.message || 'Lỗi getMemberStats.' }
+          });
+        }
+      }
     } else {
       outputs.push({
         name: fc.name,
@@ -194,7 +323,7 @@ async function executeProjectChatToolRound(req, functionCalls, ctx) {
 
 /**
  * POST /api/ai/project-chat
- * Chatbot duy nhất: RAG + Gemini + function calling (Jira tạo task, review commit GitHub).
+ * Chatbot: RAG + Gemini function calling (Jira, GitHub review, exportReport, getMemberStats).
  */
 exports.projectChat = async (req, res) => {
   try {
@@ -344,44 +473,45 @@ exports.projectChat = async (req, res) => {
     }
 
     const userMessage = message.trim();
-    const quotedQuestion = JSON.stringify(userMessage);
     const activeProjectKeyForTools = jiraProjectKey || '(chưa cấu hình)';
 
     const ID_SAFETY_RULE =
       'Bạn là trợ lý ảo quản lý dự án. TUYỆT ĐỐI KHÔNG BAO GIỜ được hiển thị các đoạn mã ID hệ thống (như ObjectId, 69b0c...) ra câu trả lời. Bắt buộc phải sử dụng Tên thật của Lớp, Nhóm, hoặc Dự án. Nếu dữ liệu tôi cung cấp chỉ có ID mà không có tên, hãy lịch sự hỏi người dùng tên của lớp/nhóm đó.';
+
+    const TOOL_GUIDE = `
+Công cụ (function calling): suy luận ý định từ ngôn ngữ tự nhiên — không cần khớp từ khóa cứng.
+- exportReport({ reportType }): tạo báo cáo PDF (và bản Markdown nội bộ) — SRS/đặc tả (srs), tiến độ (progress), tổng quan (general). Phản hồi của tool có downloadUrl (link tải PDF). Khi có downloadUrl, bắt buộc gửi cho user dạng Markdown: [Tải báo cáo tại đây](downloadUrl) kèm một lời chúc may mắn ngắn gọn. Ví dụ ý định: "xuất SRS", "xuất file", "tải báo cáo PDF", "báo cáo tiến độ".
+- getMemberStats(): điểm Git/Jira và tỷ lệ đóng góp từng thành viên (khi hỏi ranking, điểm, ai đóng góp nhiều). Có thể kết hợp với dữ liệu trong context.
+- create_jira_task: Tạo task/issue Jira khi user muốn tạo việc mới.
+- review_github_commit: Review/chấm commit khi user đưa SHA hoặc yêu cầu review (commitHash trong dữ liệu githubCommits).
+
+Hội thoại: Bạn được phép trả lời tự do các câu hỏi chung (chào hỏi, giải thích khái niệm) nếu phù hợp vai trò. Khi không cần gọi hàm, trả lời thông minh dựa trên dữ liệu context — không liệt kê menu lệnh cố định hay mẫu câu máy móc.`;
 
     const systemInstruction =
       role === 'LECTURER'
         ? `${ID_SAFETY_RULE}
 
 Bạn là AI Trợ giảng.
-Dưới đây là dữ liệu tổng hợp của TẤT CẢ các nhóm trong lớp. Hãy báo cáo tiến độ, so sánh các nhóm, hoặc xem chi tiết một nhóm theo yêu cầu của giảng viên:
+Dữ liệu tổng hợp của TẤT CẢ các nhóm trong lớp:
 ${contextData}
 
-Lưu ý: Các tool Jira/GitHub khi được gọi sẽ thực thi trên project đang được chọn để làm “mặc định” (projectId trong request hoặc project đầu tiên của lớp). Jira project key dùng cho tool: ${activeProjectKeyForTools}
+Tool Jira/GitHub thực thi trên project mặc định (projectId trong request hoặc project đầu tiên của lớp). Jira project key: ${activeProjectKeyForTools}
 
-Nhiệm vụ của bạn:
-1. Dựa VÀO CHÍNH XÁC dữ liệu trên để trả lời câu hỏi: ${quotedQuestion}
-2. TUYỆT ĐỐI KHÔNG BỊA ĐẶT DỮ LIỆU.
-3. Trả lời bằng tiếng Việt, định dạng Markdown rõ ràng, chuyên nghiệp nhưng thẳng thắn.
-5. Nếu user yêu cầu thao tác Jira (tạo task), hãy gọi tool create_jira_task.
-6. Nếu user yêu cầu review GitHub commit, hãy gọi tool review_github_commit với commitHash thuộc “project mặc định”.
+${TOOL_GUIDE}
 
+Nguyên tắc: Trả lời tin nhắn hiện tại của user; chỉ dựa trên dữ liệu trên, không bịa. Tiếng Việt, Markdown. Sau khi tool trả kết quả (đặc biệt exportReport hoặc getMemberStats), tóm tắt và hướng dẫn user ngắn gọn.
 `
         : `${ID_SAFETY_RULE}
 
 Bạn là AI Scrum Master của dự án.
-Dữ liệu của nhóm (được trích xuất từ DB Jira & GitHub):
+Dữ liệu nhóm (Jira & GitHub; members có thể có git_contribution_ratio / jira_contribution_ratio nếu đã persist):
 ${contextData}
 
-Jira project key của nhóm trên WDP (dùng khi tạo issue mới): ${activeProjectKeyForTools}
+Jira project key trên WDP: ${activeProjectKeyForTools}
 
-Nhiệm vụ của bạn:
-1. Dựa VÀO CHÍNH XÁC dữ liệu trên để trả lời câu hỏi: ${quotedQuestion}
-2. Nếu user hỏi về mức độ đóng góp: Hãy phân tích dựa trên số lượng/trạng thái Task Jira và số lượng/chất lượng Commit GitHub. Đưa ra ƯỚC TÍNH TỶ LỆ PHẦN TRĂM (%) đóng góp của từng thành viên.
-3. Nếu user hỏi về tiến độ/trễ deadline: Hãy chỉ rõ điểm tên những task đang kẹt ở "To Do" hoặc "In Progress" quá lâu.
-4. TUYỆT ĐỐI KHÔNG BỊA ĐẶT DỮ LIỆU. Nếu DB không có thông tin, hãy nói rõ là chưa có dữ liệu. Trả lời bằng tiếng Việt, định dạng Markdown rõ ràng, chuyên nghiệp nhưng thẳng thắn.
-5. CÔNG CỤ: Khi user muốn tạo task Jira, gọi create_jira_task. Khi user muốn review/chấm code một commit, gọi review_github_commit với đúng commitHash (có trong githubCommits.hash trong dữ liệu trên). Sau khi nhận kết quả tool, tóm tắt lại cho user.`;
+${TOOL_GUIDE}
+
+Nguyên tắc: Trả lời tin nhắn hiện tại; phân tích tiến độ, task trễ, đóng góp khi được hỏi — dùng context; nếu cần số liệu tỷ lệ đã lưu trên hệ thống, ưu tiên gọi getMemberStats. Không bịa dữ liệu. Tiếng Việt, Markdown. Không liệt kê menu lệnh cố định.`;
 
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
     const model = genAI.getGenerativeModel({
@@ -396,11 +526,7 @@ Nhiệm vụ của bạn:
     const contents = [
       {
         role: 'user',
-        parts: [
-          {
-            text: 'Thực hiện system instruction. Trả lời bằng text và/hoặc gọi tool khi cần (tạo Jira, review commit).'
-          }
-        ]
+        parts: [{ text: userMessage }]
       }
     ];
 
@@ -408,7 +534,8 @@ Nhiệm vụ của bạn:
       jiraProjectKey,
       projectId: toolProjectId ? String(toolProjectId) : null,
       genAI,
-      geminiModel: GEMINI_MODEL
+      geminiModel: GEMINI_MODEL,
+      req
     };
 
     const MAX_TOOL_ROUNDS = 6;
@@ -500,29 +627,9 @@ exports.exportSrs = async (req, res) => {
     }
 
     const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.5-flash' });
-
-    const prompt = `Dưới đây là dữ liệu thực tế của dự án từ Jira và GitHub: ${contextData}
-
-Hãy đóng vai là một Chuyên gia Phân tích Nghiệp vụ (Business Analyst).
-Dựa vào dữ liệu trên, hãy viết một tài liệu Đặc tả Yêu cầu Phần mềm (SRS) hoàn chỉnh bằng định dạng Markdown.
-
-Cấu trúc bắt buộc:
-1. Giới thiệu (Mục đích, Phạm vi dự án)
-2. Tính năng hệ thống (Liệt kê dựa trên các Epic/Story/Task trong Jira)
-3. Báo cáo tiến độ và đóng góp của team (Dựa vào Jira status và số lượng GitHub Commit)
-4. Rủi ro & Đề xuất (AI tự đánh giá dựa trên task trễ hạn hoặc ít commit)
-
-Yêu cầu:
-- TUYỆT ĐỐI KHÔNG BỊA ĐẶT DỮ LIỆU. Nếu dữ liệu thiếu, hãy nêu rõ “chưa có dữ liệu”.
-- Viết bằng tiếng Việt, văn phong chuyên nghiệp, thẳng thắn, dễ đọc.
-- Đảm bảo mỗi mục có nội dung cụ thể thay vì chỉ tiêu đề.`;
-
-    const result = await model.generateContent(prompt);
-    const srsContent = result?.response?.text?.() || '';
-
-    if (!srsContent || !String(srsContent).trim()) {
-      return res.status(502).json({ error: 'Gemini không trả về nội dung SRS.' });
+    const rep = await generateExportReportMarkdown(contextData, 'srs', genAI, 'gemini-2.5-flash');
+    if (!rep.ok || !rep.markdown) {
+      return res.status(502).json({ error: rep.error || 'Gemini không trả về nội dung SRS.' });
     }
 
     res.setHeader(
@@ -530,7 +637,7 @@ Yêu cầu:
       'attachment; filename=SRS_Project_Report.md'
     );
     res.setHeader('Content-type', 'text/markdown');
-    return res.status(200).send(String(srsContent).trim());
+    return res.status(200).send(rep.markdown);
   } catch (error) {
     console.error('[AiController] exportSrs error:', error.message);
     return res.status(500).json({ error: error.message || 'Lỗi xuất SRS.' });

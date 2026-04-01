@@ -1,4 +1,5 @@
 const express = require('express');
+const path = require('path');
 const mongoose = require('mongoose');
 const cors = require('cors');
 const swaggerUi = require('swagger-ui-express');
@@ -138,6 +139,9 @@ app.use(cors({
 }));
 
 app.use(express.json());
+
+// File PDF báo cáo từ AI exportReport — GET /exports/<filename>.pdf
+app.use('/exports', express.static(path.join(__dirname, 'public', 'exports'), { maxAge: '1h' }));
 
 // Nếu MONGO_URI không chỉ rõ database name, Mongo sẽ mặc định dùng "test".
 // Mặc định project này dùng DB "SWD" để đúng yêu cầu.

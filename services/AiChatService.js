@@ -1,5 +1,9 @@
 const axios = require('axios');
+const fs = require('fs').promises;
+const path = require('path');
 const mongoose = require('mongoose');
+const MarkdownIt = require('markdown-it');
+const puppeteer = require('puppeteer');
 const models = require('../models');
 const GithubService = require('./GithubService');
 
@@ -263,7 +267,11 @@ async function gatherProjectContext(projectId) {
     github_username: tm.github_username || null,
     student_code: tm.student_id?.student_code || null,
     email: tm.student_id?.email || null,
-    full_name: tm.student_id?.full_name || null
+    full_name: tm.student_id?.full_name || null,
+    git_contribution_ratio:
+      typeof tm.git_score === 'number' && !Number.isNaN(tm.git_score) ? tm.git_score : null,
+    jira_contribution_ratio:
+      typeof tm.jira_score === 'number' && !Number.isNaN(tm.jira_score) ? tm.jira_score : null
   }));
 
   const sprints = await models.Sprint.find({ team_id: teamId }).select('_id').lean();
@@ -378,8 +386,151 @@ async function gatherClassContext(classId) {
   });
 }
 
+const MAX_EXPORT_REPORT_CHARS = 120000;
+
+/**
+ * Sinh Markdown báo cáo (SRS / tiến độ / tổng quan) từ context dự án — dùng cho tool exportReport.
+ */
+async function generateExportReportMarkdown(contextData, reportType, genAI, modelName) {
+  const model = genAI.getGenerativeModel({ model: modelName || 'gemini-2.5-flash' });
+  const type = String(reportType || 'general').toLowerCase();
+
+  let instruction = '';
+  if (type === 'srs') {
+    instruction = `Hãy đóng vai Chuyên gia Phân tích Nghiệp vụ (Business Analyst).
+Dựa vào dữ liệu JSON sau, viết tài liệu Đặc tả Yêu cầu Phần mềm (SRS) hoàn chỉnh bằng Markdown (tiếng Việt).
+
+Cấu trúc bắt buộc:
+1. Giới thiệu (Mục đích, Phạm vi dự án)
+2. Tính năng hệ thống (Liệt kê dựa trên các Epic/Story/Task trong Jira)
+3. Báo cáo tiến độ và đóng góp của team (Jira + GitHub)
+4. Rủi ro & Đề xuất (dựa trên task trễ hoặc ít commit)
+
+TUYỆT ĐỐI KHÔNG BỊA ĐẶT. Nếu thiếu dữ liệu, nêu rõ "chưa có dữ liệu".`;
+  } else if (type === 'progress') {
+    instruction = `Viết báo cáo tiến độ dự án bằng Markdown (tiếng Việt), súc tích nhưng đủ mục:
+- Tóm tắt trạng thái sprint/task (theo dữ liệu Jira)
+- Hoạt động commit gần đây (GitHub)
+- Điểm nghẽn / rủi ro
+
+Chỉ dựa trên dữ liệu JSON sau, không bịa.`;
+  } else {
+    instruction = `Viết báo cáo tổng quan dự án bằng Markdown (tiếng Việt): mục tiêu, phạm vi, tiến độ, đóng góp, đề xuất — chỉ từ dữ liệu JSON sau.`;
+  }
+
+  const prompt = `Dữ liệu thực tế dự án (JSON):\n${contextData}\n\n${instruction}`;
+  const result = await model.generateContent(prompt);
+  let md = result?.response?.text?.() || '';
+  if (!String(md).trim()) {
+    return { ok: false, error: 'Model không trả về nội dung báo cáo.' };
+  }
+  md = String(md).trim();
+  if (md.length > MAX_EXPORT_REPORT_CHARS) {
+    md =
+      md.slice(0, MAX_EXPORT_REPORT_CHARS) +
+      '\n\n---\n*(Đã cắt bớt độ dài; vẫn đủ để tóm tắt.)*';
+  }
+  return { ok: true, reportType: type, markdown: md, charCount: md.length };
+}
+
+/**
+ * Markdown → HTML (markdown-it) → PDF (puppeteer), lưu `public/exports/`.
+ * @param {string} markdown
+ * @param {string} projectId
+ * @param {import('express').Request} [req] — để build URL tuyệt đối
+ * @returns {Promise<{ filename: string, downloadUrl: string, filePath: string }>}
+ */
+async function saveMarkdownAsPdfFile(markdown, projectId, req) {
+  const exportsDir = path.join(__dirname, '..', 'public', 'exports');
+  await fs.mkdir(exportsDir, { recursive: true });
+  const safeId = String(projectId).replace(/[^a-f0-9]/gi, '').slice(0, 24) || 'proj';
+  const filename = `report-${safeId}-${Date.now()}.pdf`;
+  const filePath = path.join(exportsDir, filename);
+
+  const md = new MarkdownIt({ html: false, linkify: true, breaks: true });
+  const bodyHtml = md.render(String(markdown || ''));
+
+  const fullHtml = `<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Báo cáo dự án</title>
+<style>
+  body { font-family: 'Segoe UI', system-ui, sans-serif; font-size: 11pt; line-height: 1.45; color: #1a1a1a; margin: 24px; }
+  h1 { font-size: 18pt; border-bottom: 1px solid #ddd; padding-bottom: 8px; }
+  h2 { font-size: 14pt; margin-top: 1.2em; }
+  h3 { font-size: 12pt; }
+  code, pre { font-family: Consolas, monospace; font-size: 9pt; background: #f4f4f4; }
+  pre { padding: 10px; overflow-x: auto; border-radius: 4px; }
+  table { border-collapse: collapse; width: 100%; margin: 1em 0; }
+  th, td { border: 1px solid #ccc; padding: 6px 8px; text-align: left; }
+  blockquote { border-left: 4px solid #ccc; margin-left: 0; padding-left: 12px; color: #555; }
+  ul, ol { padding-left: 1.4em; }
+</style>
+</head>
+<body>${bodyHtml}</body>
+</html>`;
+
+  const browser = await puppeteer.launch({
+    headless: true,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+  });
+  try {
+    const page = await browser.newPage();
+    await page.setContent(fullHtml, { waitUntil: 'networkidle0', timeout: 120000 });
+    const pdfBuffer = await page.pdf({
+      format: 'A4',
+      printBackground: true,
+      margin: { top: '18mm', right: '14mm', bottom: '18mm', left: '14mm' }
+    });
+    await fs.writeFile(filePath, pdfBuffer);
+  } finally {
+    await browser.close();
+  }
+
+  const base = GithubService.getWebhookBackendBaseUrl(req);
+  const downloadUrl = base
+    ? `${String(base).replace(/\/$/, '')}/exports/${encodeURIComponent(filename)}`
+    : `/exports/${encodeURIComponent(filename)}`;
+
+  return { filename, downloadUrl, filePath };
+}
+
+/**
+ * Sinh Markdown (Gemini) rồi xuất PDF; trả `downloadUrl` cho tool exportReport.
+ * Dùng puppeteer (đã khai báo trong package.json); html-pdf-node giữ trong deps nếu cần mở rộng sau.
+ */
+async function generateExportReportWithPdf(contextData, reportType, genAI, modelName, { projectId, req }) {
+  const mdResult = await generateExportReportMarkdown(contextData, reportType, genAI, modelName);
+  if (!mdResult.ok) return mdResult;
+  try {
+    const { filename, downloadUrl, filePath } = await saveMarkdownAsPdfFile(
+      mdResult.markdown,
+      projectId,
+      req
+    );
+    return {
+      ...mdResult,
+      downloadUrl,
+      pdfFilename: filename,
+      pdfPath: filePath
+    };
+  } catch (e) {
+    console.error('[AiChatService] generateExportReportWithPdf PDF error:', e.message || e);
+    return {
+      ...mdResult,
+      downloadUrl: null,
+      pdfError: e.message || 'Không tạo được file PDF.'
+    };
+  }
+}
+
 module.exports = {
   gatherProjectContext,
   gatherClassContext,
-  reviewGithubCommitWithGemini
+  reviewGithubCommitWithGemini,
+  generateExportReportMarkdown,
+  saveMarkdownAsPdfFile,
+  generateExportReportWithPdf
 };
