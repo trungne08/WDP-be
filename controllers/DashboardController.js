@@ -6,6 +6,69 @@ const { SprintAssessment } = require('../models/Assessment');
 const { JiraTask } = require('../models/JiraData'); 
 const GithubCommit = require('../models/GitData');
 const PeerReview = require('../models/PeerReview');
+const Admin = require('../models/Admin');
+const Lecturer = require('../models/Lecturer');
+const Student = require('../models/Student');
+const Subject = require('../models/Subject'); 
+const Semester = require('../models/Semester');
+
+exports.getAdminDashboardOverview = async (req, res) => {
+    try {
+        if (req.role !== 'ADMIN') {
+            return res.status(403).json({ error: 'Truy cập bị từ chối. Chỉ Quản trị viên (Admin) mới được xem Dashboard này.' });
+        }
+
+        // 2. QUERY SONG SONG THEO ĐÚNG SCHEMA
+        const [
+            currentSemester,
+            totalSubjects,
+            totalClasses,
+            totalAdmins,
+            totalLecturers,
+            totalStudents
+        ] = await Promise.all([
+            // SỬA: Tìm theo status: 'Open' (khớp với enum trong Semester.js)
+            Semester.findOne({ status: 'Open' }).lean(), 
+            
+            // SỬA: Chỉ đếm những môn và lớp đang Active
+            Subject.countDocuments({ status: 'Active' }),                      
+            Class.countDocuments({ status: 'Active' }),                        
+            
+            // Đếm người dùng
+            Admin.countDocuments(),                        
+            Lecturer.countDocuments(),                     
+            Student.countDocuments()                       
+        ]);
+
+        const totalUsers = totalAdmins + totalLecturers + totalStudents;
+
+        return res.status(200).json({
+            message: "Lấy dữ liệu Admin Dashboard thành công!",
+            data: {
+                current_semester: currentSemester ? {
+                    semester_id: currentSemester._id,
+                    name: currentSemester.name, // Khớp với trường 'name' trong Semester.js
+                    start_date: currentSemester.start_date,
+                    end_date: currentSemester.end_date
+                } : null,
+                metrics: {
+                    total_subjects: totalSubjects,
+                    total_classes: totalClasses,
+                    total_users: totalUsers
+                },
+                users_breakdown: {
+                    admins: totalAdmins,
+                    lecturers: totalLecturers,
+                    students: totalStudents
+                }
+            }
+        });
+
+    } catch (error) {
+        console.error("❌ Lỗi API getAdminDashboardOverview:", error);
+        return res.status(500).json({ error: "Lỗi Server khi lấy dữ liệu Admin Dashboard." });
+    }
+};
 
 exports.getClassDashboardOverview = async (req, res) => {
     try {
