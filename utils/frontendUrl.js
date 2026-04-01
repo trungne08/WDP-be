@@ -20,7 +20,32 @@ function parseExtraOrigins() {
     .filter(Boolean);
 }
 
-/** Danh sách origin cho CORS / Socket.io — luôn gồm localhost + Vercel + env. */
+/**
+ * Origin của chính server API (Render, v.v.).
+ * Sau OAuth hoặc một số flow, trình duyệt có thể gửi Socket.io / fetch với Origin = backend — phải whitelist để không bị CORS chặn.
+ */
+const DEFAULT_BACKEND_ORIGIN_FOR_CORS = 'https://wdp-be-ama3.onrender.com';
+
+function getBackendSelfOrigins() {
+  const candidates = [
+    DEFAULT_BACKEND_ORIGIN_FOR_CORS,
+    process.env.SERVER_URL,
+    process.env.RENDER_EXTERNAL_URL,
+    process.env.BACKEND_URL
+  ].filter(Boolean);
+  const origins = [];
+  for (const raw of candidates) {
+    try {
+      const u = new URL(stripTrailingSlash(String(raw).trim()));
+      origins.push(`${u.protocol}//${u.host}`);
+    } catch {
+      /* bỏ qua chuỗi không phải URL hợp lệ */
+    }
+  }
+  return [...new Set(origins)];
+}
+
+/** Danh sách origin cho CORS / Socket.io — localhost + Vercel + env + origin của chính backend. */
 function getAllowedCorsOrigins() {
   const fromEnv = [process.env.FRONTEND_URL, process.env.CLIENT_URL]
     .filter(Boolean)
@@ -32,7 +57,14 @@ function getAllowedCorsOrigins() {
     'http://127.0.0.1:5173',
     DEFAULT_PRODUCTION_FRONTEND
   ];
-  return [...new Set([...defaults, ...fromEnv, ...parseExtraOrigins()])];
+  return [
+    ...new Set([
+      ...defaults,
+      ...fromEnv,
+      ...parseExtraOrigins(),
+      ...getBackendSelfOrigins()
+    ])
+  ];
 }
 
 /**
