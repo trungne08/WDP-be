@@ -231,9 +231,9 @@ async function calculateTeamContribution(teamId) {
 }
 
 /**
- * POST /api/webhooks/jira
- * Nhận Jira dynamic webhook (không dùng authenticateToken).
- * Payload: webhookEvent, issue (fields.summary, status, assignee, customfield_10016 / story points qua extractStoryPoint).
+ * POST /api/webhooks/jira/:webhookCloudId
+ * Nhận Jira dynamic webhook (không JWT). Path param = Cloud ID (trùng URL đã đăng ký trên Atlassian).
+ * Payload: webhookEvent, issue (fields.summary, status, assignee, story points qua extractStoryPoint).
  */
 exports.receiveJiraWebhook = async (req, res) => {
   try {

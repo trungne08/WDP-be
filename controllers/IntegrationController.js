@@ -162,7 +162,10 @@ exports.githubConnect = async (req, res) => {
     
     const rawFe = req.query.redirect_uri;
     if (rawFe && !isTrustedOAuthReturnBase(rawFe)) {
-      return res.status(400).json({ error: 'redirect_uri không nằm trong whitelist (localhost hoặc FRONTEND_URL).' });
+      return res.status(400).json({
+        error:
+          'redirect_uri không hợp lệ. Dùng origin FE (vd: http://localhost:5173 hoặc https://sync-system.vercel.app), hoặc thêm OAUTH_EXTRA_REDIRECT_ORIGINS / CORS_EXTRA_ORIGINS trên server.'
+      });
     }
     const frontendRedirectUri = rawFe ? stripTrailingSlash(rawFe) : getDefaultOAuthInitBase();
 
@@ -265,7 +268,10 @@ exports.jiraConnect = async (req, res) => {
     
     const rawFe = req.query.redirect_uri;
     if (rawFe && !isTrustedOAuthReturnBase(rawFe)) {
-      return res.status(400).json({ error: 'redirect_uri không nằm trong whitelist (localhost hoặc FRONTEND_URL).' });
+      return res.status(400).json({
+        error:
+          'redirect_uri không hợp lệ. Dùng origin FE (vd: http://localhost:5173 hoặc https://sync-system.vercel.app), hoặc thêm OAUTH_EXTRA_REDIRECT_ORIGINS / CORS_EXTRA_ORIGINS trên server.'
+      });
     }
     const frontendRedirectUri = rawFe ? stripTrailingSlash(rawFe) : getDefaultOAuthInitBase();
 

@@ -10,6 +10,15 @@ function stripTrailingSlash(url) {
   return url.replace(/\/+$/, '');
 }
 
+function normalizeToOrigin(url) {
+  try {
+    const u = new URL(String(url).trim());
+    return `${u.protocol}//${u.host}`;
+  } catch {
+    return null;
+  }
+}
+
 /** CORS_EXTRA_ORIGINS: danh sách thêm (phân tách bằng dấu phẩy), ví dụ preview Vercel khác domain production. */
 function parseExtraOrigins() {
   const raw = process.env.CORS_EXTRA_ORIGINS;
@@ -18,6 +27,34 @@ function parseExtraOrigins() {
     .split(',')
     .map((s) => stripTrailingSlash(s.trim()))
     .filter(Boolean);
+}
+
+/** OAUTH_EXTRA_REDIRECT_ORIGINS: thêm origin được phép làm redirect_uri (GitHub/Jira), tách với CORS nếu cần. */
+function parseOAuthExtraOrigins() {
+  const raw = process.env.OAUTH_EXTRA_REDIRECT_ORIGINS;
+  if (!raw || typeof raw !== 'string') return [];
+  return raw
+    .split(',')
+    .map((s) => {
+      const t = stripTrailingSlash(s.trim());
+      if (!t) return null;
+      const o = normalizeToOrigin(t);
+      return o || t;
+    })
+    .filter(Boolean);
+}
+
+/** Localhost / 127.0.0.1 cổng thường dùng (Vite, CRA, Next, preview) — web + dev cùng backend. */
+function getDefaultLocalDevOrigins() {
+  const ports = [3000, 3001, 4173, 5173, 5174, 8080, 8888];
+  const hosts = ['localhost', '127.0.0.1'];
+  const out = [];
+  for (const h of hosts) {
+    for (const p of ports) {
+      out.push(`http://${h}:${p}`);
+    }
+  }
+  return out;
 }
 
 /**
@@ -45,26 +82,30 @@ function getBackendSelfOrigins() {
   return [...new Set(origins)];
 }
 
-/** Danh sách origin cho CORS / Socket.io — localhost + Vercel + env + origin của chính backend. */
+/** Danh sách origin cho CORS / Socket.io — nhiều cổng local + Vercel + env + origin của chính backend + extra. */
 function getAllowedCorsOrigins() {
   const fromEnv = [process.env.FRONTEND_URL, process.env.CLIENT_URL]
     .filter(Boolean)
     .map(stripTrailingSlash);
-  const defaults = [
-    'http://localhost:3000',
-    'http://localhost:5173',
-    'http://127.0.0.1:3000',
-    'http://127.0.0.1:5173',
-    DEFAULT_PRODUCTION_FRONTEND
-  ];
+  const defaults = [...getDefaultLocalDevOrigins(), DEFAULT_PRODUCTION_FRONTEND];
   return [
     ...new Set([
       ...defaults,
       ...fromEnv,
       ...parseExtraOrigins(),
+      ...parseOAuthExtraOrigins(),
       ...getBackendSelfOrigins()
     ])
   ];
+}
+
+/**
+ * Origin hợp lệ cho redirect sau OAuth (GitHub/Jira).
+ * Không gồm domain chỉ là API — tránh redirect user về `https://wdp-be-...` (không có SPA) khi nhầm redirect_uri.
+ */
+function getOAuthTrustedOrigins() {
+  const backendSet = new Set(getBackendSelfOrigins());
+  return getAllowedCorsOrigins().filter((o) => !backendSet.has(o));
 }
 
 /**
@@ -97,25 +138,17 @@ function getBackendBaseUrl(req) {
   return '';
 }
 
-function normalizeToOrigin(url) {
-  try {
-    const u = new URL(url.trim());
-    return `${u.protocol}//${u.host}`;
-  } catch {
-    return null;
-  }
-}
-
 /**
- * Chỉ chấp nhận redirect về origin đã whitelist (localhost + Vercel + FRONTEND_URL/CLIENT_URL).
- * Chống open redirect.
+ * Chỉ chấp nhận redirect về origin mà CORS/Socket cũng chấp nhận, NGOẠI TRỪ domain thuần API
+ * (ví dụ Render) — tránh redirect SPA về host không có UI.
  */
 function isTrustedOAuthReturnBase(url) {
   if (!url || typeof url !== 'string') return false;
   const o = normalizeToOrigin(url);
   if (!o) return false;
-  const allowed = getAllowedCorsOrigins();
-  return allowed.includes(o);
+  const backendSet = new Set(getBackendSelfOrigins());
+  if (backendSet.has(o)) return false;
+  return isOriginAllowed(o);
 }
 
 /**
@@ -162,7 +195,10 @@ function getFrontendUrl() {
 
 module.exports = {
   stripTrailingSlash,
+  normalizeToOrigin,
   getAllowedCorsOrigins,
+  getOAuthTrustedOrigins,
+  getBackendSelfOrigins,
   isOriginAllowed,
   getBackendBaseUrl,
   isTrustedOAuthReturnBase,

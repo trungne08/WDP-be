@@ -7,16 +7,14 @@ module.exports = (app) => {
      * @swagger
      * /api/webhooks/jira:
      *   post:
-     *     summary: Webhook endpoint để nhận real-time updates từ Jira
+     *     summary: Webhook Jira (path thật có Cloud ID — xem mô tả)
      *     tags: [21. Webhooks]
      *     description: |
-     *       Jira sẽ gửi webhook đến endpoint này khi có thay đổi:
-     *       - issue_created
-     *       - issue_updated
-     *       - issue_deleted
-     *       
-     *       **Auto-register:** Sau OAuth Jira thành công, BE gọi API đăng ký dynamic webhook (scopes `read:webhook:jira`, `write:webhook:jira`, `delete:webhook:jira` — user phải OAuth lại nếu token cũ thiếu quyền).
-     *       **Schema:** `webhookEvent`, `issue`, `issue.fields.*` (summary, status, assignee, story points qua customfield).
+     *       **Route Express:** `POST /api/webhooks/jira/:webhookCloudId`.
+     *       `webhookCloudId` = Atlassian Cloud ID (UUID), khớp `Project.jiraCloudId`.
+     *       Sự kiện: `jira:issue_created`, `jira:issue_updated`, `jira:issue_deleted`.
+     *       Đăng ký: `registerJiraWebhook` lúc Sync project → URL `.../api/webhooks/jira/<cloudId>`.
+     *       Sau khi cập nhật MongoDB, Socket.io emit `task_created` / `task_updated` (xoá issue: `task_updated` + `action:delete`) tới room `project:<projectId>`, room lớp (`join_class`), và `io.emit` toàn cục.
      *     requestBody:
      *       required: true
      *       content:
