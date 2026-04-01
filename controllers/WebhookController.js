@@ -296,15 +296,32 @@ exports.receiveJiraWebhook = async (req, res) => {
       );
     }
 
+    const projectIdStr = String(dbProject._id);
+
     const emitTaskEvent = (eventName, taskData) => {
-      const io = req.app.get('io');
+      const io = req.app.get('io') || global._io;
       if (!io) return;
-      const projectRoom = `project:${String(dbProject._id)}`;
+      const projectRoom = `project:${projectIdStr}`;
       io.to(projectRoom).emit(eventName, taskData);
       // Cùng id với socket.on('join_class', ...) trong index.js — FE màn Tasks theo lớp thường chỉ join room này
       if (dbProject.class_id) {
         io.to(String(dbProject.class_id)).emit(eventName, taskData);
       }
+    };
+
+    /** Sau khi persist jira_score: báo FE fetch lại (cùng pattern room với GitHub webhook). */
+    const emitJiraDataUpdated = () => {
+      const io = req.app.get('io') || global._io;
+      if (!io) return;
+      const payload = {
+        projectId: projectIdStr,
+        message: 'Jira data updated via Webhook'
+      };
+      io.to(`project:${projectIdStr}`).emit('jira_data_updated', payload);
+      if (dbProject.class_id) {
+        io.to(String(dbProject.class_id)).emit('jira_data_updated', payload);
+      }
+      console.log(`📡 [Socket] Đã bắn refresh cho Jira Webhook — project=${projectIdStr}`);
     };
 
     if (eventType === 'jira:issue_deleted') {
@@ -325,6 +342,7 @@ exports.receiveJiraWebhook = async (req, res) => {
       } catch (e) {
         console.warn('⚠️ [Jira Webhook] persistTeamMemberJiraScores:', e.message || e);
       }
+      emitJiraDataUpdated();
       return res.status(200).send('Jira Webhook received');
     }
 
@@ -461,6 +479,7 @@ exports.receiveJiraWebhook = async (req, res) => {
       } catch (e) {
         console.warn('⚠️ [Jira Webhook] persistTeamMemberJiraScores:', e.message || e);
       }
+      emitJiraDataUpdated();
     }
 
     return res.status(200).send('Jira Webhook received');
