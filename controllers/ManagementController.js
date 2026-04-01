@@ -1771,47 +1771,52 @@ const updateContributionConfig = async (req, res) => {
         const { classId } = req.params;
         const { jiraWeight, gitWeight, reviewWeight, allowOverCeiling } = req.body;
 
-        // 1. Validation đầu vào
+        // 1. Kiểm tra đầu vào có bị thiếu không
         if (jiraWeight === undefined || gitWeight === undefined || reviewWeight === undefined) {
-            return res.status(400).json({ error: 'Vui lòng cung cấp đầy đủ trọng số: jiraWeight, gitWeight, reviewWeight' });
+            return res.status(400).json({ error: 'Vui lòng cung cấp đầy đủ các trọng số (jiraWeight, gitWeight, reviewWeight).' });
         }
 
-        // 2. Kiểm tra tổng trọng số = 1.0 (Dùng Math.abs để tránh lỗi làm tròn số thập phân của JS)
-        const totalWeight = Number(jiraWeight) + Number(gitWeight) + Number(reviewWeight);
-        if (Math.abs(totalWeight - 1.0) > 0.01) {
+        // 2. Kiểm tra tổng trọng số phải = 1.0 (100%)
+        // Ép kiểu về Number để tính toán an toàn
+        const jW = Number(jiraWeight);
+        const gW = Number(gitWeight);
+        const rW = Number(reviewWeight);
+        const totalWeight = jW + gW + rW;
+
+        // Dùng Math.abs để tránh lỗi số thập phân rác của Javascript (VD: 0.1 + 0.2 = 0.300000000004)
+        if (Math.abs(totalWeight - 1.0) > 0.001) {
             return res.status(400).json({ 
-                error: 'Tổng trọng số (Jira + Git + Review) phải bằng chính xác 1.0 (100%)' 
+                error: `Tổng các trọng số phải bằng 1 (100%). Hiện tại đang là ${totalWeight}` 
             });
         }
 
-        // 3. Cập nhật vào Database (Chỉ Giảng viên sở hữu lớp này mới được sửa)
-        const updatedClass = await Class.findOneAndUpdate(
-            { _id: classId, lecturer_id: req.user._id },
+        // 3. Tìm và Cập nhật cấu hình điểm vào DB
+        const updatedClass = await Class.findByIdAndUpdate(
+            classId,
             {
                 $set: {
-                    contributionConfig: {
-                        jiraWeight: Number(jiraWeight),
-                        gitWeight: Number(gitWeight),
-                        reviewWeight: Number(reviewWeight),
-                        allowOverCeiling: Boolean(allowOverCeiling)
-                    }
+                    'contributionConfig.jiraWeight': jW,
+                    'contributionConfig.gitWeight': gW,
+                    'contributionConfig.reviewWeight': rW,
+                    'contributionConfig.allowOverCeiling': Boolean(allowOverCeiling)
                 }
             },
-            { new: true } // Trả về document sau khi update
+            { new: true } // Trả về data mới nhất sau khi update
         );
 
         if (!updatedClass) {
-            return res.status(404).json({ error: 'Không tìm thấy lớp học hoặc bạn không có quyền chỉnh sửa lớp này.' });
+            return res.status(404).json({ error: 'Không tìm thấy lớp học này.' });
         }
 
-        res.json({ 
-            message: '✅ Đã cập nhật cấu hình trọng số Assignment thành công!', 
-            data: updatedClass.contributionConfig 
+        // 4. Trả về cho FE
+        return res.status(200).json({
+            message: 'Cập nhật cấu hình điểm thành công!',
+            contributionConfig: updatedClass.contributionConfig
         });
 
     } catch (error) {
-        console.error('Update Contribution Config Error:', error);
-        res.status(500).json({ error: error.message });
+        console.error('❌ Lỗi updateContributionConfig:', error);
+        return res.status(500).json({ error: 'Lỗi server khi cập nhật cấu hình điểm.' });
     }
 };
 
