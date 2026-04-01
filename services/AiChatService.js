@@ -77,6 +77,12 @@ function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+function isConventionalCommitMessage(message) {
+  const msg = String(message || '').trim();
+  // Conventional Commits: type(scope)!: subject
+  return /^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([^)]+\))?(!)?:\s.+/i.test(msg);
+}
+
 /**
  * Tool: lấy diff commit + chấm/review bằng Gemini (không gọi Python).
  * @param {import('@google/generative-ai').GoogleGenerativeAI} genAI
@@ -196,13 +202,23 @@ async function reviewGithubCommitWithGemini(projectId, commitHash, user, genAI, 
   }
 
   // Upsert theo hash resolved (nếu có)
+  const baseScore = score;
+  const conventionalOk = isConventionalCommitMessage(commitMessage);
+  // CTO policy: commit message quyết định hệ số trừ điểm, không loại commit.
+  const finalScoreRaw = conventionalOk ? baseScore : baseScore * 0.7;
+  const finalScore = Math.max(0, Math.min(10, Math.round(finalScoreRaw * 100) / 100));
+
+  const penaltyNote = conventionalOk
+    ? ''
+    : '\n\n[Penalty] Commit message chưa theo Conventional Commits -> áp hệ số 0.7 vào AI score.';
+
   await models.GithubCommit.findOneAndUpdate(
     { team_id: teamId, hash: resolvedHash },
-    { $set: { ai_score: score, ai_review: review } },
+    { $set: { ai_score: finalScore, ai_review: `${review}${penaltyNote}` } },
     { new: true }
   );
 
-  return `Đã review xong. Điểm: ${score}/10.\nNhận xét: ${review}`;
+  return `Đã review xong. Điểm: ${finalScore}/10 (gốc ${baseScore}/10).`;
 }
 
 /**

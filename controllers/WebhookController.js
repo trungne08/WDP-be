@@ -132,37 +132,55 @@ async function calculateTeamContribution(teamId) {
 
   const totalJiraPoints = Array.from(jiraPointsByMemberId.values()).reduce((a, b) => a + b, 0);
 
-  // 2) GitHub ai_score aggregate theo author_email (lowercase)
-  const gitAgg = await models.GithubCommit.aggregate([
-    {
-      $match: {
-        team_id: teamObjectId,
-        ai_score: { $ne: null },
-        author_email: { $ne: null }
-      }
-    },
-    { $addFields: { author_email_lc: { $toLower: '$author_email' } } },
-    {
-      $group: {
-        _id: '$author_email_lc',
-        totalAiScore: { $sum: '$ai_score' }
-      }
-    }
-  ]);
+  // 2) GitHub ai_score aggregate theo TeamMember (match email trước, fallback github_username)
+  // Chỉ commit hợp lệ mới được tính điểm.
+  const gitCommits = await models.GithubCommit.find({
+    team_id: teamObjectId,
+    is_counted: true,
+    ai_score: { $ne: null }
+  })
+    .select('author_email author_name ai_score')
+    .lean();
 
-  const gitScoreByEmail = new Map();
-  for (const row of gitAgg || []) {
-    if (!row?._id) continue;
-    gitScoreByEmail.set(String(row._id).toLowerCase(), Number(row.totalAiScore || 0));
+  const normalizeAiScore = (value) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return 0;
+    // AI score hiện tại được review theo thang 0..10
+    if (n < 0) return 0;
+    if (n > 10) return 10;
+    return n;
+  };
+
+  const gitScoreByMemberId = new Map();
+  for (const c of gitCommits || []) {
+    const score = normalizeAiScore(c?.ai_score);
+    if (score <= 0) continue;
+
+    let matchedMember = null;
+    const emailLc = String(c?.author_email || '').toLowerCase().trim();
+    if (emailLc && emailToMember.has(emailLc)) {
+      matchedMember = emailToMember.get(emailLc);
+    } else {
+      // Fallback khi email không match: đối chiếu github_username với author info
+      matchedMember = teamMembers.find((m) =>
+        commitBelongsToAuthor(
+          { author_email: c?.author_email, author_name: c?.author_name },
+          [m?.student_id?.email || ''],
+          [m?.github_username || '']
+        )
+      ) || null;
+    }
+
+    if (!matchedMember?._id) continue;
+    const key = String(matchedMember._id);
+    gitScoreByMemberId.set(key, Number(gitScoreByMemberId.get(key) || 0) + score);
   }
-  const totalGitScore = Array.from(gitScoreByEmail.values()).reduce((a, b) => a + b, 0);
+  const totalGitScore = Array.from(gitScoreByMemberId.values()).reduce((a, b) => a + b, 0);
 
   const leaderboard = teamMembers.map((m) => {
     const memberId = String(m._id);
-    const email = String(m.student_id?.email || '').toLowerCase().trim();
-
     const donePoints = Number(jiraPointsByMemberId.get(memberId) || 0);
-    const aiScoreTotal = Number(gitScoreByEmail.get(email) || 0);
+    const aiScoreTotal = Number(gitScoreByMemberId.get(memberId) || 0);
 
     const jiraPercent = totalJiraPoints > 0 ? donePoints / totalJiraPoints : 0;
     const gitPercent = totalGitScore > 0 ? aiScoreTotal / totalGitScore : 0;
@@ -534,7 +552,7 @@ exports.receiveGithubWebhook = async (req, res) => {
           url: commit.url,
           branch,
           is_counted: checkResult.is_counted,
-          rejection_reason: checkResult.reason
+          rejection_reason: checkResult.is_counted ? null : checkResult.reason
         }
       };
 
@@ -649,10 +667,13 @@ exports.receiveGithubWebhook = async (req, res) => {
               console.warn('[GitHub Webhook] AI member grading error:', e?.message || e);
             }
 
-            if (io) {
-              io.emit('LEADERBOARD_UPDATED', leaderboardData);
-            } else if (global._io) {
-              global._io.emit('LEADERBOARD_UPDATED', leaderboardData);
+            const rt = io || global._io;
+            if (rt) {
+              // Bắn đúng room thay vì global để giảm nhiễu realtime.
+              rt.to(`project:${projectIdStr}`).emit('LEADERBOARD_UPDATED', leaderboardData);
+              if (project?.class_id) {
+                rt.to(`class:${String(project.class_id)}`).emit('LEADERBOARD_UPDATED', leaderboardData);
+              }
             }
           } catch (e) {
             console.warn('[GitHub Webhook] Background job error:', e?.message || e);

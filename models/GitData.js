@@ -40,13 +40,13 @@ GithubCommitSchema.index({ team_id: 1, hash: 1 }, { unique: true });
 
 // --- LOGIC XỬ LÝ COOLDOWN 10 PHÚT (Viết ngay trong Model) ---
 GithubCommitSchema.statics.processCommit = async function(commitData, teamId) {
-    // 1. Check Message Rác
-    if (!commitData.message || commitData.message.length < 10) {
-        return { is_counted: false, reason: 'Message too short' };
-    }
-    if (commitData.message.toLowerCase().includes('merge pull request')) {
-        return { is_counted: false, reason: 'Merge commit' };
-    }
+    // 1. Commit message sai format KHÔNG loại commit khỏi vòng tính điểm nữa.
+    //    Penalty sẽ được xử lý ở bước chấm AI score.
+    const rawMessage = String(commitData.message || '').trim();
+    const messageLooksBad =
+        !rawMessage ||
+        rawMessage.length < 10 ||
+        rawMessage.toLowerCase().includes('merge pull request');
 
     // 2. Check Cooldown 30 Phút (theo schema note: "True if Cooldown > 30m")
     // Tìm commit gần nhất ĐÃ ĐƯỢC TÍNH (is_counted = true) của email này
@@ -65,7 +65,11 @@ GithubCommitSchema.statics.processCommit = async function(commitData, teamId) {
         }
     }
 
-    // Nếu thỏa mãn tất cả
+    // Nếu message có vấn đề thì vẫn counted=true, chỉ gắn cờ để downstream áp penalty.
+    if (messageLooksBad) {
+        return { is_counted: true, reason: 'Message format penalty' };
+    }
+
     return { is_counted: true, reason: null };
 };
 
