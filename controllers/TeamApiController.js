@@ -525,7 +525,7 @@ exports.getRanking = async (req, res) => {
         if (!isValidObjectId(teamId)) return res.status(400).json({ error: 'teamId không hợp lệ' });
 
         const members = await TeamMember.find({ team_id: teamId })
-            .populate('student_id', 'student_code email full_name')
+            .populate('student_id', 'student_code email full_name integrations')
             .lean();
 
         const sprints = await Sprint.find({ team_id: teamId }).select('_id').lean();
@@ -547,8 +547,10 @@ exports.getRanking = async (req, res) => {
         for (const c of commits) {
             for (const m of members) {
                 const emails = [m.student_id?.email].filter(Boolean);
-                const githubUsernames = [m.github_username].filter(Boolean);
-                if (commitBelongsToAuthor(c, emails, githubUsernames)) {
+                const ghUser = m.student_id?.integrations?.github?.username;
+                const githubUsernames = [m.github_username, ghUser].filter(Boolean);
+                const displayNames = [m.student_id?.full_name].filter(Boolean);
+                if (commitBelongsToAuthor(c, emails, githubUsernames, displayNames)) {
                     countedCommitsByMember.set(m._id.toString(), (countedCommitsByMember.get(m._id.toString()) || 0) + 1);
                 }
             }

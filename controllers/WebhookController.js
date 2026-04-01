@@ -97,7 +97,7 @@ async function calculateTeamContribution(teamId) {
     team_id: teamObjectId,
     is_active: true
   })
-    .populate('student_id', 'student_code email full_name')
+    .populate('student_id', 'student_code email full_name integrations')
     .lean();
 
   const memberById = new Map(teamMembers.map((m) => [String(m._id), m]));
@@ -162,13 +162,16 @@ async function calculateTeamContribution(teamId) {
       matchedMember = emailToMember.get(emailLc);
     } else {
       // Fallback khi email không match: đối chiếu github_username với author info
-      matchedMember = teamMembers.find((m) =>
-        commitBelongsToAuthor(
-          { author_email: c?.author_email, author_name: c?.author_name },
-          [m?.student_id?.email || ''],
-          [m?.github_username || '']
-        )
-      ) || null;
+      matchedMember =
+        teamMembers.find((m) => {
+          const ghUser = m?.student_id?.integrations?.github?.username;
+          return commitBelongsToAuthor(
+            { author_email: c?.author_email, author_name: c?.author_name },
+            m?.student_id?.email ? [m.student_id.email] : [],
+            [m?.github_username, ghUser].filter(Boolean),
+            m?.student_id?.full_name ? [m.student_id.full_name] : []
+          );
+        }) || null;
     }
 
     if (!matchedMember?._id) continue;
@@ -498,7 +501,7 @@ exports.receiveGithubWebhook = async (req, res) => {
       project_id: project._id,
       is_active: true
     })
-      .populate('student_id', 'email integrations')
+      .populate('student_id', 'email full_name integrations')
       .exec();
 
     if (!teamMembers.length) {
@@ -525,8 +528,10 @@ exports.receiveGithubWebhook = async (req, res) => {
       let matched = false;
       for (const m of teamMembers) {
         const emails = m.student_id?.email ? [m.student_id.email] : [];
-        const githubUsernames = [m.github_username].filter(Boolean);
-        if (commitBelongsToAuthor(commitLike, emails, githubUsernames)) {
+        const ghUser = m.student_id?.integrations?.github?.username;
+        const githubUsernames = [m.github_username, ghUser].filter(Boolean);
+        const displayNames = m.student_id?.full_name ? [m.student_id.full_name] : [];
+        if (commitBelongsToAuthor(commitLike, emails, githubUsernames, displayNames)) {
           matched = true;
           break;
         }

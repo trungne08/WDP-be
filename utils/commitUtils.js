@@ -16,15 +16,20 @@ function extractUsernameFromNoreplyEmail(email) {
  * @param {Object} commit - { author_email, author_name }
  * @param {string[]} emails - Danh sách email
  * @param {string[]} githubUsernames - GitHub username (TeamMember.github_username, integrations.github.username)
+ * @param {string[]} [displayNames] - Họ tên hiển thị (Student.full_name) — Git thường lưu display name trong author.name, không phải username
  */
-function commitBelongsToAuthor(commit, emails = [], githubUsernames = []) {
+function commitBelongsToAuthor(commit, emails = [], githubUsernames = [], displayNames = []) {
   const authorEmail = (commit.author_email || '').toLowerCase().trim();
   const authorName = (commit.author_name || '').toLowerCase().trim();
   const emailSet = new Set(emails.map(e => (e || '').toLowerCase().trim()).filter(Boolean));
   const usernameSet = new Set(githubUsernames.map(u => (u || '').toLowerCase().trim()).filter(Boolean));
+  const nameSet = new Set(displayNames.map((n) => (n || '').toLowerCase().trim()).filter(Boolean));
   if (authorEmail && emailSet.has(authorEmail)) return true;
   const extractedFromNoreply = extractUsernameFromNoreplyEmail(commit.author_email || '');
   if (extractedFromNoreply && usernameSet.has(extractedFromNoreply.toLowerCase())) return true;
+  for (const dn of nameSet) {
+    if (dn && authorName === dn) return true;
+  }
   for (const u of usernameSet) {
     if (!u) continue;
     if (authorEmail.includes(u) && authorEmail.includes('users.noreply')) return true;
