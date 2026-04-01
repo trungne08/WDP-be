@@ -7,7 +7,6 @@ const JiraService = require('../services/JiraService');
 const JiraAuthService = require('../services/JiraAuthService');
 const JiraSyncService = require('../services/JiraSyncService');
 const mongoose = require('mongoose');
-<<<<<<< HEAD
 const {
   getBackendBaseUrl,
   stripTrailingSlash,
@@ -16,13 +15,6 @@ const {
   resolveOAuthRedirectBaseUrl,
   coerceOAuthRedirectForProduction
 } = require('../utils/frontendUrl');
-=======
-
-function getClientBaseUrl(req) {
-  // FE có thể truyền redirect riêng; nếu không có thì dùng env
-  return process.env.CLIENT_URL || `${req.protocol}://${req.get('host')}`;
-}
->>>>>>> 19f45d5 (sửa api lấy commit 1 team)
 
 function getGithubConfig(req, platform = 'web') {
   // Hỗ trợ 2 OAuth App khác nhau cho GitHub: WEB & MOBILE
