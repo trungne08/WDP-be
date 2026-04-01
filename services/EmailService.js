@@ -1,4 +1,5 @@
 const nodemailer = require('nodemailer');
+const { getEmailFrontendUrl } = require('../utils/frontendUrl');
 
 const sendEmailViaBrevoAPI = async (toEmail, subject, htmlContent, textContent) => {
     const apiKey = process.env.BREVO_API_KEY;
@@ -367,6 +368,8 @@ const sendVerificationOTPEmail = async (toEmail, otpCode, role) => {
  */
 const sendPendingEnrollmentEmail = async (toEmail, studentName, className, rollNumber) => {
     try {
+        // Link trong email luôn trỏ tới web thật (FRONTEND_URL trên server)
+        const appUrl = getEmailFrontendUrl();
         const subject = '📚 Thông báo: Bạn đã được thêm vào lớp học - WDP';
         const htmlContent = `
             <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
@@ -377,17 +380,20 @@ const sendPendingEnrollmentEmail = async (toEmail, studentName, className, rollN
                 <div style="background-color: #fff3cd; border-left: 4px solid #ffc107; padding: 15px; margin: 20px 0;">
                     <p style="margin: 0;"><strong>⚠️ Vui lòng đăng ký tài khoản ngay để tham gia lớp học:</strong></p>
                     <ul style="margin: 10px 0 0 20px;">
-                        <li>Truy cập hệ thống WDP</li>
+                        <li>Truy cập hệ thống WDP tại: <a href="${appUrl}">${appUrl}</a></li>
                         <li>Đăng ký tài khoản với MSSV: <strong>${rollNumber}</strong></li>
                         <li>Sau khi đăng ký, bạn sẽ tự động được thêm vào lớp học</li>
                     </ul>
                 </div>
+                <p style="margin: 16px 0;">
+                    <a href="${appUrl}" style="display:inline-block;background:#2563eb;color:#fff;padding:10px 18px;text-decoration:none;border-radius:6px;font-weight:bold;">Mở hệ thống WDP</a>
+                </p>
                 <p>Nếu bạn đã có tài khoản, vui lòng đăng nhập và kiểm tra lại.</p>
                 <hr style="border: none; border-top: 1px solid #eee; margin: 20px 0;">
                 <p style="color: #999; font-size: 12px;">Email này được gửi tự động từ hệ thống WDP. Vui lòng không trả lời email này.</p>
             </div>
         `;
-        const textContent = `Bạn đã được thêm vào lớp học ${className} nhưng chưa có tài khoản. Vui lòng đăng ký tài khoản với MSSV ${rollNumber} để tham gia lớp học.`;
+        const textContent = `Bạn đã được thêm vào lớp học ${className} nhưng chưa có tài khoản. Vui lòng truy cập ${appUrl} và đăng ký tài khoản với MSSV ${rollNumber} để tham gia lớp học.`;
 
         // Ưu tiên dùng Brevo API nếu có BREVO_API_KEY
         if (process.env.BREVO_API_KEY) {

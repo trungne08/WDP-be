@@ -8,6 +8,8 @@ const { Server } = require("socket.io"); // Import Socket.io
 
 require('dotenv').config(); // Cái này để đọc file .env
 
+const { getAllowedCorsOrigins, isOriginAllowed } = require('./utils/frontendUrl');
+
 // Log env OAuth (chỉ báo có/không, không in giá trị) để dễ check trên Render
 const oauthEnv = {
   github: ['GITHUB_CLIENT_ID', 'GITHUB_CLIENT_SECRET', 'GITHUB_CLIENT_ID_WEB', 'GITHUB_CLIENT_SECRET_WEB', 'GITHUB_CLIENT_ID_MOBILE', 'GITHUB_CLIENT_SECRET_MOBILE'],
@@ -34,9 +36,9 @@ const server = http.createServer(app);
 // 2. Cấu hình Socket.io
 const io = new Server(server, {
   cors: {
-    // Cho phép Frontend (tất cả origin) kết nối
-    origin: "*", 
-    methods: ["GET", "POST"]
+    origin: getAllowedCorsOrigins(),
+    methods: ['GET', 'POST'],
+    credentials: true
   }
 });
 
@@ -85,19 +87,21 @@ process.on('uncaughtException', (err) => {
   console.error('❌ [uncaughtException]', err);
 });
 
-// Cho phép các web khác gọi vào API của mình (CORS) - Full CORS enabled
+// CORS: localhost + Vercel + FRONTEND_URL / CLIENT_URL (utils/frontendUrl.js)
 app.use(cors({
     origin: function (origin, callback) {
-        // Cho phép tất cả origins (bao gồm cả null cho same-origin requests)
-        callback(null, true);
+        if (!origin) return callback(null, true);
+        if (isOriginAllowed(origin)) return callback(null, origin);
+        console.warn('⚠️ CORS từ chối origin:', origin);
+        return callback(null, false);
     },
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'], // Cho phép tất cả methods
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Access-Control-Request-Method', 'Access-Control-Request-Headers'], // Cho phép tất cả headers
-    exposedHeaders: ['Content-Type', 'Authorization'], // Headers mà client có thể đọc được
-    credentials: false, // Không cần credentials cho OAuth callbacks
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Access-Control-Request-Method', 'Access-Control-Request-Headers'],
+    exposedHeaders: ['Content-Type', 'Authorization'],
+    credentials: true,
     preflightContinue: false,
     optionsSuccessStatus: 204,
-    maxAge: 86400 // Cache preflight requests trong 24 giờ
+    maxAge: 86400
 }));
 
 app.use(express.json());

@@ -7,11 +7,13 @@ const JiraService = require('../services/JiraService');
 const JiraAuthService = require('../services/JiraAuthService');
 const JiraSyncService = require('../services/JiraSyncService');
 const mongoose = require('mongoose');
-
-function getClientBaseUrl(req) {
-  // FE có thể truyền redirect riêng; nếu không có thì dùng env
-  return process.env.CLIENT_URL || `${req.protocol}://${req.get('host')}`;
-}
+const {
+  getBackendBaseUrl,
+  stripTrailingSlash,
+  isTrustedOAuthReturnBase,
+  getDefaultOAuthInitBase,
+  resolveOAuthRedirectBaseUrl
+} = require('../utils/frontendUrl');
 
 function getGithubConfig(req, platform = 'web') {
   // Hỗ trợ 2 OAuth App khác nhau cho GitHub: WEB & MOBILE
@@ -41,14 +43,14 @@ function getGithubConfig(req, platform = 'web') {
     }
   }
 
-  const redirectUri = process.env.GITHUB_CALLBACK_URL || `${getClientBaseUrl(req)}/api/integrations/github/callback`;
+  const redirectUri = process.env.GITHUB_CALLBACK_URL || `${getBackendBaseUrl(req)}/api/integrations/github/callback`;
   return { clientId, clientSecret, redirectUri, platform: normalizedPlatform };
 }
 
 function getAtlassianConfig(req) {
   const clientId = process.env.ATLASSIAN_CLIENT_ID;
   const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
-  const redirectUri = process.env.ATLASSIAN_CALLBACK_URL || `${getClientBaseUrl(req)}/api/integrations/jira/callback`;
+  const redirectUri = process.env.ATLASSIAN_CALLBACK_URL || `${getBackendBaseUrl(req)}/api/integrations/jira/callback`;
   if (!clientId || !clientSecret) {
     throw new Error('Thiếu cấu hình ATLASSIAN_CLIENT_ID hoặc ATLASSIAN_CLIENT_SECRET trong .env');
   }
@@ -158,9 +160,11 @@ exports.githubConnect = async (req, res) => {
     const platform = (req.query.platform || req.headers['x-platform'] || 'web').toString().toLowerCase();
     const { clientId, redirectUri } = getGithubConfig(req, platform);
     
-    // Frontend có thể truyền redirect_uri để redirect về sau khi callback (cho dev local)
-    // Nếu không có thì dùng CLIENT_URL từ env
-    const frontendRedirectUri = req.query.redirect_uri || process.env.CLIENT_URL || 'http://localhost:3000';
+    const rawFe = req.query.redirect_uri;
+    if (rawFe && !isTrustedOAuthReturnBase(rawFe)) {
+      return res.status(400).json({ error: 'redirect_uri không nằm trong whitelist (localhost hoặc FRONTEND_URL).' });
+    }
+    const frontendRedirectUri = rawFe ? stripTrailingSlash(rawFe) : getDefaultOAuthInitBase();
 
     // State JWT: chứa userId + role và frontendRedirectUri để callback biết redirect về đâu
     const state = IntegrationService.signOAuthState({
@@ -229,9 +233,7 @@ exports.githubCallback = async (req, res) => {
     
     await user.save();
 
-    // Redirect về frontend sau khi thành công
-    // Dùng frontendRedirectUri từ state (đã được frontend truyền khi connect) hoặc fallback về CLIENT_URL
-    const frontendUrl = decoded.frontendRedirectUri || process.env.CLIENT_URL || 'http://localhost:3000';
+    const frontendUrl = resolveOAuthRedirectBaseUrl(decoded);
     return res.redirect(`${frontendUrl}/callback/github?success=true&username=${encodeURIComponent(ghUser.username)}`);
   } catch (error) {
     // Log chi tiết lỗi từ GitHub API
@@ -261,8 +263,11 @@ exports.jiraConnect = async (req, res) => {
     // Xác định platform: mobile hoặc web
     const platform = (req.query.platform || req.headers['x-platform'] || 'web').toString().toLowerCase();
     
-    // Frontend redirect URI (để redirect về sau khi callback thành công)
-    const frontendRedirectUri = req.query.redirect_uri || process.env.CLIENT_URL || 'http://localhost:3000';
+    const rawFe = req.query.redirect_uri;
+    if (rawFe && !isTrustedOAuthReturnBase(rawFe)) {
+      return res.status(400).json({ error: 'redirect_uri không nằm trong whitelist (localhost hoặc FRONTEND_URL).' });
+    }
+    const frontendRedirectUri = rawFe ? stripTrailingSlash(rawFe) : getDefaultOAuthInitBase();
 
     console.log(`🔐 [Jira Connect] Platform: ${platform}, User: ${req.user?.email}`);
 
@@ -394,8 +399,8 @@ exports.jiraCallback = async (req, res) => {
     console.log(`   - Cloud ID: ${cloudId}`);
     console.log(`   - Account ID: ${me.accountId}`);
 
-    // 8) Redirect về frontend
-    const frontendUrl = decoded.frontendRedirectUri?.trim() || process.env.CLIENT_URL || 'http://localhost:3000';
+    // 8) Redirect về frontend (state đã ký — resolve an toàn)
+    const frontendUrl = resolveOAuthRedirectBaseUrl(decoded);
     
     // Xử lý mobile deep link
     if (decoded.platform === 'mobile') {

@@ -1,6 +1,11 @@
 const AuthController = require('../controllers/AuthController');
 const { authenticateToken } = require('../middleware/auth');
 const passport = require('passport');
+const {
+    stripTrailingSlash,
+    isTrustedOAuthReturnBase,
+    getDefaultOAuthInitBase
+} = require('../utils/frontendUrl');
 
 // Export function để setup routes
 module.exports = (app) => {
@@ -614,9 +619,15 @@ module.exports = (app) => {
             const jwt = require('jsonwebtoken');
             const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
             
-            const frontendRedirectUri = req.query.redirect_uri || process.env.CLIENT_URL || 'http://localhost:3000';
-            
-            // Tạo state JWT chứa redirect_uri
+            const rawRedirect = req.query.redirect_uri;
+            if (rawRedirect && !isTrustedOAuthReturnBase(rawRedirect)) {
+                return res.status(400).json({ error: 'redirect_uri không nằm trong whitelist (localhost hoặc FRONTEND_URL).' });
+            }
+            const frontendRedirectUri = rawRedirect
+                ? stripTrailingSlash(rawRedirect)
+                : getDefaultOAuthInitBase();
+
+            // Tạo state JWT chứa redirect_uri (FE dev / production)
             const state = jwt.sign(
                 { 
                     provider: 'google',
@@ -678,7 +689,7 @@ module.exports = (app) => {
     app.get('/auth/google/callback',
         passport.authenticate('google', { 
             session: false, // Không dùng session, dùng JWT
-            failureRedirect: process.env.CLIENT_URL ? `${process.env.CLIENT_URL}/auth/callback/google?error=authentication_failed` : '/auth/google/error'
+            failureRedirect: `${getDefaultOAuthInitBase()}/auth/callback/google?error=authentication_failed`
         }),
         AuthController.googleCallback
     );

@@ -5,6 +5,7 @@ const { OAuth2Client } = require('google-auth-library');
 const models = require('../models');
 const OTP = require('../models/OTP');
 const { getRoleFromEmail, extractStudentCodeFromEmail } = require('../utils/roleHelper');
+const { resolveOAuthRedirectBaseUrl } = require('../utils/frontendUrl');
 
 /** Thời hạn access token. Env JWT_ACCESS_EXPIRES: '15m' | '1h' | '24h' | ... (mặc định 1h) */
 const getAccessExpires = () => process.env.JWT_ACCESS_EXPIRES || '1h';
@@ -1318,47 +1319,34 @@ const googleCallback = async (req, res) => {
             expires_at: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000) // 30 ngày
         });
 
-        // Redirect về frontend với tokens
-        // Lấy redirect_uri từ state parameter (JWT) nếu có, nếu không thì dùng CLIENT_URL
-        let frontendRedirectUri = process.env.CLIENT_URL || 'http://localhost:3000';
-        
-        // Google trả lại state trong req.query.state
+        // Redirect về frontend: state JWT (redirect_uri) nếu hợp lệ = localhost hoặc Vercel; không thì FRONTEND_URL
+        const jwtSecretForState = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
+        let decodedState = null;
         if (req.query.state) {
             try {
-                const jwt = require('jsonwebtoken');
-                const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
-                const decoded = jwt.verify(req.query.state, jwtSecret);
-                
-                if (decoded.provider === 'google' && decoded.redirect_uri) {
-                    frontendRedirectUri = decoded.redirect_uri;
-                }
+                decodedState = jwt.verify(req.query.state, jwtSecretForState);
             } catch (err) {
-                console.warn('⚠️ Không thể decode state từ Google callback, dùng CLIENT_URL mặc định:', err.message);
+                console.warn('⚠️ Không thể decode state từ Google callback:', err.message);
             }
         }
-        
+        const frontendRedirectUri = resolveOAuthRedirectBaseUrl(decodedState);
+
         const redirectUrl = `${frontendRedirectUri}/auth/callback/google?token=${accessToken}&refreshToken=${refreshToken}&role=${role}`;
         
         return res.redirect(redirectUrl);
 
     } catch (error) {
         console.error('Google OAuth Callback Error:', error);
-        let frontendRedirectUri = process.env.CLIENT_URL || 'http://localhost:3000';
-        
-        // Cố gắng lấy từ state nếu có
+        const jwtSecretForState = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
+        let decodedState = null;
         if (req.query.state) {
             try {
-                const jwt = require('jsonwebtoken');
-                const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
-                const decoded = jwt.verify(req.query.state, jwtSecret);
-                if (decoded.provider === 'google' && decoded.redirect_uri) {
-                    frontendRedirectUri = decoded.redirect_uri;
-                }
-            } catch (err) {
-                // Ignore error, dùng CLIENT_URL mặc định
+                decodedState = jwt.verify(req.query.state, jwtSecretForState);
+            } catch {
+                // ignore
             }
         }
-        
+        const frontendRedirectUri = resolveOAuthRedirectBaseUrl(decodedState);
         return res.redirect(`${frontendRedirectUri}/auth/callback/google?error=${encodeURIComponent(error.message)}`);
     }
 };
