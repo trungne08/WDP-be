@@ -571,17 +571,13 @@ exports.getRanking = async (req, res) => {
             const taskAgg = jiraId ? taskAggByJiraId.get(jiraId) : null;
             const personalValidCommits = countedCommitsByMember.get(m._id.toString()) || 0;
             const gitScore =
-                totalTeamValidCommits > 0
-                    ? (personalValidCommits / totalTeamValidCommits) * 10
-                    : 0;
+                totalTeamValidCommits > 0 ? personalValidCommits / totalTeamValidCommits : 0;
             const personalDoneSp = taskAgg ? taskAgg.done_sp : 0;
             const jiraScore =
-                totalTeamDoneStoryPoints > 0
-                    ? (personalDoneSp / totalTeamDoneStoryPoints) * 10
-                    : 0;
+                totalTeamDoneStoryPoints > 0 ? personalDoneSp / totalTeamDoneStoryPoints : 0;
             const ghResolved = resolveGithubUsernameForMember(m);
             console.log(
-                `[getRanking] Member ${m.student_id?.student_code || m._id}: github_username=${ghResolved || 'N/A'}, personal_valid=${personalValidCommits}, git_score=${gitScore.toFixed(2)}`
+                `[getRanking] Member ${m.student_id?.student_code || m._id}: github_username=${ghResolved || 'N/A'}, personal_valid=${personalValidCommits}, git_ratio=${gitScore}`
             );
 
             return {
@@ -597,13 +593,13 @@ exports.getRanking = async (req, res) => {
                     done_story_points: taskAgg ? taskAgg.done_sp : 0,
                     total_tasks: taskAgg ? taskAgg.total_count : 0,
                     total_story_points: taskAgg ? taskAgg.total_sp : 0,
-                    jira_score: Number(jiraScore.toFixed(2))
+                    jira_score: jiraScore
                 },
                 github: {
                     counted_commits: personalValidCommits,
                     personal_valid_commits: personalValidCommits,
                     total_team_valid_commits: totalTeamValidCommits,
-                    git_score: Number(gitScore.toFixed(2))
+                    git_score: gitScore
                 }
             };
         });

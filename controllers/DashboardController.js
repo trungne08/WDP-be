@@ -145,10 +145,10 @@ exports.getClassDashboardOverview = async (req, res) => {
             };
         });
 
-        members.forEach(m => {
+        members.forEach((m) => {
             const tId = m.team_id.toString();
-            const jScore = m.scores?.jira_score || 0;
-            const gScore = m.scores?.commit_score || 0;
+            const jScore = Number(m.jira_score) || 0;
+            const gScore = m.git_score != null ? Number(m.git_score) : Number(m.scores?.commit_score) || 0;
 
             if (teamStatsMap[tId]) {
                 teamStatsMap[tId].total_jira_sp += jScore;
@@ -369,14 +369,12 @@ exports.getTeamDashboardOverview = async (req, res) => {
             const myApprovedCommits = stats.approved;
             const personalValidCommits = myApprovedCommits;
             const gitScore =
-                totalTeamValidCommits > 0
-                    ? (personalValidCommits / totalTeamValidCommits) * 10
-                    : 0;
+                totalTeamValidCommits > 0 ? personalValidCommits / totalTeamValidCommits : 0;
 
             // Khớp Jira
             const myJiraTasks = jiraTaskMap[mId] || (jiraAccId ? jiraTaskMap[jiraAccId] : 0) || 0;
             const myJiraSp = jiraSpMap[mId] || (jiraAccId ? jiraSpMap[jiraAccId] : 0) || 0;
-            const jiraScore = teamTotalSp > 0 ? (myJiraSp / teamTotalSp) * 10 : 0;
+            const jiraScore = teamTotalSp > 0 ? myJiraSp / teamTotalSp : 0;
 
             const myReview = reviewStats[mId] || { total: 0, count: 0 };
             const avgStar = myReview.count > 0 ? myReview.total / myReview.count : 0;
@@ -405,9 +403,10 @@ exports.getTeamDashboardOverview = async (req, res) => {
                 },
                 raw_scores: {
                     jira_sp_done: myJiraSp,
-                    jira_score: Number(jiraScore.toFixed(2)),
-                    git_score: Number(gitScore.toFixed(2)),
-                    git_ai_score: Number(gitScore.toFixed(2)),
+                    jira_score: jiraScore,
+                    jira_ai_score: jiraScore,
+                    git_score: gitScore,
+                    git_ai_score: gitScore,
                     git_ai_score_sum: Number((stats.aiScoreSum || 0).toFixed(2)),
                     peer_review_score: Number(avgStar.toFixed(2))
                 },

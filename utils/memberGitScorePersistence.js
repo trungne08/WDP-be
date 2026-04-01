@@ -1,7 +1,7 @@
 const { pickMemberForCommit } = require('./commitUtils');
 
 /**
- * Cập nhật TeamMember.git_score (thang 10) theo tỷ lệ commit is_counted cá nhân / team.
+ * Cập nhật TeamMember.git_score: tỷ lệ gốc personal/total (0..1), không nhân hệ số, không làm tròn.
  * Gọi sau getTeamCommits / webhook khi dữ liệu commit thay đổi.
  */
 async function persistTeamMemberGitScores(models, teamId) {
@@ -33,11 +33,11 @@ async function persistTeamMemberGitScores(models, teamId) {
 
   const bulk = members.map((m) => {
     const personal = counts.get(String(m._id)) || 0;
-    const gitScore = total > 0 ? (personal / total) * 10 : 0;
+    const gitScore = total > 0 ? personal / total : 0;
     return {
       updateOne: {
         filter: { _id: m._id },
-        update: { $set: { git_score: Number(gitScore.toFixed(4)) } }
+        update: { $set: { git_score: gitScore } }
       }
     };
   });

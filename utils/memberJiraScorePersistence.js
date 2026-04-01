@@ -8,8 +8,8 @@ function memberJiraAccountId(m) {
 }
 
 /**
- * Cập nhật TeamMember.jira_score (thang 10) = (personal done SP / total team done SP) * 10.
- * Chỉ tính issue đã Done; total = 0 => điểm 0.
+ * Cập nhật TeamMember.jira_score: tỷ lệ personal done SP / total team done SP (0..1), không nhân hệ số, không làm tròn.
+ * Chỉ tính issue đã Done; total = 0 => 0.
  */
 async function persistTeamMemberJiraScores(models, teamId) {
   const { TeamMember, JiraTask } = models;
@@ -39,11 +39,11 @@ async function persistTeamMemberJiraScores(models, teamId) {
   const bulk = members.map((m) => {
     const jiraId = memberJiraAccountId(m);
     const personal = jiraId ? personalByAssignee.get(jiraId) || 0 : 0;
-    const jiraScore = totalTeamStoryPoints > 0 ? (personal / totalTeamStoryPoints) * 10 : 0;
+    const jiraScore = totalTeamStoryPoints > 0 ? personal / totalTeamStoryPoints : 0;
     return {
       updateOne: {
         filter: { _id: m._id },
-        update: { $set: { jira_score: Number(jiraScore.toFixed(4)) } }
+        update: { $set: { jira_score: jiraScore } }
       }
     };
   });

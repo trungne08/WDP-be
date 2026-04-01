@@ -11,7 +11,7 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
         jiraWeight: 0.4, gitWeight: 0.4, reviewWeight: 0.2, allowOverCeiling: false 
     };
 
-    // 2. Lấy danh sách thành viên (Điểm đã lưu sẵn trong m.scores)
+    // 2. Thành viên — trọng số Git/Jira: tỷ lệ 0..1 ở root (git_score, jira_score); legacy scores.commit_score
     const members = await TeamMember.find({ team_id: teamId, is_active: true })
         .populate('student_id', 'email');
     
@@ -22,10 +22,11 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
     let totalGitScore = 0;
     let totalJiraSP = 0;
 
-    members.forEach(m => {
-        // Lấy đúng đường dẫn object scores theo Schema database của bạn
-        totalGitScore += (m.scores?.commit_score || 0);
-        totalJiraSP += (m.scores?.jira_score || 0);
+    members.forEach((m) => {
+        const g = m.git_score != null ? Number(m.git_score) : Number(m.scores?.commit_score) || 0;
+        const j = Number(m.jira_score) || 0;
+        totalGitScore += g;
+        totalJiraSP += j;
     });
 
     // 4. Lấy dữ liệu Đánh giá chéo (Peer Review)
@@ -55,8 +56,9 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
         const mId = member._id.toString();
 
         // -- Lấy dữ liệu thô cá nhân --
-        const myGitScore = member.scores?.commit_score || 0;
-        const myJiraSP = member.scores?.jira_score || 0;
+        const myGitScore =
+            member.git_score != null ? Number(member.git_score) : Number(member.scores?.commit_score) || 0;
+        const myJiraSP = Number(member.jira_score) || 0;
         const myReviewTotal = reviewStats[mId] ? reviewStats[mId].total : 0;
         
         const avgStar = reviewStats[mId] && reviewStats[mId].count > 0 
