@@ -321,6 +321,7 @@ function normalizeGithubRepoUrl(url) {
 
 /**
  * Public URL của backend dùng trong config webhook (ưu tiên env production).
+ * GitHub yêu cầu URL webhook HTTPS (trừ localhost); sau proxy cần X-Forwarded-Proto.
  * @param {import('express').Request} [req]
  * @returns {string}
  */
@@ -329,10 +330,82 @@ function getWebhookBackendBaseUrl(req) {
         .trim()
         .replace(/\/$/, '');
     if (fromEnv) return fromEnv;
-    if (req && typeof req.get === 'function' && req.protocol) {
-        return `${req.protocol}://${req.get('host')}`.replace(/\/$/, '');
+    if (req && typeof req.get === 'function') {
+        const host = req.get('host');
+        if (!host) return '';
+        const xfProto = (req.get('x-forwarded-proto') || '').split(',')[0].trim();
+        const proto = xfProto || req.protocol || 'https';
+        return `${proto}://${host}`.replace(/\/$/, '');
     }
     return '';
+}
+
+/**
+ * Chuẩn hóa URL webhook để so khớp với GitHub API (tránh trùng do slash / http/https).
+ * @param {string} url
+ * @returns {string}
+ */
+function normalizeWebhookUrlForCompare(url) {
+    const raw = String(url || '').trim();
+    if (!raw) return '';
+    try {
+        const u = new URL(raw);
+        let path = u.pathname || '';
+        if (path.length > 1 && path.endsWith('/')) path = path.slice(0, -1);
+        return `${u.protocol}//${u.host.toLowerCase()}${path}`.toLowerCase();
+    } catch {
+        return raw.replace(/\/$/, '').toLowerCase();
+    }
+}
+
+/**
+ * GitHub không chấp nhận http cho webhook production — ép https trừ localhost.
+ * @param {string} baseUrl
+ * @returns {string}
+ */
+function ensureHttpsWebhookBase(baseUrl) {
+    const s = String(baseUrl || '').trim().replace(/\/$/, '');
+    if (!s) return s;
+    try {
+        const u = new URL(s);
+        const local = /^(localhost|127\.0\.0\.1)$/i.test(u.hostname);
+        if (u.protocol === 'http:' && !local) {
+            u.protocol = 'https:';
+            return u.origin;
+        }
+    } catch {
+        /* ignore */
+    }
+    return s;
+}
+
+/**
+ * Liệt kê webhook repo (REST hooks).
+ * @param {import('axios').AxiosInstance} client
+ * @param {string} owner
+ * @param {string} repo
+ * @returns {Promise<Array<object>>}
+ */
+async function listRepoWebhooks(client, owner, repo) {
+    const { data } = await client.get(`/repos/${owner}/${repo}/hooks`, {
+        params: { per_page: 100 }
+    });
+    return Array.isArray(data) ? data : [];
+}
+
+/**
+ * Tìm webhook `web` trùng URL payload (đã đăng ký trước đó).
+ */
+function findWebhookByPayloadUrl(hooks, targetUrl) {
+    const want = normalizeWebhookUrlForCompare(targetUrl);
+    return (
+        hooks.find(
+            (h) =>
+                h &&
+                h.name === 'web' &&
+                normalizeWebhookUrlForCompare(h.config?.url) === want
+        ) || null
+    );
 }
 
 /**
@@ -350,13 +423,34 @@ async function createGithubWebhook(owner, repo, githubAccessToken, backendUrl) {
     if (!githubAccessToken || typeof githubAccessToken !== 'string' || !githubAccessToken.trim()) {
         throw new Error('GitHub access token là bắt buộc');
     }
-    const base = (backendUrl || '').trim().replace(/\/$/, '');
+    const base = ensureHttpsWebhookBase((backendUrl || '').trim().replace(/\/$/, ''));
     if (!base) {
         throw new Error('backendUrl là bắt buộc để đăng ký webhook');
     }
 
     const client = createGithubClient(githubAccessToken.trim());
     const hookUrl = `${base}/api/webhooks/github`;
+
+    // Tránh 422 "Validation Failed" khi URL đã tồn tại (GitHub không cho trùng hook URL).
+    try {
+        const existingHooks = await listRepoWebhooks(client, owner, repo);
+        const existing = findWebhookByPayloadUrl(existingHooks, hookUrl);
+        if (existing) {
+            console.log(
+                `ℹ️ [GithubService] Webhook push đã tồn tại cho ${owner}/${repo} (hook id=${existing.id}) → ${hookUrl}`
+            );
+            return existing;
+        }
+    } catch (listErr) {
+        const st = listErr.response?.status;
+        if (st === 401 || st === 403) {
+            throw new Error(
+                'GitHub token không đủ quyền xem/tạo webhook (cần write:repo_hook / repo). Vui lòng kết nối lại GitHub.'
+            );
+        }
+        console.warn('⚠️ [GithubService] Không list được hooks (sẽ thử POST):', listErr.response?.data?.message || listErr.message);
+    }
+
     const payload = {
         name: 'web',
         active: true,
@@ -373,11 +467,39 @@ async function createGithubWebhook(owner, repo, githubAccessToken, backendUrl) {
         return response.data;
     } catch (error) {
         const status = error.response?.status;
-        const msg = error.response?.data?.message || error.message;
+        const body = error.response?.data;
+        const msg = body?.message || error.message;
+        const errDetails = Array.isArray(body?.errors)
+            ? body.errors.map((e) => e.message || e.code || JSON.stringify(e)).join('; ')
+            : '';
+
         if (status === 401 || status === 403) {
             throw new Error('GitHub token không đủ quyền tạo webhook (cần write:repo_hook / repo). Vui lòng kết nối lại GitHub.');
         }
-        throw new Error(msg || `Lỗi tạo webhook GitHub (${status || 'unknown'})`);
+
+        // Trùng URL: POST fail → lấy lại hook hiện có
+        if (status === 422) {
+            try {
+                const hooks = await listRepoWebhooks(client, owner, repo);
+                const dup = findWebhookByPayloadUrl(hooks, hookUrl);
+                if (dup) {
+                    console.log(
+                        `ℹ️ [GithubService] POST webhook 422 nhưng đã có hook trùng URL (id=${dup.id}) → ${hookUrl}`
+                    );
+                    return dup;
+                }
+            } catch {
+                /* fall through */
+            }
+            const hint =
+                errDetails ||
+                (msg === 'Validation Failed'
+                    ? 'URL không hợp lệ, trùng webhook, hoặc org chặn webhook — kiểm tra GitHub → Settings → Webhooks và env SERVER_URL/RENDER_EXTERNAL_URL (HTTPS).'
+                    : '');
+            throw new Error(hint || msg || `Lỗi tạo webhook GitHub (${status})`);
+        }
+
+        throw new Error(errDetails || msg || `Lỗi tạo webhook GitHub (${status || 'unknown'})`);
     }
 }
 

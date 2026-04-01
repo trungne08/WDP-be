@@ -75,6 +75,24 @@ function getCapacitorStyleOrigins() {
 }
 
 /**
+ * WebView hybrid (Capacitor / Ionic): origin không nằm trong list cố định.
+ * Android thường gửi `https://localhost` (không port); iOS hay `capacitor://localhost`.
+ */
+function isCapacitorOrHybridAppOrigin(origin) {
+  if (!origin || typeof origin !== 'string') return false;
+  try {
+    const u = new URL(origin);
+    const h = u.hostname.toLowerCase();
+    const p = u.protocol.toLowerCase();
+    if (p === 'capacitor:' || p === 'ionic:') return true;
+    if (h === 'localhost' && (p === 'https:' || p === 'http:')) return true;
+  } catch {
+    /* ignore */
+  }
+  return false;
+}
+
+/**
  * Mạng LAN (máy thật gọi BE trên PC) — chỉ bật khi CORS_ALLOW_PRIVATE_NETWORK_DEV=true (dev).
  */
 function isPrivateLanDevHttpOrigin(origin) {
@@ -184,6 +202,7 @@ function isPublicVercelAppOriginForCors(origin) {
 
 function isOriginAllowed(origin) {
   if (!origin) return true;
+  if (isCapacitorOrHybridAppOrigin(origin)) return true;
   if (getAllowedCorsOrigins().includes(origin)) return true;
   if (isVercelAppPreviewOrigin(origin)) return true;
   if (isPublicVercelAppOriginForCors(origin)) return true;
@@ -314,6 +333,7 @@ module.exports = {
   getOAuthTrustedOrigins,
   getBackendSelfOrigins,
   isOriginAllowed,
+  isCapacitorOrHybridAppOrigin,
   getBackendBaseUrl,
   isTrustedOAuthReturnBase,
   coerceOAuthRedirectForProduction,

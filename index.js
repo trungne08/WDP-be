@@ -29,12 +29,19 @@ logEnv('Atlassian', oauthEnv.atlassian);
 require('./config/passport');
 
 const app = express();
+// Render / reverse proxy: để req.protocol và IP client đúng (ảnh hưởng URL public khi build từ request)
+app.set('trust proxy', 1);
 
 // 1. Tạo HTTP Server bọc lấy Express App
 const server = http.createServer(app);
 
 // 2. Cấu hình Socket.io — dùng cùng logic whitelist với Express (tránh FE Vercel preview / domain lệch bị chặn handshake)
 const io = new Server(server, {
+  // Mobile / WebView: ưu tiên polling trước khi upgrade websocket (một số mạng chặn WS)
+  transports: ['polling', 'websocket'],
+  allowEIO3: true,
+  pingTimeout: 60000,
+  pingInterval: 25000,
   cors: {
     origin: (origin, callback) => {
       if (!origin) return callback(null, true);
@@ -62,13 +69,18 @@ io.on('connection', (socket) => {
 
   // Client gửi 'join_class' kèm classId để vào phòng lớp
   socket.on('join_class', (classId) => {
-    socket.join(String(classId));
-    console.log(`Socket ${socket.id} đã join vào phòng lớp: ${classId}`);
+    const raw = String(classId || '').trim();
+    const room = raw.startsWith('class:') ? raw.slice('class:'.length) : raw;
+    if (!room) return;
+    socket.join(room);
+    console.log(`Socket ${socket.id} đã join vào phòng lớp: ${room}`);
   });
 
   // Client gửi 'join_user' kèm userId để vào phòng riêng (cho Real-time Notification)
   socket.on('join_user', (userId) => {
-    const room = String(userId);
+    const raw = String(userId || '').trim();
+    const room = raw.startsWith('user:') ? raw.slice('user:'.length) : raw;
+    if (!room) return;
     socket.join(room);
     console.log(`Socket ${socket.id} đã join vào phòng user: ${room}`);
   });

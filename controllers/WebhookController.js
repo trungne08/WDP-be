@@ -298,7 +298,6 @@ exports.receiveJiraWebhook = async (req, res) => {
       if (dbProject.class_id) {
         io.to(String(dbProject.class_id)).emit(eventName, taskData);
       }
-      io.emit(eventName, taskData);
     };
 
     if (eventType === 'jira:issue_deleted') {
@@ -598,8 +597,7 @@ exports.receiveGithubWebhook = async (req, res) => {
         projectId: String(project._id),
         ...(project.class_id ? { classId: String(project.class_id) } : {})
       };
-      // Global (tương thích cũ) + đúng room join_project / join_class (index.js)
-      io.emit('GITHUB_NEW_COMMITS', githubNewCommitsPayload);
+      // Emit theo room để chỉ client liên quan mới nhận được.
       io.to(`project:${String(project._id)}`).emit('GITHUB_NEW_COMMITS', githubNewCommitsPayload);
       if (project.class_id) {
         io.to(String(project.class_id)).emit('GITHUB_NEW_COMMITS', githubNewCommitsPayload);
