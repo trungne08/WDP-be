@@ -10,6 +10,16 @@ function stripTrailingSlash(url) {
   return url.replace(/\/+$/, '');
 }
 
+/** CORS_EXTRA_ORIGINS: danh sách thêm (phân tách bằng dấu phẩy), ví dụ preview Vercel khác domain production. */
+function parseExtraOrigins() {
+  const raw = process.env.CORS_EXTRA_ORIGINS;
+  if (!raw || typeof raw !== 'string') return [];
+  return raw
+    .split(',')
+    .map((s) => stripTrailingSlash(s.trim()))
+    .filter(Boolean);
+}
+
 /** Danh sách origin cho CORS / Socket.io — luôn gồm localhost + Vercel + env. */
 function getAllowedCorsOrigins() {
   const fromEnv = [process.env.FRONTEND_URL, process.env.CLIENT_URL]
@@ -22,12 +32,27 @@ function getAllowedCorsOrigins() {
     'http://127.0.0.1:5173',
     DEFAULT_PRODUCTION_FRONTEND
   ];
-  return [...new Set([...defaults, ...fromEnv])];
+  return [...new Set([...defaults, ...fromEnv, ...parseExtraOrigins()])];
+}
+
+/**
+ * Cho phép mọi origin https://*.vercel.app khi CORS_ALLOW_VERCEL_PREVIEW=true (preview deploy khác tên app).
+ * Chỉ bật khi cần; production chỉ cần FRONTEND_URL + CORS_EXTRA_ORIGINS.
+ */
+function isVercelAppPreviewOrigin(origin) {
+  if (process.env.CORS_ALLOW_VERCEL_PREVIEW !== 'true') return false;
+  try {
+    const u = new URL(origin);
+    return u.protocol === 'https:' && u.hostname.endsWith('.vercel.app');
+  } catch {
+    return false;
+  }
 }
 
 function isOriginAllowed(origin) {
   if (!origin) return true;
-  return getAllowedCorsOrigins().includes(origin);
+  if (getAllowedCorsOrigins().includes(origin)) return true;
+  return isVercelAppPreviewOrigin(origin);
 }
 
 /** URL public backend (OAuth callback GitHub/Jira — không dùng CLIENT_URL). */

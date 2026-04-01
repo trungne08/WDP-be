@@ -8,7 +8,7 @@ const { Server } = require("socket.io"); // Import Socket.io
 
 require('dotenv').config(); // Cái này để đọc file .env
 
-const { getAllowedCorsOrigins, isOriginAllowed } = require('./utils/frontendUrl');
+const { isOriginAllowed } = require('./utils/frontendUrl');
 
 // Log env OAuth (chỉ báo có/không, không in giá trị) để dễ check trên Render
 const oauthEnv = {
@@ -33,13 +33,22 @@ const app = express();
 // 1. Tạo HTTP Server bọc lấy Express App
 const server = http.createServer(app);
 
-// 2. Cấu hình Socket.io
+// 2. Cấu hình Socket.io — dùng cùng logic whitelist với Express (tránh FE Vercel preview / domain lệch bị chặn handshake)
 const io = new Server(server, {
   cors: {
-    origin: getAllowedCorsOrigins(),
+    origin: (origin, callback) => {
+      if (!origin) return callback(null, true);
+      if (isOriginAllowed(origin)) return callback(null, true);
+      console.warn('⚠️ Socket.io CORS từ chối origin:', origin);
+      return callback(null, false);
+    },
     methods: ['GET', 'POST'],
     credentials: true
   }
+});
+
+io.engine.on('connection_error', (err) => {
+  console.warn('⚠️ Socket.io engine connection_error:', err?.message || err);
 });
 
 // 3. Lưu biến io ra biến toàn cục (Global) để dùng ở bất cứ file nào
