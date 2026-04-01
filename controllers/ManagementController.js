@@ -1307,14 +1307,11 @@ const addStudentToClass = async (req, res) => {
                         if (!projectDoc) continue;
 
                         const projectRoom = `project:${pid}`;
-                        global._io.to(projectRoom).emit('project_updated', {
-                            action: 'update',
-                            data: projectDoc
-                        });
-                        global._io.emit('project_updated', {
-                            action: 'update',
-                            data: projectDoc
-                        });
+                        const projectPayload = { action: 'update', data: projectDoc };
+                        global._io.to(projectRoom).emit('project_updated', projectPayload);
+                        if (projectDoc.class_id) {
+                            global._io.to(String(projectDoc.class_id)).emit('project_updated', projectPayload);
+                        }
                     }
                 }
 
@@ -1409,14 +1406,11 @@ const addStudentToClass = async (req, res) => {
                     if (!projectDoc) continue;
 
                     const projectRoom = `project:${pid}`;
-                    global._io.to(projectRoom).emit('project_updated', {
-                        action: 'update',
-                        data: projectDoc
-                    });
-                    global._io.emit('project_updated', {
-                        action: 'update',
-                        data: projectDoc
-                    });
+                    const projectPayload = { action: 'update', data: projectDoc };
+                    global._io.to(projectRoom).emit('project_updated', projectPayload);
+                    if (projectDoc.class_id) {
+                        global._io.to(String(projectDoc.class_id)).emit('project_updated', projectPayload);
+                    }
                 }
             }
 
@@ -1620,14 +1614,11 @@ const updateStudentInClass = async (req, res) => {
                         if (!projectDoc) continue;
 
                         const projectRoom = `project:${pid}`;
-                        global._io.to(projectRoom).emit('project_updated', {
-                            action: 'update',
-                            data: projectDoc
-                        });
-                        global._io.emit('project_updated', {
-                            action: 'update',
-                            data: projectDoc
-                        });
+                        const projectPayload = { action: 'update', data: projectDoc };
+                        global._io.to(projectRoom).emit('project_updated', projectPayload);
+                        if (projectDoc.class_id) {
+                            global._io.to(String(projectDoc.class_id)).emit('project_updated', projectPayload);
+                        }
                     }
                 }
             }
@@ -1738,14 +1729,11 @@ const removeStudentFromClass = async (req, res) => {
                     if (!projectDoc) continue;
 
                     const projectRoom = `project:${pid}`;
-                    global._io.to(projectRoom).emit('project_updated', {
-                        action: 'update',
-                        data: projectDoc
-                    });
-                    global._io.emit('project_updated', {
-                        action: 'update',
-                        data: projectDoc
-                    });
+                    const projectPayload = { action: 'update', data: projectDoc };
+                    global._io.to(projectRoom).emit('project_updated', projectPayload);
+                    if (projectDoc.class_id) {
+                        global._io.to(String(projectDoc.class_id)).emit('project_updated', projectPayload);
+                    }
                 }
             }
             return res.json({ message: '✅ Đã xóa sinh viên khỏi lớp!' });

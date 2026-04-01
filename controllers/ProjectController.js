@@ -329,14 +329,11 @@ exports.createProject = async (req, res) => {
       if (projectDoc) {
         const pid = project._id.toString();
         const projectRoom = `project:${pid}`;
-        global._io.to(projectRoom).emit('project_updated', {
-          action: 'insert',
-          data: projectDoc
-        });
-        global._io.emit('project_updated', {
-          action: 'insert',
-          data: projectDoc
-        });
+        const payload = { action: 'insert', data: projectDoc };
+        global._io.to(projectRoom).emit('project_updated', payload);
+        if (projectDoc.class_id) {
+          global._io.to(String(projectDoc.class_id)).emit('project_updated', payload);
+        }
       }
     }
 

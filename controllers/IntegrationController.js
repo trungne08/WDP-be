@@ -919,17 +919,25 @@ exports.syncMyProjectData = async (req, res) => {
       return res.status(403).json({ error: 'Bạn không có quyền sync project này' });
     }
 
-    // Tìm team từ project (thông qua TeamMember có project_id) để check role
+    // TeamMember: role + github_username; team_id chuẩn phải là Project.team_id (khớp getRanking / FE).
     let userRoleInTeam = null;
-    let teamId = null;
     const TeamMember = models.TeamMember;
     const teamMember = await TeamMember.findOne({
       project_id: project._id,
       student_id: user._id
     });
     if (teamMember) {
-      teamId = teamMember.team_id;
       userRoleInTeam = teamMember.role_in_team || null;
+    }
+
+    const teamIdFromProject = project.team_id;
+    const teamIdFromMember = teamMember?.team_id;
+    let teamId = teamIdFromProject || teamIdFromMember;
+    if (teamIdFromProject && teamIdFromMember && String(teamIdFromProject) !== String(teamIdFromMember)) {
+      console.warn(
+        `⚠️ [Sync] Lệch team_id: Project.team_id=${teamIdFromProject} vs TeamMember.team_id=${teamIdFromMember} — dùng Project.team_id để lưu commit (khớp API xếp hạng)`
+      );
+      teamId = teamIdFromProject;
     }
 
     const results = { github: 0, jira: 0, errors: [] };
