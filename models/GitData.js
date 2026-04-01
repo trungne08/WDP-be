@@ -129,6 +129,19 @@ GithubCommitSchema.statics.processCommit = async function(commitData, teamId, op
         };
     }
 
+    // Đồng bộ lịch sử (GitHub Sync): luôn is_counted = true (merge đã xử lý ở trên).
+    if (isSync) {
+        const messageLooksBad = !rawMessage || rawMessage.length < 10;
+        return {
+            is_counted: true,
+            reason: null,
+            isMergeCommit: false,
+            scoringNoteVi: messageLooksBad
+                ? 'Tin nhắn commit chưa đạt chuẩn (quá ngắn hoặc chưa theo Conventional Commits). Điểm AI vẫn tính nhưng bị giảm hệ số khi chấm.'
+                : null
+        };
+    }
+
     // 1. Commit message sai format KHÔNG loại commit khỏi vòng tính điểm nữa.
     //    Penalty sẽ được xử lý ở bước chấm AI score.
     const messageLooksBad =

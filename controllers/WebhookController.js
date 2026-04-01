@@ -11,6 +11,15 @@ function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** So khớp repo GitHub: bỏ .git, lowercase, so sánh owner/repo (khớp linh hoạt với DB). */
+function githubRepoMatchKey(url) {
+  if (!url || typeof url !== 'string') return '';
+  const base = GithubService.normalizeGithubRepoUrl(url).toLowerCase();
+  const m = base.match(/github\.com\/([^/]+)\/([^/?#]+)/);
+  if (!m) return '';
+  return `${m[1]}/${m[2]}`;
+}
+
 function taskLooksDoneByStatus(statusCategory, statusName) {
   const cat = String(statusCategory || '').toLowerCase();
   if (cat === 'done' || cat === 'completed') return true;
@@ -483,33 +492,65 @@ exports.receiveGithubWebhook = async (req, res) => {
       return res.status(200).send('Webhook received');
     }
 
-    const urlPattern = new RegExp(
-      `(?:https?:\\/\\/)?(?:www\\.)?github\\.com\\/${escapeRegex(owner)}\\/${escapeRegex(repo)}(?:\\.git)?/?$`,
-      'i'
-    );
-
-    const project = await models.Project.findOne({
-      githubRepoUrl: urlPattern
-    }).lean();
-
-    if (!project) {
-      console.log(`⚠️ [GitHub Webhook] Không tìm thấy project gắn repo ${owner}/${repo}`);
+    const incomingKey = githubRepoMatchKey(repoHtmlUrl);
+    if (!incomingKey) {
       return res.status(200).send('Webhook received');
     }
 
-    const teamMembers = await models.TeamMember.find({
+    let project = await models.Project.findOne({
+      githubRepoUrl: {
+        $regex: new RegExp(`github\\.com/${escapeRegex(owner)}/${escapeRegex(repo)}`, 'i')
+      }
+    }).lean();
+
+    if (!project || githubRepoMatchKey(project.githubRepoUrl) !== incomingKey) {
+      const candidates = await models.Project.find({
+        githubRepoUrl: { $exists: true, $nin: [null, ''] }
+      })
+        .select('githubRepoUrl name team_id class_id _id')
+        .lean();
+      project = candidates.find((p) => githubRepoMatchKey(p.githubRepoUrl) === incomingKey) || null;
+    }
+
+    if (!project) {
+      console.log(`⚠️ [GitHub Webhook] Không tìm thấy project gắn repo (key=${incomingKey})`);
+      return res.status(200).send('Webhook received');
+    }
+
+    console.log(
+      `✅ [GitHub Webhook] Đã match project ${project._id} — repo key ${incomingKey} | githubRepoUrl=${project.githubRepoUrl || '—'}`
+    );
+
+    let teamMembers = await models.TeamMember.find({
       project_id: project._id,
       is_active: true
     })
       .populate('student_id', 'email full_name integrations')
       .exec();
 
-    if (!teamMembers.length) {
-      console.log(`⚠️ [GitHub Webhook] Project ${project._id} không có team member active — bỏ qua commit.`);
-      return res.status(200).send('Webhook received');
+    if (!teamMembers.length && project.team_id) {
+      console.warn(
+        `⚠️ [GitHub Webhook] Không có TeamMember active theo project_id ${project._id}; thử theo team_id từ Project.`
+      );
+      teamMembers = await models.TeamMember.find({
+        team_id: project.team_id,
+        is_active: true
+      })
+        .populate('student_id', 'email full_name integrations')
+        .exec();
     }
 
-    const teamId = teamMembers[0].team_id;
+    // team_id: ưu tiên TeamMember; fallback Project.team_id (giống Jira webhook)
+    const teamId = teamMembers[0]?.team_id || project.team_id || null;
+    if (!teamId) {
+      console.log(`⚠️ [GitHub Webhook] Không có team_id cho project: ${project._id}`);
+      return res.status(200).send('Webhook received');
+    }
+    if (!teamMembers.length && project.team_id) {
+      console.warn(
+        `⚠️ [GitHub Webhook] Không có TeamMember active cho project ${project._id}; đã có team_id=${teamId} từ Project (không khớp author thì không lưu commit).`
+      );
+    }
     const GithubCommit = models.GithubCommit;
     const jiraRegex = /[A-Z][A-Z0-9]+-\d+/g;
     const branch = (payload.ref || '').replace(/^refs\/heads\//, '') || null;
@@ -550,6 +591,7 @@ exports.receiveGithubWebhook = async (req, res) => {
         branches: branch ? [branch] : []
       };
 
+      // Realtime push: KHÔNG truyền isSync — áp cooldown 10 phút + merge; khác luồng đồng bộ lịch sử (isSync: true).
       const checkResult = await GithubCommit.processCommit(commit, teamId);
       const branchesToAdd = branch ? [branch] : [];
       const extractedJiraIssues = [...new Set((commit.message || '').match(jiraRegex) || [])];
@@ -593,7 +635,7 @@ exports.receiveGithubWebhook = async (req, res) => {
       }
     }
 
-    const io = req.app.get('io');
+    const io = req.app.get('io') || global._io;
     if (io && commitsSaved > 0) {
       const githubNewCommitsPayload = {
         message: 'Có code mới vừa được push lên GitHub!',

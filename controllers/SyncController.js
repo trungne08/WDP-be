@@ -93,6 +93,23 @@ exports.syncTeamData = async (req, res) => {
                     }
                     results.git = commits.length;
                     console.log(`✅ [Team Sync] Đã sync ${commits.length} commits từ tất cả branches`);
+
+                    const io = req.app.get('io') || global._io;
+                    if (io && project?._id) {
+                        const payload = {
+                            projectId: String(project._id),
+                            teamId: String(teamId),
+                            commitsSynced: results.git,
+                            source: 'sync_team_data'
+                        };
+                        io.to(`project:${String(project._id)}`).emit('sync_github_completed', payload);
+                        if (project.class_id) {
+                            io.to(String(project.class_id)).emit('sync_github_completed', payload);
+                        }
+                        console.log(
+                            `📡 [Socket] Đã bắn refresh cho GitHub Sync — project=${project._id} commits=${results.git}`
+                        );
+                    }
                 }
             } catch (err) {
                 console.error('❌ Lỗi Sync GitHub:', err.message);

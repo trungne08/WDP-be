@@ -16,6 +16,48 @@ const {
   coerceOAuthRedirectForProduction
 } = require('../utils/frontendUrl');
 
+/** Callback URL trên BE (GitHub/Jira redirect về đây) — alias rõ nghĩa */
+function getClientBaseUrl(req) {
+  return getBackendBaseUrl(req);
+}
+
+/**
+ * Lỗi từ GitHub/Atlassian khi đổi authorization code (dùng lại code, sai redirect_uri, hết hạn…).
+ * Không trả stack trace / body thô cho client — FE hiển thị Toast.
+ */
+function isOAuthAuthorizationCodeError(err) {
+  const status = err.response?.status;
+  const data = err.response?.data;
+  const text =
+    typeof data === 'string'
+      ? data
+      : data && typeof data === 'object'
+        ? JSON.stringify(data)
+        : '';
+  const combined = `${err.message || ''} ${text}`.toLowerCase();
+  if (status === 400 || status === 401 || status === 403 || status === 422) return true;
+  if (combined.includes('bad_verification_code')) return true;
+  if (combined.includes('incorrect_client_credentials')) return true;
+  if (combined.includes('redirect_uri')) return true;
+  if (combined.includes('invalid_grant')) return true;
+  if (combined.includes('malformed')) return true;
+  if (combined.includes('expired')) return true;
+  if (combined.includes('incorrect or expired')) return true;
+  return false;
+}
+
+function sendOAuthCallbackHttpError(res, err, { provider = 'OAuth' } = {}) {
+  console.error(`❌ [${provider}]`, err?.message || err);
+  if (err?.response) {
+    console.error('   - Status:', err.response.status);
+    console.error('   - Data:', err.response.data);
+  }
+  if (isOAuthAuthorizationCodeError(err)) {
+    return res.status(400).json({ message: 'Code lỗi hoặc hết hạn' });
+  }
+  return res.status(500).json({ message: 'Lỗi máy chủ khi kết nối. Vui lòng thử lại sau.' });
+}
+
 function getGithubConfig(req, platform = 'web') {
   // Hỗ trợ 2 OAuth App khác nhau cho GitHub: WEB & MOBILE
   // - WEB:   GITHUB_CLIENT_ID_WEB,   GITHUB_CLIENT_SECRET_WEB
@@ -195,12 +237,20 @@ exports.githubCallback = async (req, res) => {
   try {
     const { code, state } = req.query;
     if (!code || !state) {
-      return res.status(400).json({ error: 'Thiếu code hoặc state từ GitHub callback' });
+      return res.status(400).json({ message: 'Thiếu code hoặc state từ GitHub callback' });
     }
 
-    const decoded = IntegrationService.verifyOAuthState(state);
+    let decoded;
+    try {
+      decoded = IntegrationService.verifyOAuthState(state);
+    } catch (e) {
+      console.error('❌ [GitHub Callback] State JWT:', e.message);
+      return res.status(400).json({
+        message: 'Phiên OAuth không hợp lệ hoặc đã hết hạn. Vui lòng kết nối lại.'
+      });
+    }
     if (decoded.provider !== 'github') {
-      return res.status(400).json({ error: 'State không hợp lệ (provider mismatch)' });
+      return res.status(400).json({ message: 'State không hợp lệ (provider mismatch)' });
     }
 
     const platform = decoded.platform || 'web';
@@ -244,20 +294,10 @@ exports.githubCallback = async (req, res) => {
     const frontendUrl = decoded.frontendRedirectUri || process.env.CLIENT_URL || 'http://localhost:3000';
     return res.redirect(`${frontendUrl}/callback/github?success=true&username=${encodeURIComponent(ghUser.username)}`);
   } catch (error) {
-    // Log chi tiết lỗi từ GitHub API
-    console.error('❌ [GitHub Callback] Lỗi:', error.message);
-    if (error.response) {
-      console.error('   - Status:', error.response.status);
-      console.error('   - Data:', JSON.stringify(error.response.data, null, 2));
+    if (error.message && String(error.message).includes('đã được liên kết')) {
+      return res.status(400).json({ message: error.message });
     }
-    
-    // Trả về lỗi chi tiết để dễ debug
-    const errorDetails = error.response?.data || error.message;
-    return res.status(error.response?.status || 500).json({ 
-      error: 'Lỗi kết nối GitHub',
-      details: errorDetails,
-      message: error.message
-    });
+    return sendOAuthCallbackHttpError(res, error, { provider: 'GitHub Callback' });
   }
 };
 
@@ -308,13 +348,20 @@ exports.jiraCallback = async (req, res) => {
   try {
     const { code, state } = req.query;
     if (!code || !state) {
-      return res.status(400).json({ error: 'Thiếu code hoặc state từ Jira callback' });
+      return res.status(400).json({ message: 'Thiếu code hoặc state từ Jira callback' });
     }
 
-    // Verify state JWT
-    const decoded = JiraAuthService.verifyOAuthState(state);
+    let decoded;
+    try {
+      decoded = JiraAuthService.verifyOAuthState(state);
+    } catch (e) {
+      console.error('❌ [Jira Callback] State JWT:', e.message);
+      return res.status(400).json({
+        message: 'Phiên OAuth không hợp lệ hoặc đã hết hạn. Vui lòng kết nối lại.'
+      });
+    }
     if (decoded.provider !== 'jira') {
-      return res.status(400).json({ error: 'State không hợp lệ (provider mismatch)' });
+      return res.status(400).json({ message: 'State không hợp lệ (provider mismatch)' });
     }
 
     const { clientId, clientSecret } = getAtlassianConfig(req);
@@ -423,18 +470,10 @@ exports.jiraCallback = async (req, res) => {
     // Web callback
     return res.redirect(`${frontendUrl}/callback/jira?success=true&accountId=${encodeURIComponent(me.accountId)}`);
   } catch (error) {
-    console.error('❌ [Jira Callback] Lỗi:', error.message);
-    if (error.response) {
-      console.error('   - Status:', error.response.status);
-      console.error('   - Data:', JSON.stringify(error.response.data, null, 2));
+    if (error.message && String(error.message).includes('đã được liên kết')) {
+      return res.status(400).json({ message: error.message });
     }
-    
-    const errorDetails = error.response?.data || error.message;
-    return res.status(error.response?.status || 500).json({ 
-      error: 'Lỗi kết nối Jira',
-      details: errorDetails,
-      message: error.message
-    });
+    return sendOAuthCallbackHttpError(res, error, { provider: 'Jira Callback' });
   }
 };
 
@@ -929,6 +968,12 @@ exports.syncMyProjectData = async (req, res) => {
     if (teamMember) {
       userRoleInTeam = teamMember.role_in_team || null;
     }
+    // Có trong Project (leader/member) nhưng chưa có TeamMember: coi SV không phải leader là Member → chỉ sync commit cá nhân (khớp commitBelongsToAuthor)
+    const isLeaderOnProject = project.leader_id.toString() === user._id.toString();
+    const isMemberOnProject = project.members.some((m) => m.toString() === user._id.toString());
+    if (!userRoleInTeam && isMemberOnProject && !isLeaderOnProject) {
+      userRoleInTeam = 'Member';
+    }
 
     const teamIdFromProject = project.team_id;
     const teamIdFromMember = teamMember?.team_id;
@@ -1002,19 +1047,25 @@ exports.syncMyProjectData = async (req, res) => {
             const primaryBranch = commit.branch || (commit.branches && commit.branches[0]) || null;
             const extractedJiraIssues = [...new Set((commit.message || '').match(jiraRegex) || [])];
 
-            const updateDoc = {
-              $set: {
-                team_id: teamId,
-                author_email: commit.author_email,
-                author_name: commit.author_name,
-                message: commit.message,
-                commit_date: commit.commit_date,
-                url: commit.url,
-                branch: primaryBranch,
-                is_counted: checkResult.is_counted,
-                rejection_reason: checkResult.reason
-              }
+            const setFields = {
+              team_id: teamId,
+              author_email: commit.author_email,
+              author_name: commit.author_name,
+              message: commit.message,
+              commit_date: commit.commit_date,
+              url: commit.url,
+              branch: primaryBranch,
+              is_counted: checkResult.is_counted,
+              is_merge_commit: !!checkResult.isMergeCommit,
+              rejection_reason: checkResult.is_counted ? null : checkResult.reason,
+              scoring_note_vi: checkResult.scoringNoteVi != null ? checkResult.scoringNoteVi : null
             };
+            if (checkResult.isMergeCommit) {
+              setFields.ai_score = null;
+              setFields.ai_review = null;
+              setFields.scoring_note_vi = null;
+            }
+            const updateDoc = { $set: setFields };
             const addToSetFields = {};
             if (branchesToAdd.length > 0) addToSetFields.branches = { $each: branchesToAdd };
             if (extractedJiraIssues.length > 0) addToSetFields.jira_issues = { $each: extractedJiraIssues };
@@ -1033,6 +1084,23 @@ exports.syncMyProjectData = async (req, res) => {
         }
         results.github = syncedCommits;
         console.log(`✅ [Sync GitHub] Đã sync ${syncedCommits} commits từ tất cả branches`);
+
+        const io = req.app.get('io') || global._io;
+        if (io && project?._id) {
+          const payload = {
+            projectId: String(project._id),
+            teamId: teamId ? String(teamId) : '',
+            commitsSynced: syncedCommits,
+            source: 'sync_my_project_data'
+          };
+          io.to(`project:${String(project._id)}`).emit('sync_github_completed', payload);
+          if (project.class_id) {
+            io.to(String(project.class_id)).emit('sync_github_completed', payload);
+          }
+          console.log(
+            `📡 [Socket] Đã bắn refresh cho GitHub Sync (syncMyProjectData) — project=${project._id} commits=${syncedCommits}`
+          );
+        }
       } catch (err) {
         console.error('❌ [Sync GitHub] Lỗi:', err.message);
         if (err.message.includes('token không hợp lệ')) {
@@ -1289,6 +1357,10 @@ exports.getProjectGithubBranches = async (req, res) => {
 /**
  * GET /api/integrations/my-commits
  * Member: Lấy commits GitHub của chính mình (tất cả teams/projects)
+ *
+ * Lọc commit phải khớp utils/commitUtils.commitBelongsToAuthor (cùng webhook / getTeamCommits),
+ * không chỉ regex MongoDB — tránh mất commit khi author_name / noreply khác format.
+ * team_id: lấy từ TeamMember VÀ từ Project (leader_id / members) để không rỗng khi thiếu bản ghi TeamMember.
  */
 exports.getMyCommits = async (req, res) => {
   try {
@@ -1299,8 +1371,26 @@ exports.getMyCommits = async (req, res) => {
 
     const TeamMember = models.TeamMember;
     const Project = models.Project;
-    const teamMembers = await TeamMember.find({ student_id: user._id }).lean();
-    const teamIds = [...new Set(teamMembers.map(tm => tm.team_id?.toString()).filter(Boolean))];
+    const userId = user._id;
+
+    const teamMembers = await TeamMember.find({ student_id: userId }).lean();
+    const projectsLinked = await Project.find({
+      $or: [{ leader_id: userId }, { members: userId }]
+    })
+      .select('team_id')
+      .lean();
+
+    const teamIdSet = new Set();
+    for (const tm of teamMembers) {
+      if (tm.team_id) teamIdSet.add(String(tm.team_id));
+    }
+    for (const p of projectsLinked) {
+      if (p.team_id) teamIdSet.add(String(p.team_id));
+    }
+
+    const teamIds = [...teamIdSet]
+      .filter((id) => mongoose.Types.ObjectId.isValid(id))
+      .map((id) => new mongoose.Types.ObjectId(id));
 
     if (teamIds.length === 0) {
       return res.json({ total: 0, commits: [], projects: [], message: 'Bạn chưa tham gia project nào' });
@@ -1308,7 +1398,7 @@ exports.getMyCommits = async (req, res) => {
 
     const emails = [user.email].filter(Boolean);
     const githubUsernames = [
-      ...teamMembers.map(tm => tm.github_username).filter(Boolean),
+      ...teamMembers.map((tm) => tm.github_username).filter(Boolean),
       user.integrations?.github?.username
     ].filter(Boolean);
     const displayNames = [user.full_name].filter((n) => n && String(n).trim());
@@ -1317,42 +1407,35 @@ exports.getMyCommits = async (req, res) => {
     const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
     const branch = (req.query?.branch || '').trim() || null;
 
-    const andParts = [{ team_id: { $in: teamIds } }];
-    if (emails.length > 0 || githubUsernames.length > 0 || displayNames.length > 0) {
-      const authorOr = [];
-      if (emails.length > 0) {
-        authorOr.push({ author_email: { $in: emails.map(e => (e || '').toLowerCase().trim()) } });
-      }
-      for (const u of githubUsernames) {
-        if (!u || typeof u !== 'string') continue;
-        const escaped = u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        authorOr.push({ author_email: new RegExp(escaped + '@users\\.noreply\\.github\\.com', 'i') });
-        authorOr.push({ author_email: new RegExp('\\+' + escaped + '@users\\.noreply', 'i') });
-        authorOr.push({ author_name: new RegExp('^' + escaped + '$', 'i') });
-      }
-      for (const name of displayNames) {
-        const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        authorOr.push({ author_name: new RegExp('^' + escaped + '$', 'i') });
-      }
-      if (authorOr.length > 0) andParts.push({ $or: authorOr });
-    }
-    if (branch) {
-      andParts.push({ $or: [{ branch: branch }, { branches: branch }] });
-    }
-    const query = { $and: andParts };
+    const fetchCap = Math.min(4000, Math.max(limit * 60, 250));
 
-    let commits = [];
-    if (emails.length > 0 || githubUsernames.length > 0 || displayNames.length > 0) {
-      commits = await GithubCommit.find(query)
-        .sort({ commit_date: -1 })
-        .limit(limit)
-        .lean();
+    const baseQuery = { team_id: { $in: teamIds } };
+    if (branch) {
+      baseQuery.$or = [{ branch: branch }, { branches: branch }];
     }
+
+    const rawCommits = await GithubCommit.find(baseQuery)
+      .sort({ commit_date: -1 })
+      .limit(fetchCap)
+      .lean();
+
+    const commitsRaw = rawCommits
+      .filter((c) =>
+        commitBelongsToAuthor(
+          { author_email: c.author_email, author_name: c.author_name },
+          emails,
+          githubUsernames,
+          displayNames
+        )
+      )
+      .slice(0, limit);
+
+    const commits = commitsRaw.map((c) => GithubCommit.localizeCommitForApi(c));
 
     const projects = await Project.find({ team_id: { $in: teamIds } }).select('_id name team_id').lean();
 
     return res.json({
-      projects: projects.map(p => ({ _id: p._id, name: p.name, team_id: p.team_id })),
+      projects: projects.map((p) => ({ _id: p._id, name: p.name, team_id: p.team_id })),
       total: commits.length,
       commits
     });
