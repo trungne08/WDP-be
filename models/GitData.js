@@ -57,7 +57,10 @@ GithubCommitSchema.statics.processCommit = async function(commitData, teamId) {
     }).sort({ commit_date: -1 }); // Lấy cái mới nhất
 
     if (lastValidCommit) {
-        const diffInMs = new Date(commitData.commit_date) - new Date(lastValidCommit.commit_date);
+        const currentTs = new Date(commitData.commit_date).getTime();
+        const lastTs = new Date(lastValidCommit.commit_date).getTime();
+        // Luôn lấy trị tuyệt đối để tránh sai lệch timezone/order khiến ra số âm.
+        const diffInMs = Math.abs(currentTs - lastTs);
         const diffInMinutes = diffInMs / (1000 * 60);
 
         if (diffInMinutes < 10) { // Cooldown > 10m theo schema
