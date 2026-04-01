@@ -46,7 +46,7 @@ function parseOAuthExtraOrigins() {
 
 /** Localhost / 127.0.0.1 cổng thường dùng (Vite, CRA, Next, preview) — web + dev cùng backend. */
 function getDefaultLocalDevOrigins() {
-  const ports = [3000, 3001, 4173, 5173, 5174, 8080, 8888];
+  const ports = [3000, 3001, 4173, 5173, 5174, 8080, 8081, 8888];
   const hosts = ['localhost', '127.0.0.1'];
   const out = [];
   for (const h of hosts) {
@@ -55,6 +55,41 @@ function getDefaultLocalDevOrigins() {
     }
   }
   return out;
+}
+
+/**
+ * Android Emulator: WebView / RN Metro trỏ về máy dev qua 10.0.2.2 (tương đương localhost trên host).
+ */
+function getAndroidEmulatorDevOrigins() {
+  const ports = [3000, 3001, 4173, 5173, 5174, 8080, 8081, 8888];
+  const out = [];
+  for (const p of ports) {
+    out.push(`http://10.0.2.2:${p}`);
+  }
+  return out;
+}
+
+/** Capacitor / Ionic WebView — origin hay gặp khi bọc SPA trong app Android Studio. */
+function getCapacitorStyleOrigins() {
+  return ['capacitor://localhost', 'ionic://localhost'];
+}
+
+/**
+ * Mạng LAN (máy thật gọi BE trên PC) — chỉ bật khi CORS_ALLOW_PRIVATE_NETWORK_DEV=true (dev).
+ */
+function isPrivateLanDevHttpOrigin(origin) {
+  if (process.env.CORS_ALLOW_PRIVATE_NETWORK_DEV !== 'true') return false;
+  try {
+    const u = new URL(origin);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    const h = u.hostname;
+    if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+    if (/^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+    if (/^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(h)) return true;
+    return false;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -86,13 +121,22 @@ function getBackendSelfOrigins() {
 function getAllowedCorsOrigins() {
   const fromEnv = [process.env.FRONTEND_URL, process.env.CLIENT_URL]
     .filter(Boolean)
-    .map(stripTrailingSlash);
-  const defaults = [...getDefaultLocalDevOrigins(), DEFAULT_PRODUCTION_FRONTEND];
+    .map((x) => {
+      const t = stripTrailingSlash(String(x).trim());
+      return normalizeToOrigin(t) || t;
+    })
+    .filter(Boolean);
+  const defaults = [
+    ...getDefaultLocalDevOrigins(),
+    ...getAndroidEmulatorDevOrigins(),
+    ...getCapacitorStyleOrigins(),
+    DEFAULT_PRODUCTION_FRONTEND
+  ];
   return [
     ...new Set([
       ...defaults,
       ...fromEnv,
-      ...parseExtraOrigins(),
+      ...parseExtraOrigins().map((x) => normalizeToOrigin(x) || x),
       ...parseOAuthExtraOrigins(),
       ...getBackendSelfOrigins()
     ])
@@ -109,23 +153,41 @@ function getOAuthTrustedOrigins() {
 }
 
 /**
- * Cho phép mọi origin https://*.vercel.app khi CORS_ALLOW_VERCEL_PREVIEW=true (preview deploy khác tên app).
- * Chỉ bật khi cần; production chỉ cần FRONTEND_URL + CORS_EXTRA_ORIGINS.
+ * HTTPS + hostname *.vercel.app (preview / production trên domain Vercel).
  */
-function isVercelAppPreviewOrigin(origin) {
-  if (process.env.CORS_ALLOW_VERCEL_PREVIEW !== 'true') return false;
+function isHttpsVercelAppHostname(origin) {
   try {
     const u = new URL(origin);
-    return u.protocol === 'https:' && u.hostname.endsWith('.vercel.app');
+    const h = u.hostname.toLowerCase();
+    return u.protocol === 'https:' && (h.endsWith('.vercel.app') || h === 'vercel.app');
   } catch {
     return false;
   }
 }
 
+/**
+ * Cho phép mọi origin https://*.vercel.app khi CORS_ALLOW_VERCEL_PREVIEW=true (tương thích cũ).
+ */
+function isVercelAppPreviewOrigin(origin) {
+  if (process.env.CORS_ALLOW_VERCEL_PREVIEW !== 'true') return false;
+  return isHttpsVercelAppHostname(origin);
+}
+
+/**
+ * Mọi deploy `https://*.vercel.app` — mặc định BẬT (FE preview hay khác `sync-system.vercel.app`).
+ * Tắt: CORS_ALLOW_ALL_VERCEL_APP=false trên server.
+ */
+function isPublicVercelAppOriginForCors(origin) {
+  if (process.env.CORS_ALLOW_ALL_VERCEL_APP === 'false') return false;
+  return isHttpsVercelAppHostname(origin);
+}
+
 function isOriginAllowed(origin) {
   if (!origin) return true;
   if (getAllowedCorsOrigins().includes(origin)) return true;
-  return isVercelAppPreviewOrigin(origin);
+  if (isVercelAppPreviewOrigin(origin)) return true;
+  if (isPublicVercelAppOriginForCors(origin)) return true;
+  return isPrivateLanDevHttpOrigin(origin);
 }
 
 /** URL public backend (OAuth callback GitHub/Jira — không dùng CLIENT_URL). */
@@ -139,25 +201,73 @@ function getBackendBaseUrl(req) {
 }
 
 /**
- * Chỉ chấp nhận redirect về origin mà CORS/Socket cũng chấp nhận, NGOẠI TRỪ domain thuần API
- * (ví dụ Render) — tránh redirect SPA về host không có UI.
+ * Origin được phép làm redirect_uri sau OAuth (chống open redirect về domain lạ).
+ * Không gọi trực tiếp isOriginAllowed (vì CORS có thể mở rộng *.vercel.app).
  */
 function isTrustedOAuthReturnBase(url) {
   if (!url || typeof url !== 'string') return false;
+  const t = url.trim();
+  // Deep link app (Jira/GitHub mobile callback trong IntegrationController)
+  if (/^syncapp:\/\//i.test(t)) return true;
   const o = normalizeToOrigin(url);
   if (!o) return false;
   const backendSet = new Set(getBackendSelfOrigins());
   if (backendSet.has(o)) return false;
-  return isOriginAllowed(o);
+  if (getOAuthTrustedOrigins().includes(o)) return true;
+  if (isPublicVercelAppOriginForCors(o)) return true;
+  if (isPrivateLanDevHttpOrigin(o)) return true;
+  return false;
+}
+
+function isLocalhostUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const s = url.trim();
+    const u = new URL(s.includes('://') ? s : `http://${s}`);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
+
+/** URL FE production ưu tiên từ env; không fallback localhost. */
+function getProductionOAuthFrontendBase() {
+  return stripTrailingSlash(
+    process.env.FRONTEND_URL || process.env.CLIENT_URL || DEFAULT_PRODUCTION_FRONTEND
+  );
+}
+
+/**
+ * Trên server production (Render): không redirect user về localhost khi họ dùng web deploy
+ * (FE hay gửi nhầm redirect_uri=http://localhost:3000 từ biến dev).
+ */
+function coerceOAuthRedirectForProduction(baseUrl) {
+  const strip = stripTrailingSlash(String(baseUrl || '').trim());
+  if (!strip) return strip;
+  if (!isLocalhostUrl(strip)) return strip;
+  const onProd = process.env.NODE_ENV === 'production';
+  if (!onProd) return strip;
+  const replacement = getProductionOAuthFrontendBase();
+  if (replacement && !isLocalhostUrl(replacement)) {
+    console.warn(
+      `⚠️ OAuth: Bỏ redirect về localhost trên production; chuyển về FE: ${replacement}`
+    );
+    return replacement;
+  }
+  return strip;
 }
 
 /**
  * Khi FE gọi init OAuth: mặc định redirect sau login.
- * Ưu tiên env production, cuối cùng localhost (dev team).
+ * Production: không mặc định localhost (tránh web Vercel bị callback về máy local).
  */
 function getDefaultOAuthInitBase() {
+  const devFallback = 'http://localhost:3000';
+  if (process.env.NODE_ENV === 'production') {
+    return getProductionOAuthFrontendBase();
+  }
   return stripTrailingSlash(
-    process.env.FRONTEND_URL || process.env.CLIENT_URL || 'http://localhost:3000'
+    process.env.FRONTEND_URL || process.env.CLIENT_URL || devFallback
   );
 }
 
@@ -176,16 +286,20 @@ function getEmailFrontendUrl() {
  * - Không có / không hợp lệ → FRONTEND_URL hoặc domain production mặc định.
  */
 function resolveOAuthRedirectBaseUrl(decodedState) {
+  let resolved;
   if (!decodedState || typeof decodedState !== 'object') {
-    return stripTrailingSlash(process.env.FRONTEND_URL || DEFAULT_PRODUCTION_FRONTEND);
+    resolved = stripTrailingSlash(process.env.FRONTEND_URL || DEFAULT_PRODUCTION_FRONTEND);
+  } else {
+    const raw = String(
+      decodedState.redirect_uri || decodedState.frontendRedirectUri || ''
+    ).trim();
+    if (raw && isTrustedOAuthReturnBase(raw)) {
+      resolved = stripTrailingSlash(raw);
+    } else {
+      resolved = stripTrailingSlash(process.env.FRONTEND_URL || DEFAULT_PRODUCTION_FRONTEND);
+    }
   }
-  const raw = String(
-    decodedState.redirect_uri || decodedState.frontendRedirectUri || ''
-  ).trim();
-  if (raw && isTrustedOAuthReturnBase(raw)) {
-    return stripTrailingSlash(raw);
-  }
-  return stripTrailingSlash(process.env.FRONTEND_URL || DEFAULT_PRODUCTION_FRONTEND);
+  return coerceOAuthRedirectForProduction(resolved);
 }
 
 /** Alias tương thích: base URL mặc định khi không có state OAuth. */
@@ -202,6 +316,7 @@ module.exports = {
   isOriginAllowed,
   getBackendBaseUrl,
   isTrustedOAuthReturnBase,
+  coerceOAuthRedirectForProduction,
   getDefaultOAuthInitBase,
   getEmailFrontendUrl,
   resolveOAuthRedirectBaseUrl,

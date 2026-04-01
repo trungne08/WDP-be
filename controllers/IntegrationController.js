@@ -12,7 +12,8 @@ const {
   stripTrailingSlash,
   isTrustedOAuthReturnBase,
   getDefaultOAuthInitBase,
-  resolveOAuthRedirectBaseUrl
+  resolveOAuthRedirectBaseUrl,
+  coerceOAuthRedirectForProduction
 } = require('../utils/frontendUrl');
 
 function getGithubConfig(req, platform = 'web') {
@@ -167,7 +168,9 @@ exports.githubConnect = async (req, res) => {
           'redirect_uri không hợp lệ. Dùng origin FE (vd: http://localhost:5173 hoặc https://sync-system.vercel.app), hoặc thêm OAUTH_EXTRA_REDIRECT_ORIGINS / CORS_EXTRA_ORIGINS trên server.'
       });
     }
-    const frontendRedirectUri = rawFe ? stripTrailingSlash(rawFe) : getDefaultOAuthInitBase();
+    const frontendRedirectUri = coerceOAuthRedirectForProduction(
+      rawFe ? stripTrailingSlash(rawFe) : getDefaultOAuthInitBase()
+    );
 
     // State JWT: chứa userId + role và frontendRedirectUri để callback biết redirect về đâu
     const state = IntegrationService.signOAuthState({
@@ -273,7 +276,9 @@ exports.jiraConnect = async (req, res) => {
           'redirect_uri không hợp lệ. Dùng origin FE (vd: http://localhost:5173 hoặc https://sync-system.vercel.app), hoặc thêm OAUTH_EXTRA_REDIRECT_ORIGINS / CORS_EXTRA_ORIGINS trên server.'
       });
     }
-    const frontendRedirectUri = rawFe ? stripTrailingSlash(rawFe) : getDefaultOAuthInitBase();
+    const frontendRedirectUri = coerceOAuthRedirectForProduction(
+      rawFe ? stripTrailingSlash(rawFe) : getDefaultOAuthInitBase()
+    );
 
     console.log(`🔐 [Jira Connect] Platform: ${platform}, User: ${req.user?.email}`);
 

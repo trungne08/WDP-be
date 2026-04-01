@@ -96,7 +96,7 @@ process.on('uncaughtException', (err) => {
   console.error('❌ [uncaughtException]', err);
 });
 
-// CORS: localhost + Vercel + FRONTEND_URL / CLIENT_URL (utils/frontendUrl.js)
+// CORS: localhost + Vercel (kể cả *.vercel.app preview) + FRONTEND_URL + backend origin (Socket) — xem utils/frontendUrl.js
 app.use(cors({
     origin: function (origin, callback) {
         if (!origin) return callback(null, true);
@@ -105,7 +105,19 @@ app.use(cors({
         return callback(null, false);
     },
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS', 'HEAD'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin', 'Access-Control-Request-Method', 'Access-Control-Request-Headers'],
+    allowedHeaders: [
+        'Content-Type',
+        'Authorization',
+        'X-Requested-With',
+        'Accept',
+        'Origin',
+        'X-Platform',
+        'x-platform',
+        'Cache-Control',
+        'Pragma',
+        'Access-Control-Request-Method',
+        'Access-Control-Request-Headers'
+    ],
     exposedHeaders: ['Content-Type', 'Authorization'],
     credentials: true,
     preflightContinue: false,
