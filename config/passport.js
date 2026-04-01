@@ -5,6 +5,21 @@ const crypto = require('crypto');
 const { getRoleFromEmail, extractStudentCodeFromEmail } = require('../utils/roleHelper');
 const models = require('../models');
 
+async function assertStudentCodeNotLinked(studentCode, excludeUserId = null) {
+  const normalizedCode = String(studentCode || '').trim().toUpperCase();
+  if (!normalizedCode) return;
+
+  const query = { student_code: normalizedCode };
+  if (excludeUserId) query._id = { $ne: excludeUserId };
+
+  const existed = await models.Student.findOne(query).select('_id email student_code').lean();
+  if (existed) {
+    const err = new Error('Mã số sinh viên này đã được liên kết với một tài khoản Google khác trong hệ thống.');
+    err.code = 'STUDENT_CODE_ALREADY_LINKED';
+    throw err;
+  }
+}
+
 /**
  * Cấu hình Google OAuth Strategy
  * Chỉ khởi tạo nếu có đủ env variables
@@ -65,6 +80,13 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
           if (displayName && (!user.full_name || user.full_name !== displayName)) {
             user.full_name = displayName;
           }
+          if (role === 'STUDENT') {
+            const derivedCode = (extractStudentCodeFromEmail(email) || email.split('@')[0] || '').toUpperCase();
+            if (derivedCode && !user.student_code) {
+              await assertStudentCodeNotLinked(derivedCode, user._id);
+              user.student_code = derivedCode;
+            }
+          }
           // Đánh dấu email đã verified khi login bằng Google
           user.is_verified = true;
           await user.save();
@@ -87,11 +109,14 @@ if (process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET) {
           if (role === 'STUDENT') {
             const studentCode = extractStudentCodeFromEmail(email);
             if (studentCode) {
-              userData.student_code = studentCode;
+              await assertStudentCodeNotLinked(studentCode);
+              userData.student_code = studentCode.toUpperCase();
             } else {
               // Nếu không extract được, dùng email username làm student_code tạm thời
               const username = email.split('@')[0];
-              userData.student_code = username.toUpperCase();
+              const fallbackCode = username.toUpperCase();
+              await assertStudentCodeNotLinked(fallbackCode);
+              userData.student_code = fallbackCode;
               console.warn(`⚠️ Không thể extract student_code từ email ${email}, dùng username: ${userData.student_code}`);
             }
           }

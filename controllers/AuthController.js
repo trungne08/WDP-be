@@ -15,6 +15,118 @@ const Class = require('../models/Class');
 const { sendOTPEmail, sendVerificationOTPEmail } = require('../services/EmailService');
 
 // ==========================================
+// HELPER: AUTO ENROLL STUDENT TỪ PENDING
+// ==========================================
+async function autoEnrollStudentFromPending(studentUser) {
+    if (!studentUser?._id) return { enrolledClasses: [], skippedClasses: [] };
+
+    const studentCode = String(studentUser.student_code || '').trim().toUpperCase();
+    const email = String(studentUser.email || '').toLowerCase().trim();
+    if (!studentCode && !email) return { enrolledClasses: [], skippedClasses: [] };
+
+    const pendingEnrollments = await PendingEnrollment.find({
+        enrolled: false,
+        $or: [
+            ...(studentCode ? [{ roll_number: studentCode }] : []),
+            ...(email ? [{ email }] : [])
+        ]
+    })
+        .populate('class_id', 'name subjectName semester_id lecturer_id status')
+        .populate('semester_id', 'name code start_date end_date status');
+
+    const enrolledClasses = [];
+    const skippedClasses = [];
+
+    for (const pending of pendingEnrollments) {
+        try {
+            if (!pending.class_id || !pending.class_id._id) {
+                skippedClasses.push({ reason: 'Class không tồn tại', pending_id: pending._id });
+                continue;
+            }
+
+            if (pending.class_id.status === 'Archived') {
+                skippedClasses.push({
+                    class_name: pending.class_id.name,
+                    reason: 'Class đã bị Archived'
+                });
+                continue;
+            }
+
+            if (pending.semester_id && pending.semester_id.status === 'Closed') {
+                skippedClasses.push({
+                    class_name: pending.class_id.name,
+                    reason: 'Semester đã Closed'
+                });
+                continue;
+            }
+
+            let team = await Team.findOne({
+                class_id: pending.class_id._id,
+                project_name: `Group ${pending.group}`
+            });
+
+            if (!team) {
+                team = await Team.create({
+                    class_id: pending.class_id._id,
+                    project_name: `Group ${pending.group}`
+                });
+            }
+
+            const existingMember = await TeamMember.findOne({
+                team_id: team._id,
+                student_id: studentUser._id
+            });
+
+            if (!existingMember) {
+                await TeamMember.create({
+                    team_id: team._id,
+                    student_id: studentUser._id,
+                    role_in_team: pending.is_leader ? 'Leader' : 'Member',
+                    is_active: true
+                });
+            }
+
+            pending.enrolled = true;
+            pending.enrolled_at = new Date();
+            await pending.save();
+
+            enrolledClasses.push({
+                class_id: pending.class_id._id.toString(),
+                class_name: pending.class_id.name,
+                subject_name: pending.class_id.subjectName,
+                group: pending.group,
+                role: pending.is_leader ? 'Leader' : 'Member',
+                semester: pending.semester_id?.name || 'N/A'
+            });
+        } catch (enrollError) {
+            skippedClasses.push({
+                class_name: pending.class_id?.name || 'Unknown',
+                reason: `Lỗi: ${enrollError.message}`
+            });
+        }
+    }
+
+    return { enrolledClasses, skippedClasses };
+}
+
+async function assertStudentCodeNotLinked(studentCode, excludeUserId = null) {
+    const normalizedCode = String(studentCode || '').trim().toUpperCase();
+    if (!normalizedCode) return;
+
+    const query = { student_code: normalizedCode };
+    if (excludeUserId) {
+        query._id = { $ne: excludeUserId };
+    }
+
+    const existed = await models.Student.findOne(query).select('_id email student_code').lean();
+    if (existed) {
+        const err = new Error('Mã số sinh viên này đã được liên kết với một tài khoản Google khác trong hệ thống.');
+        err.code = 'STUDENT_CODE_ALREADY_LINKED';
+        throw err;
+    }
+}
+
+// ==========================================
 // YÊU CẦU OTP ĐĂNG KÝ (REQUEST REGISTRATION OTP)
 // ==========================================
 const requestRegistrationOTP = async (req, res) => {
@@ -1030,11 +1142,20 @@ const googleTokenLogin = async (req, res) => {
         user = await UserModel.findOne({
             $or: [{ googleId }, { email }]
         });
+        let createdNewUser = false;
 
         if (user) {
             if (!user.googleId) user.googleId = googleId;
             if (avatarUrl && (!user.avatar_url || user.avatar_url !== avatarUrl)) user.avatar_url = avatarUrl;
             if (displayName && (!user.full_name || user.full_name !== displayName)) user.full_name = displayName;
+            if (role === 'STUDENT') {
+                // Nếu account cũ chưa có MSSV thì gắn từ email, nhưng phải chặn trùng MSSV với account khác
+                const derivedCode = (extractStudentCodeFromEmail(email) || email.split('@')[0] || '').toUpperCase();
+                if (derivedCode && !user.student_code) {
+                    await assertStudentCodeNotLinked(derivedCode, user._id);
+                    user.student_code = derivedCode;
+                }
+            }
             user.is_verified = true;
             await user.save();
         } else {
@@ -1050,9 +1171,32 @@ const googleTokenLogin = async (req, res) => {
             };
             if (role === 'STUDENT') {
                 const studentCode = extractStudentCodeFromEmail(email);
-                userData.student_code = studentCode || email.split('@')[0].toUpperCase();
+                const normalizedCode = (studentCode || email.split('@')[0] || '').toUpperCase();
+                await assertStudentCodeNotLinked(normalizedCode);
+                userData.student_code = normalizedCode;
             }
             user = await UserModel.create(userData);
+            createdNewUser = true;
+        }
+
+        // Đăng nhập lần đầu qua Google OAuth: tạo user xong thì xử lý PendingEnrollment ngay.
+        if (role === 'STUDENT' && createdNewUser) {
+            try {
+                const { enrolledClasses, skippedClasses } = await autoEnrollStudentFromPending(user);
+                if (enrolledClasses.length > 0) {
+                    console.log(
+                        `✅ [Google Login] Auto-enroll ${enrolledClasses.length} lớp cho ${user.student_code || user.email}`
+                    );
+                }
+                if (skippedClasses.length > 0) {
+                    console.warn(
+                        `⚠️ [Google Login] Bỏ qua ${skippedClasses.length} pending enrollment(s) cho ${user.student_code || user.email}`
+                    );
+                }
+            } catch (autoEnrollError) {
+                // Không chặn login nếu auto-enroll lỗi
+                console.error('❌ [Google Login] Auto-enroll từ PendingEnrollment lỗi:', autoEnrollError.message || autoEnrollError);
+            }
         }
 
         const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
@@ -1092,6 +1236,9 @@ const googleTokenLogin = async (req, res) => {
         });
     } catch (error) {
         console.error('Google Token Login Error:', error);
+        if (error.code === 'STUDENT_CODE_ALREADY_LINKED') {
+            return res.status(409).json({ error: error.message });
+        }
         if (error.message?.includes('Token used too late') || error.message?.includes('expired')) {
             return res.status(401).json({ error: 'Token đã hết hạn, vui lòng đăng nhập lại' });
         }

@@ -3,7 +3,8 @@ const Schema = mongoose.Schema;
 const { encryptIntegrations, decryptIntegrations } = require('../utils/encryption');
 
 const StudentSchema = new Schema({
-    student_code: { type: String, required: true, unique: true }, // Mã số sinh viên (MSSV)
+    // MSSV phải unique toàn hệ thống; sparse để cho phép user chưa có MSSV (null/undefined)
+    student_code: { type: String, unique: true, sparse: true, default: null },
     email: { type: String, required: true, unique: true },
     full_name: String,
     avatar_url: String,
