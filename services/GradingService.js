@@ -114,4 +114,4 @@ const calculateProjectGrades = async (teamId, groupGrade = 10) => {
     return assessmentResults;
 };
 
-module.exports = { calculateSprintGrades };
+module.exports = { calculateProjectGrades };
