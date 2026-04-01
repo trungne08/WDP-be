@@ -4,6 +4,7 @@ const { Sprint, JiraTask } = require('../models/JiraData');
 const { extractStoryPoint } = require('../services/JiraSyncService');
 const GithubService = require('../services/GithubService');
 const { commitBelongsToAuthor, pickMemberForCommit } = require('../utils/commitUtils');
+const { persistTeamMemberGitScores } = require('../utils/memberGitScorePersistence');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { reviewGithubCommitWithGemini } = require('../services/AiChatService');
 
@@ -106,7 +107,7 @@ async function calculateTeamContribution(teamId) {
     team_id: teamObjectId,
     is_active: true
   })
-    .populate('student_id', 'student_code email full_name integrations')
+    .populate('student_id', 'student_code email full_name integrations git_emails')
     .lean();
 
   const memberById = new Map(teamMembers.map((m) => [String(m._id), m]));
@@ -518,7 +519,7 @@ exports.receiveGithubWebhook = async (req, res) => {
       project_id: project._id,
       is_active: true
     })
-      .populate('student_id', 'email full_name integrations')
+      .populate('student_id', 'email full_name integrations git_emails')
       .exec();
 
     if (!teamMembers.length && project.team_id) {
@@ -529,7 +530,7 @@ exports.receiveGithubWebhook = async (req, res) => {
         team_id: project.team_id,
         is_active: true
       })
-        .populate('student_id', 'email full_name integrations')
+        .populate('student_id', 'email full_name integrations git_emails')
         .exec();
     }
 
@@ -556,16 +557,24 @@ exports.receiveGithubWebhook = async (req, res) => {
 
       const commitLike = {
         author_email: c.author?.email,
-        author_name: c.author?.name
+        author_name: c.author?.name,
+        author_github_id: c.author?.id != null ? String(c.author.id) : undefined
       };
 
       let matched = false;
       for (const m of teamMembers) {
-        const emails = m.student_id?.email ? [m.student_id.email] : [];
+        const emailSet = new Set();
+        if (m.student_id?.email) emailSet.add(String(m.student_id.email).toLowerCase().trim());
+        for (const e of m.student_id?.git_emails || []) {
+          const x = String(e || '').toLowerCase().trim();
+          if (x) emailSet.add(x);
+        }
+        const emails = [...emailSet];
         const ghUser = m.student_id?.integrations?.github?.username;
         const githubUsernames = [m.github_username, ghUser].filter(Boolean);
         const displayNames = m.student_id?.full_name ? [m.student_id.full_name] : [];
-        if (commitBelongsToAuthor(commitLike, emails, githubUsernames, displayNames)) {
+        const memGhid = m.student_id?.integrations?.github?.githubId ?? null;
+        if (commitBelongsToAuthor(commitLike, emails, githubUsernames, displayNames, memGhid)) {
           matched = true;
           break;
         }
@@ -573,11 +582,13 @@ exports.receiveGithubWebhook = async (req, res) => {
 
       if (!matched) continue;
 
+      const authorGithubId = c.author?.id != null ? String(c.author.id) : null;
       const commit = {
         hash: c.id,
         message: c.message,
         author_email: c.author?.email,
         author_name: c.author?.name,
+        author_github_id: authorGithubId,
         commit_date: c.timestamp ? new Date(c.timestamp) : new Date(),
         url: c.url,
         branch,
@@ -593,6 +604,7 @@ exports.receiveGithubWebhook = async (req, res) => {
         team_id: teamId,
         author_email: commit.author_email,
         author_name: commit.author_name,
+        author_github_id: authorGithubId,
         message: commit.message,
         commit_date: commit.commit_date,
         url: commit.url,
@@ -646,6 +658,14 @@ exports.receiveGithubWebhook = async (req, res) => {
       console.log(
         `⚠️ [GitHub Webhook] ${owner}/${repo}: có ${commitsRaw.length} commit nhưng không khớp member (email/github_username) hoặc bị bỏ qua.`
       );
+    }
+
+    if (commitsSaved > 0 && teamId) {
+      try {
+        await persistTeamMemberGitScores(models, teamId);
+      } catch (e) {
+        console.warn('⚠️ [GitHub Webhook] persistTeamMemberGitScores:', e.message);
+      }
     }
 
     // Background AI grading + leaderboard update (không chặn webhook response)

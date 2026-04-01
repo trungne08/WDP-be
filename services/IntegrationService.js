@@ -61,6 +61,22 @@ async function fetchGithubUser(accessToken) {
   };
 }
 
+/**
+ * Danh sách email GitHub (GET /user/emails) — cần scope OAuth gồm quyền đọc email (vd: user hoặc user:email).
+ * @returns {Promise<string[]>}
+ */
+async function fetchGithubUserEmails(accessToken) {
+  const res = await axios.get('https://api.github.com/user/emails', {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: 'application/vnd.github.v3+json'
+    },
+    timeout: 15000
+  });
+  const rows = Array.isArray(res.data) ? res.data : [];
+  return rows.map((r) => r && r.email).filter(Boolean);
+}
+
 async function fetchGithubRepos(accessToken) {
   const res = await axios.get('https://api.github.com/user/repos', {
     headers: {
@@ -230,6 +246,7 @@ module.exports = {
   buildGithubAuthUrl,
   exchangeGithubCodeForToken,
   fetchGithubUser,
+  fetchGithubUserEmails,
   fetchGithubRepos,
   buildAtlassianAuthUrl,
   exchangeAtlassianCodeForTokens,

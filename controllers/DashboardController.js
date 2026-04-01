@@ -5,7 +5,7 @@ const TeamMember = require('../models/TeamMember');
 const { SprintAssessment } = require('../models/Assessment');
 const { JiraTask } = require('../models/JiraData'); 
 const GithubCommit = require('../models/GitData');
-const { pickMemberForCommit } = require('../utils/commitUtils');
+const { pickMemberForCommit, resolveGithubUsernameForMember } = require('../utils/commitUtils');
 const PeerReview = require('../models/PeerReview');
 const Admin = require('../models/Admin');
 const Lecturer = require('../models/Lecturer');
@@ -258,7 +258,7 @@ exports.getTeamDashboardOverview = async (req, res) => {
         if (!team) return res.status(404).json({ error: 'Không tìm thấy Nhóm.' });
 
         const members = await TeamMember.find({ team_id: teamId, is_active: true })
-            .populate('student_id', 'student_code full_name email avatar_url integrations')
+            .populate('student_id', 'student_code full_name email avatar_url integrations git_emails')
             .lean();
 
         if (members.length === 0) return res.json({ message: "Nhóm chưa có thành viên.", data: null });
@@ -303,16 +303,17 @@ exports.getTeamDashboardOverview = async (req, res) => {
         ]);
 
         // ==========================================
-        // 3. TÍNH TỔNG CỦA CẢ TEAM (PROJECT HEALTH)
+        // 3. TỔNG TEAM + commit hợp lệ (is_counted) — dùng cho điểm Git thang 10
         // ==========================================
-        let teamTotalCommits = allCommits.length; // Tổng thực tế mọi commit (Ra 25)
+        let teamTotalCommits = allCommits.length;
         let teamApprovedCommits = 0;
         let teamTotalGit = 0;
 
-        allCommits.forEach(c => {
+        allCommits.forEach((c) => {
             if (c.is_counted) teamApprovedCommits++;
             if (c.ai_score) teamTotalGit += c.ai_score;
         });
+        const totalTeamValidCommits = teamApprovedCommits;
 
         let teamTotalTasks = 0, teamTotalSp = 0;
         const jiraTaskMap = {}, jiraSpMap = {};
@@ -338,10 +339,10 @@ exports.getTeamDashboardOverview = async (req, res) => {
             }
         });
 
-        // Gán mỗi commit đúng một member (đồng bộ getTeamCommits / ranking / webhook leaderboard)
+        // Gán mỗi commit đúng một member (pickMemberForCommit — đồng bộ ranking / getTeamCommits)
         const commitStatsByMemberId = new Map();
         for (const m of members) {
-            commitStatsByMemberId.set(m._id.toString(), { total: 0, approved: 0, gitScore: 0 });
+            commitStatsByMemberId.set(m._id.toString(), { total: 0, approved: 0, aiScoreSum: 0 });
         }
         for (const c of allCommits) {
             const winner = pickMemberForCommit(c, members);
@@ -351,32 +352,39 @@ exports.getTeamDashboardOverview = async (req, res) => {
             if (!s) continue;
             s.total += 1;
             if (c.is_counted) s.approved += 1;
-            if (c.ai_score) s.gitScore += Number(c.ai_score) || 0;
+            if (c.ai_score) s.aiScoreSum += Number(c.ai_score) || 0;
         }
 
         // ==========================================
         // 4. MỔ XẺ CHI TIẾT TỪNG THÀNH VIÊN
         // ==========================================
-        const membersBreakdown = members.map(m => {
+        const membersBreakdown = members.map((m) => {
             const mId = m._id.toString();
-            const jiraAccId = m.jira_account_id || "";
-            const stats = commitStatsByMemberId.get(mId) || { total: 0, approved: 0, gitScore: 0 };
+            const jiraAccId = m.jira_account_id || '';
+            const stats = commitStatsByMemberId.get(mId) || { total: 0, approved: 0, aiScoreSum: 0 };
             const myTotalCommits = stats.total;
             const myApprovedCommits = stats.approved;
-            const myGitScore = stats.gitScore;
+            const personalValidCommits = myApprovedCommits;
+            const gitScore =
+                totalTeamValidCommits > 0
+                    ? (personalValidCommits / totalTeamValidCommits) * 10
+                    : 0;
 
             // Khớp Jira
-            const myJiraTasks = jiraTaskMap[mId] || jiraTaskMap[jiraAccId] || 0; 
-            const myJiraSp = jiraSpMap[mId] || jiraSpMap[jiraAccId] || 0;     
-            
-            const myReview = reviewStats[mId] || { total: 0, count: 0 };
-            const avgStar = myReview.count > 0 ? (myReview.total / myReview.count) : 0;
-            const assessment = assessments.find(a => a.member_id.toString() === mId);
+            const myJiraTasks = jiraTaskMap[mId] || jiraTaskMap[jiraAccId] || 0;
+            const myJiraSp = jiraSpMap[mId] || jiraSpMap[jiraAccId] || 0;
 
-            // Phần trăm (Chống chia 0)
-            const pJira = teamTotalSp > 0 ? (myJiraSp / teamTotalSp) : (1 / members.length);
-            const pGit = teamTotalGit > 0 ? (myGitScore / teamTotalGit) : (1 / members.length);
-            const pReview = totalReviewGroup > 0 ? ((avgStar * myReview.count) / totalReviewGroup) : (1 / members.length);
+            const myReview = reviewStats[mId] || { total: 0, count: 0 };
+            const avgStar = myReview.count > 0 ? myReview.total / myReview.count : 0;
+            const assessment = assessments.find((a) => a.member_id.toString() === mId);
+
+            const pJira = teamTotalSp > 0 ? myJiraSp / teamTotalSp : 1 / members.length;
+            const pGit =
+                totalTeamValidCommits > 0 ? personalValidCommits / totalTeamValidCommits : 1 / members.length;
+            const pReview =
+                totalReviewGroup > 0 ? (avgStar * myReview.count) / totalReviewGroup : 1 / members.length;
+
+            const ghUserResolved = resolveGithubUsernameForMember(m);
 
             return {
                 student_id: m.student_id?._id,
@@ -384,15 +392,18 @@ exports.getTeamDashboardOverview = async (req, res) => {
                 full_name: m.student_id?.full_name,
                 avatar_url: m.student_id?.avatar_url,
                 role: m.role_in_team,
-                github_username: m.github_username, // Trả thêm ra cho FE dò
+                github_username: ghUserResolved,
                 raw_counts: {
-                    total_commits: myTotalCommits,           // CÁI NÀY SẼ RA ĐÚNG 24!
+                    total_commits: myTotalCommits,
                     approved_commits: myApprovedCommits,
+                    personal_valid_commits: personalValidCommits,
                     total_jira_tasks: myJiraTasks
                 },
                 raw_scores: {
                     jira_sp_done: myJiraSp,
-                    git_ai_score: Number(myGitScore.toFixed(2)),
+                    git_score: Number(gitScore.toFixed(2)),
+                    git_ai_score: Number(gitScore.toFixed(2)),
+                    git_ai_score_sum: Number((stats.aiScoreSum || 0).toFixed(2)),
                     peer_review_score: Number(avgStar.toFixed(2))
                 },
                 contribution_percentages: {
@@ -420,6 +431,7 @@ exports.getTeamDashboardOverview = async (req, res) => {
             project_health: {
                 total_jira_sp_done: teamTotalSp,
                 total_git_ai_score: Number(teamTotalGit.toFixed(2)),
+                total_team_valid_commits: totalTeamValidCommits,
                 average_peer_review: members.length > 0 ? Number((totalReviewGroup / members.length).toFixed(1)) : 0,
                 team_total_commits: teamTotalCommits,
                 team_approved_commits: teamApprovedCommits,

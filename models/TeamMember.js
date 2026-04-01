@@ -32,6 +32,9 @@ const TeamMemberSchema = new Schema({
         default: null 
     },
 
+    /** Cache điểm Git thang 10 (tỷ lệ commit is_counted cá nhân / team) — cập nhật từ getTeamCommits / webhook */
+    git_score: { type: Number, default: null },
+
     // 4. Trạng thái hoạt động (Khớp với ManagementController)
     is_active: {
         type: Boolean,

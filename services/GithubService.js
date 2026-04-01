@@ -137,11 +137,12 @@ async function fetchCommitsFromBranch(repoUrl, token, branchName, maxCommits = 1
             const items = response.data || [];
             if (items.length === 0) break;
 
-            const commits = items.map(item => ({
+            const commits = items.map((item) => ({
                 hash: item.sha,
                 message: item.commit.message,
                 author_email: item.commit.author?.email,
                 author_name: item.commit.author?.name,
+                author_github_id: item.author?.id != null ? String(item.author.id) : null,
                 commit_date: item.commit.author?.date,
                 url: item.html_url,
                 branch: branchName

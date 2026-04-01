@@ -5,6 +5,8 @@ const GithubCommitSchema = new Schema({
     team_id: { type: Schema.Types.ObjectId, ref: 'Team', required: true },
     author_email: String, // Must match student email
     author_name: String, // Tên author từ GitHub
+    /** GitHub user id (nếu có từ API bổ sung) — ưu tiên định danh khi khớp integrations.github.githubId */
+    author_github_id: { type: String, default: null },
     // Không để unique theo hash toàn hệ thống nữa, vì cùng 1 commit hash
     // có thể xuất hiện ở nhiều team/project khác nhau (fork, chia repo, v.v.)
     // Unique sẽ được đảm bảo bằng index compound bên dưới: (team_id + hash)

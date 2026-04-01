@@ -6,6 +6,8 @@ const StudentSchema = new Schema({
     // MSSV phải unique toàn hệ thống; sparse để cho phép user chưa có MSSV (null/undefined)
     student_code: { type: String, unique: true, sparse: true, default: null },
     email: { type: String, required: true, unique: true },
+    /** Tất cả email GitHub đã xác minh (từ GET /user/emails OAuth) + email đăng ký — dùng map commit multi-email → 1 user */
+    git_emails: { type: [String], default: [] },
     full_name: String,
     avatar_url: String,
     major: String,

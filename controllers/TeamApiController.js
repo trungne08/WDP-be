@@ -1,9 +1,11 @@
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
+const models = require('../models');
 const Team = require('../models/Team');
 const Project = require('../models/Project');
 const TeamMember = require('../models/TeamMember');
-const { pickMemberForCommit } = require('../utils/commitUtils');
+const { pickMemberForCommit, resolveGithubUsernameForMember } = require('../utils/commitUtils');
+const { persistTeamMemberGitScores } = require('../utils/memberGitScorePersistence');
 const Student = require('../models/Student');
 const GithubCommit = require('../models/GitData');
 const { Sprint, JiraTask } = require('../models/JiraData');
@@ -524,8 +526,8 @@ exports.getRanking = async (req, res) => {
         const { teamId } = req.params;
         if (!isValidObjectId(teamId)) return res.status(400).json({ error: 'teamId không hợp lệ' });
 
-        const members = await TeamMember.find({ team_id: teamId })
-            .populate('student_id', 'student_code email full_name integrations')
+        const members = await TeamMember.find({ team_id: teamId, is_active: true })
+            .populate('student_id', 'student_code email full_name avatar_url integrations git_emails')
             .lean();
 
         const sprints = await Sprint.find({ team_id: teamId }).select('_id').lean();
@@ -538,13 +540,13 @@ exports.getRanking = async (req, res) => {
         const commits = await GithubCommit.find({ team_id: teamId, is_counted: true })
             .select('author_email author_name')
             .lean();
-        console.log(`[getRanking] teamId=${teamId}, total is_counted commits=${commits.length}`);
+        const totalTeamValidCommits = commits.length;
+        console.log(`[getRanking] teamId=${teamId}, total_team_valid_commits=${totalTeamValidCommits}`);
 
         const countedCommitsByMember = new Map();
         for (const m of members) {
             countedCommitsByMember.set(m._id.toString(), 0);
         }
-        // Mỗi commit chỉ tính cho đúng một member (đồng bộ với getTeamCommits / pickMemberForCommit)
         for (const c of commits) {
             const winner = pickMemberForCommit(c, members);
             if (winner) {
@@ -568,11 +570,18 @@ exports.getRanking = async (req, res) => {
             taskAggByJiraId.set(jiraId, prev);
         }
 
-        const rows = members.map(m => {
+        const rows = members.map((m) => {
             const jiraId = m.jira_account_id || null;
             const taskAgg = jiraId ? taskAggByJiraId.get(jiraId) : null;
-            const countedCommits = countedCommitsByMember.get(m._id.toString()) || 0;
-            console.log(`[getRanking] Member ${m.student_id?.student_code || m._id}: github_username=${m.github_username || 'N/A'}, counted_commits=${countedCommits}`);
+            const personalValidCommits = countedCommitsByMember.get(m._id.toString()) || 0;
+            const gitScore =
+                totalTeamValidCommits > 0
+                    ? (personalValidCommits / totalTeamValidCommits) * 10
+                    : 0;
+            const ghResolved = resolveGithubUsernameForMember(m);
+            console.log(
+                `[getRanking] Member ${m.student_id?.student_code || m._id}: github_username=${ghResolved || 'N/A'}, personal_valid=${personalValidCommits}, git_score=${gitScore.toFixed(2)}`
+            );
 
             return {
                 member_id: m._id,
@@ -580,7 +589,7 @@ exports.getRanking = async (req, res) => {
                 role_in_team: m.role_in_team,
                 mapping: {
                     jira_account_id: m.jira_account_id || null,
-                    github_username: m.github_username || null
+                    github_username: ghResolved
                 },
                 jira: {
                     done_tasks: taskAgg ? taskAgg.done_count : 0,
@@ -589,7 +598,10 @@ exports.getRanking = async (req, res) => {
                     total_story_points: taskAgg ? taskAgg.total_sp : 0
                 },
                 github: {
-                    counted_commits: countedCommits
+                    counted_commits: personalValidCommits,
+                    personal_valid_commits: personalValidCommits,
+                    total_team_valid_commits: totalTeamValidCommits,
+                    git_score: Number(gitScore.toFixed(2))
                 }
             };
         });
@@ -600,7 +612,19 @@ exports.getRanking = async (req, res) => {
             return b.github.counted_commits - a.github.counted_commits;
         });
 
-        res.json({ total: rows.length, ranking: rows });
+        try {
+            await persistTeamMemberGitScores(models, teamId);
+        } catch (e) {
+            console.warn('⚠️ [getRanking] persistTeamMemberGitScores:', e.message);
+        }
+
+        res.json({
+            total: rows.length,
+            summary: {
+                total_team_valid_commits: totalTeamValidCommits
+            },
+            ranking: rows
+        });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

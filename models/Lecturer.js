@@ -4,6 +4,7 @@ const { encryptIntegrations, decryptIntegrations } = require('../utils/encryptio
 
 const LecturerSchema = new Schema({
     email: { type: String, required: true, unique: true },
+    git_emails: { type: [String], default: [] },
     full_name: String,
     avatar_url: String,
     // ==================================================

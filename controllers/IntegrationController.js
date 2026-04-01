@@ -1,7 +1,8 @@
 const models = require('../models');
 const IntegrationService = require('../services/IntegrationService');
 const GithubService = require('../services/GithubService');
-const { commitBelongsToAuthor, pickMemberForCommit } = require('../utils/commitUtils');
+const { commitBelongsToAuthor, pickMemberForCommit, resolveGithubUsernameForMember } = require('../utils/commitUtils');
+const { persistTeamMemberGitScores } = require('../utils/memberGitScorePersistence');
 
 const JiraService = require('../services/JiraService');
 const JiraAuthService = require('../services/JiraAuthService');
@@ -223,7 +224,7 @@ exports.githubConnect = async (req, res) => {
       frontendRedirectUri // Lưu URL frontend (có thể là web hoặc deep link mobile) để redirect về sau
     });
 
-    const scope = 'repo user write:repo_hook';
+    const scope = 'repo user user:email write:repo_hook';
     const url = IntegrationService.buildGithubAuthUrl({ clientId, redirectUri, scope, state });
     
     // Trả về JSON với URL thay vì redirect để frontend tự redirect (tránh lỗi CORS khi dùng XHR)
@@ -269,6 +270,12 @@ exports.githubCallback = async (req, res) => {
     });
 
     const ghUser = await IntegrationService.fetchGithubUser(accessToken);
+    let apiEmails = [];
+    try {
+      apiEmails = await IntegrationService.fetchGithubUserEmails(accessToken);
+    } catch (e) {
+      console.warn('⚠️ [GitHub Callback] Không lấy được /user/emails:', e.message);
+    }
     const user = await loadUserByRole(decoded.role, decoded.userId);
     if (!user) return res.status(404).json({ error: 'Không tìm thấy user để lưu integration' });
 
@@ -286,7 +293,15 @@ exports.githubCallback = async (req, res) => {
       accessToken, // Token này sẽ được mã hóa trong pre-save hook
       linkedAt: new Date()
     };
-    
+
+    const emailSet = new Set();
+    if (user.email) emailSet.add(String(user.email).toLowerCase().trim());
+    for (const em of apiEmails) {
+      const x = String(em || '').toLowerCase().trim();
+      if (x) emailSet.add(x);
+    }
+    user.git_emails = [...emailSet];
+
     await user.save();
 
     // Redirect về frontend sau khi thành công
@@ -1033,9 +1048,18 @@ exports.syncMyProjectData = async (req, res) => {
               const displayNames = [user.full_name].filter(Boolean);
               const commitLike = {
                 author_email: commit.author_email,
-                author_name: commit.author_name
+                author_name: commit.author_name,
+                author_github_id: commit.author_github_id
               };
-              if (!commitBelongsToAuthor(commitLike, emails, githubUsernames, displayNames)) {
+              if (
+                !commitBelongsToAuthor(
+                  commitLike,
+                  emails,
+                  githubUsernames,
+                  displayNames,
+                  user.integrations?.github?.githubId ?? null
+                )
+              ) {
                 continue;
               }
             }
@@ -1051,6 +1075,7 @@ exports.syncMyProjectData = async (req, res) => {
               team_id: teamId,
               author_email: commit.author_email,
               author_name: commit.author_name,
+              author_github_id: commit.author_github_id ?? null,
               message: commit.message,
               commit_date: commit.commit_date,
               url: commit.url,
@@ -1100,6 +1125,13 @@ exports.syncMyProjectData = async (req, res) => {
           console.log(
             `📡 [Socket] Đã bắn refresh cho GitHub Sync (syncMyProjectData) — project=${project._id} commits=${syncedCommits}`
           );
+        }
+        if (syncedCommits > 0 && teamId) {
+          try {
+            await persistTeamMemberGitScores(models, teamId);
+          } catch (e) {
+            console.warn('⚠️ [Sync] persistTeamMemberGitScores:', e.message);
+          }
         }
       } catch (err) {
         console.error('❌ [Sync GitHub] Lỗi:', err.message);
@@ -1396,7 +1428,13 @@ exports.getMyCommits = async (req, res) => {
       return res.json({ total: 0, commits: [], projects: [], message: 'Bạn chưa tham gia project nào' });
     }
 
-    const emails = [user.email].filter(Boolean);
+    const emailSet = new Set();
+    if (user.email) emailSet.add(String(user.email).toLowerCase().trim());
+    for (const e of user.git_emails || []) {
+      const x = String(e || '').toLowerCase().trim();
+      if (x) emailSet.add(x);
+    }
+    const emails = [...emailSet];
     const githubUsernames = [
       ...teamMembers.map((tm) => tm.github_username).filter(Boolean),
       user.integrations?.github?.username
@@ -1422,10 +1460,15 @@ exports.getMyCommits = async (req, res) => {
     const commitsRaw = rawCommits
       .filter((c) =>
         commitBelongsToAuthor(
-          { author_email: c.author_email, author_name: c.author_name },
+          {
+            author_email: c.author_email,
+            author_name: c.author_name,
+            author_github_id: c.author_github_id
+          },
           emails,
           githubUsernames,
-          displayNames
+          displayNames,
+          user.integrations?.github?.githubId ?? null
         )
       )
       .slice(0, limit);
@@ -1536,7 +1579,7 @@ exports.getTeamCommits = async (req, res) => {
         if (!team) return res.status(404).json({ error: 'Không tìm thấy Nhóm.' });
 
         const members = await TeamMember.find({ team_id: teamId, is_active: true })
-            .populate('student_id', 'student_code full_name email avatar_url integrations')
+            .populate('student_id', 'student_code full_name email avatar_url integrations git_emails')
             .lean();
 
         if (members.length === 0) {
@@ -1583,6 +1626,17 @@ exports.getTeamCommits = async (req, res) => {
             }
         }
 
+        const gitScoreByMemberId = new Map();
+        try {
+            await persistTeamMemberGitScores(models, teamId);
+            const scoreRows = await TeamMember.find({ team_id: teamId, is_active: true }).select('_id git_score').lean();
+            for (const r of scoreRows) {
+                gitScoreByMemberId.set(String(r._id), r.git_score);
+            }
+        } catch (e) {
+            console.warn('⚠️ [getTeamCommits] persistTeamMemberGitScores:', e.message);
+        }
+
         const buildMemberRow = (m, list) => {
             const sorted = [...list].sort((a, b) => new Date(b.commit_date) - new Date(a.commit_date));
             return {
@@ -1590,7 +1644,8 @@ exports.getTeamCommits = async (req, res) => {
                     _id: m._id,
                     student: m.student_id,
                     role_in_team: m.role_in_team,
-                    github_username: m.github_username
+                    github_username: resolveGithubUsernameForMember(m),
+                    git_score: gitScoreByMemberId.get(String(m._id)) ?? null
                 },
                 total_commits: sorted.length,
                 approved_commits: sorted.filter((x) => x.is_counted).length,
@@ -1624,16 +1679,14 @@ exports.getTeamCommits = async (req, res) => {
                 ...GithubCommit.localizeCommitForApi(c),
                 author: {
                     email: c.author_email ?? null,
-                    name: c.author_name ?? null
+                    name: c.author_name ?? null,
+                    github_id: c.author_github_id ?? null
                 },
                 assigned_member_id: a.assigned_member_id,
                 assigned_student_id: a.assigned_student_id
             };
         });
 
-        // ==========================================
-        // 4. TRẢ VỀ FRONTEND — total_commits team = tổng các dòng member (+ unassigned nếu có)
-        // ==========================================
         return res.status(200).json({
             team: {
                 _id: team._id,
@@ -1799,7 +1852,13 @@ exports.getMemberCommits = async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy member trong team này' });
     }
 
-    const emails = [member.student_id?.email].filter(Boolean);
+    const emailSet = new Set();
+    if (member.student_id?.email) emailSet.add(String(member.student_id.email).toLowerCase().trim());
+    for (const e of member.student_id?.git_emails || []) {
+      const x = String(e || '').toLowerCase().trim();
+      if (x) emailSet.add(x);
+    }
+    const emails = [...emailSet];
     const ghUser = member.student_id?.integrations?.github?.username;
     const githubUsernames = [member.github_username, ghUser].filter(Boolean);
     const displayNames = [member.student_id?.full_name].filter((n) => n && String(n).trim());
@@ -1821,10 +1880,15 @@ exports.getMemberCommits = async (req, res) => {
       commits = raw
         .filter((c) =>
           commitBelongsToAuthor(
-            { author_email: c.author_email, author_name: c.author_name },
+            {
+              author_email: c.author_email,
+              author_name: c.author_name,
+              author_github_id: c.author_github_id
+            },
             emails,
             githubUsernames,
-            displayNames
+            displayNames,
+            member.student_id?.integrations?.github?.githubId ?? null
           )
         )
         .slice(0, limit)

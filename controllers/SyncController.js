@@ -1,6 +1,8 @@
+const models = require('../models');
 const Team = require('../models/Team');
 const Project = require('../models/Project');
 const GithubCommit = require('../models/GitData');
+const { persistTeamMemberGitScores } = require('../utils/memberGitScorePersistence');
 const { Sprint, JiraTask } = require('../models/JiraData');
 const GithubService = require('../services/GithubService');
 const JiraService = require('../services/JiraService'); // Legacy - Deprecated
@@ -63,6 +65,7 @@ exports.syncTeamData = async (req, res) => {
                             team_id: teamId,
                             author_email: commit.author_email,
                             author_name: commit.author_name,
+                            author_github_id: commit.author_github_id ?? null,
                             message: commit.message,
                             commit_date: commit.commit_date,
                             url: commit.url,
@@ -93,6 +96,12 @@ exports.syncTeamData = async (req, res) => {
                     }
                     results.git = commits.length;
                     console.log(`✅ [Team Sync] Đã sync ${commits.length} commits từ tất cả branches`);
+
+                    try {
+                        await persistTeamMemberGitScores(models, teamId);
+                    } catch (e) {
+                        console.warn('⚠️ [Team Sync] persistTeamMemberGitScores:', e.message);
+                    }
 
                     const io = req.app.get('io') || global._io;
                     if (io && project?._id) {
