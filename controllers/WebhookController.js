@@ -503,6 +503,7 @@ exports.receiveGithubWebhook = async (req, res) => {
       .exec();
 
     if (!teamMembers.length) {
+      console.log(`⚠️ [GitHub Webhook] Project ${project._id} không có team member active — bỏ qua commit.`);
       return res.status(200).send('Webhook received');
     }
 
@@ -590,11 +591,23 @@ exports.receiveGithubWebhook = async (req, res) => {
 
     const io = req.app.get('io');
     if (io && commitsSaved > 0) {
-      io.emit('GITHUB_NEW_COMMITS', {
+      const githubNewCommitsPayload = {
         message: 'Có code mới vừa được push lên GitHub!',
         commitsCount: commitsSaved,
-        projectName: project.name || ''
-      });
+        projectName: project.name || '',
+        projectId: String(project._id),
+        ...(project.class_id ? { classId: String(project.class_id) } : {})
+      };
+      // Global (tương thích cũ) + đúng room join_project / join_class (index.js)
+      io.emit('GITHUB_NEW_COMMITS', githubNewCommitsPayload);
+      io.to(`project:${String(project._id)}`).emit('GITHUB_NEW_COMMITS', githubNewCommitsPayload);
+      if (project.class_id) {
+        io.to(String(project.class_id)).emit('GITHUB_NEW_COMMITS', githubNewCommitsPayload);
+      }
+    } else if (commitsRaw.length > 0 && commitsSaved === 0) {
+      console.log(
+        `⚠️ [GitHub Webhook] ${owner}/${repo}: có ${commitsRaw.length} commit nhưng không khớp member (email/github_username) hoặc bị bỏ qua.`
+      );
     }
 
     // Background AI grading + leaderboard update (không chặn webhook response)
@@ -687,10 +700,10 @@ exports.receiveGithubWebhook = async (req, res) => {
 
             const rt = io || global._io;
             if (rt) {
-              // Bắn đúng room thay vì global để giảm nhiễu realtime.
+              // Cùng format room với join_project / join_class (index.js) — không dùng prefix "class:"
               rt.to(`project:${projectIdStr}`).emit('LEADERBOARD_UPDATED', leaderboardData);
               if (project?.class_id) {
-                rt.to(`class:${String(project.class_id)}`).emit('LEADERBOARD_UPDATED', leaderboardData);
+                rt.to(String(project.class_id)).emit('LEADERBOARD_UPDATED', leaderboardData);
               }
             }
           } catch (e) {
