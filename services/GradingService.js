@@ -11,25 +11,16 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
         jiraWeight: 0.4, gitWeight: 0.4, reviewWeight: 0.2, allowOverCeiling: false 
     };
 
-    // 2. Thành viên — trọng số Git/Jira: tỷ lệ 0..1 ở root (git_score, jira_score); legacy scores.commit_score
+    // 2. Lấy danh sách thành viên
     const members = await TeamMember.find({ team_id: teamId, is_active: true })
         .populate('student_id', 'email');
     
     const memberCount = members.length;
     if (memberCount === 0) return [];
 
-    // 3. Tính tổng điểm của cả nhóm (để làm mẫu số chia % quỹ điểm)
-    let totalGitScore = 0;
-    let totalJiraSP = 0;
+    // ❌ ĐÃ XÓA: Đoạn vòng lặp tính totalGitScore và totalJiraSP (Vì không cần chia nữa)
 
-    members.forEach((m) => {
-        const g = m.git_score != null ? Number(m.git_score) : Number(m.scores?.commit_score) || 0;
-        const j = Number(m.jira_score) || 0;
-        totalGitScore += g;
-        totalJiraSP += j;
-    });
-
-    // 4. Lấy dữ liệu Đánh giá chéo (Peer Review)
+    // 3. Lấy dữ liệu Đánh giá chéo (Peer Review) - Vẫn giữ nguyên vì nó nằm ở bảng khác
     const reviews = await PeerReview.find({ team_id: teamId });
     const reviewStats = {};
     let totalReviewScore = 0;
@@ -47,7 +38,7 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
     });
 
     // ==========================================
-    // 5. TÍNH TOÁN ĐIỂM THEO CƠ CHẾ "QUỸ ĐIỂM"
+    // 4. TÍNH TOÁN ĐIỂM THEO CƠ CHẾ "QUỸ ĐIỂM"
     // ==========================================
     const assessmentResults = [];
     const totalPointPool = groupGrade * memberCount;
@@ -55,28 +46,26 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
     for (const member of members) {
         const mId = member._id.toString();
 
-        // -- Lấy dữ liệu thô cá nhân --
-        const myGitScore =
-            member.git_score != null ? Number(member.git_score) : Number(member.scores?.commit_score) || 0;
-        const myJiraSP = Number(member.jira_score) || 0;
+        // -- BƯỚC A: LẤY THẲNG SỐ THẬP PHÂN TỪ AI (KHÔNG CẦN CHIA) --
+        // Dữ liệu này đã là 0.x -> 1.0 (Ví dụ: 0.25 tương đương 25% cống hiến)
+        const pGit = member.scores?.commit_score || member.scores?.github_score || 0; 
+        const pJira = member.scores?.jira_score || 0;
+
+        // Riêng Review thì vẫn phải tự tính % vì nó do con người chấm
         const myReviewTotal = reviewStats[mId] ? reviewStats[mId].total : 0;
-        
         const avgStar = reviewStats[mId] && reviewStats[mId].count > 0 
             ? reviewStats[mId].total / reviewStats[mId].count 
             : 0;
-
-        // -- BƯỚC B: Tính % đóng góp --
-        const pGit = totalGitScore > 0 ? (myGitScore / totalGitScore) : (1 / memberCount);
-        const pJira = totalJiraSP > 0 ? (myJiraSP / totalJiraSP) : (1 / memberCount);
         const pReview = totalReviewScore > 0 ? (myReviewTotal / totalReviewScore) : (1 / memberCount);
 
-        // -- BƯỚC C: Tính % Đóng Góp Cuối Cùng --
+        // -- BƯỚC B: Tính Hệ số Đóng Góp Cuối Cùng --
+        // Ví dụ: (0.25 * 0.4) + (0.3 * 0.4) + (0.25 * 0.2) = 0.27 (Hưởng 27% Quỹ điểm)
         const finalContributionPercent = (pJira * config.jiraWeight) + (pGit * config.gitWeight) + (pReview * config.reviewWeight);
 
-        // -- BƯỚC D: Rút điểm từ Quỹ Điểm --
+        // -- BƯỚC C: Rút điểm từ Quỹ Điểm --
         let finalScore = totalPointPool * finalContributionPercent;
 
-        // -- Xử lý trần điểm 10 --
+        // -- BƯỚC D: Xử lý trần điểm 10 --
         if (!config.allowOverCeiling && finalScore > 10.0) {
             finalScore = 10.0; 
         }
@@ -89,8 +78,8 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
             { team_id: teamId, member_id: mId }, 
             {
                 group_grade: groupGrade,
-                jira_percentage: myJiraSP,
-                git_percentage: myGitScore,
+                jira_percentage: pJira,        // Update lại cho chuẩn với data thập phân
+                git_percentage: pGit,          // Update lại cho chuẩn với data thập phân
                 review_percentage: Number(avgStar.toFixed(2)),
                 
                 contribution_factor: displayFactor, 
