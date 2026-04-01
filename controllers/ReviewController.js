@@ -160,9 +160,8 @@ exports.getTeamReviewsForLecturer = async (req, res) => {
     }
 };
 
-exports.calculateSprintGrades = async (req, res) => {
+exports.calculateProjectGrades = async (req, res) => {
     try {
-        // Đã bỏ sprintId đi, chỉ còn lấy teamId và groupGrade
         const { teamId, groupGrade } = req.body;
 
         // 1. Validation đầu vào
@@ -170,14 +169,14 @@ exports.calculateSprintGrades = async (req, res) => {
             return res.status(400).json({ error: 'Thiếu thông tin teamId hoặc groupGrade' });
         }
 
-        // 2. Phân quyền: Thường chỉ LECTURER hoặc ADMIN mới được chốt điểm
+        // 2. Phân quyền
         if (req.role !== 'LECTURER' && req.role !== 'ADMIN') {
             return res.status(403).json({ error: 'Chỉ giảng viên mới có quyền chốt điểm.' });
         }
 
         // 3. Gọi Service để tính toán điểm tổng kết
-        // Lưu ý: GradingService bây giờ chỉ nhận 2 tham số
-        const results = await GradingService.calculateSprintGrades(teamId, Number(groupGrade));
+        // Đảm bảo GradingService của ông hàm tên là calculateProjectGrades hoặc đã đổi tên tương ứng
+        const results = await GradingService.calculateProjectGrades(teamId, Number(groupGrade));
 
         return res.status(200).json({
             message: '✅ Đã tính điểm Assignment cho toàn dự án thành công!',
@@ -217,7 +216,8 @@ exports.getMyAssignmentGrades = async (req, res) => {
             message: '✅ Lấy bảng điểm cá nhân thành công!',
             total_assignments: grades.length,
             data: grades.map(g => ({
-                assignment_name: g.sprint_id?.name || 'Unknown',
+                // 🔥 FIX ĐÂY: Xóa vụ gọi sprint_id, fix cứng tên lại
+                assignment_name: 'Điểm tổng kết đồ án', 
                 group_grade: g.group_grade,
                 jira_percentage: g.jira_percentage,
                 git_percentage: g.git_percentage,
