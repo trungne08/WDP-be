@@ -1260,6 +1260,27 @@ const googleCallback = async (req, res) => {
         const user = req.user;
         const role = user.role;
 
+        // Luồng OAuth callback (web) cũng phải auto-enroll trước khi trả token
+        // để đảm bảo first-login bằng Google thấy lớp ngay.
+        if (role === 'STUDENT') {
+            try {
+                const { enrolledClasses, skippedClasses } = await autoEnrollStudentFromPending(user);
+                if (enrolledClasses.length > 0) {
+                    console.log(
+                        `✅ [Google Callback] Auto-enroll ${enrolledClasses.length} lớp cho ${user.student_code || user.email}`
+                    );
+                }
+                if (skippedClasses.length > 0) {
+                    console.warn(
+                        `⚠️ [Google Callback] Bỏ qua ${skippedClasses.length} pending enrollment(s) cho ${user.student_code || user.email}`
+                    );
+                }
+            } catch (autoEnrollError) {
+                // Không chặn login nếu auto-enroll lỗi
+                console.error('❌ [Google Callback] Auto-enroll từ PendingEnrollment lỗi:', autoEnrollError.message || autoEnrollError);
+            }
+        }
+
         // Tạo JWT tokens (giống như login thông thường)
         const jwtSecret = process.env.JWT_SECRET || 'wdp-secret-key-change-in-production';
         const RefreshToken = require('../models/RefreshToken');
