@@ -3,7 +3,7 @@ const mongoose = require('mongoose');
 const { Sprint, JiraTask } = require('../models/JiraData');
 const { extractStoryPoint } = require('../services/JiraSyncService');
 const GithubService = require('../services/GithubService');
-const { commitBelongsToAuthor } = require('../utils/commitUtils');
+const { commitBelongsToAuthor, pickMemberForCommit } = require('../utils/commitUtils');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { reviewGithubCommitWithGemini } = require('../services/AiChatService');
 
@@ -170,17 +170,10 @@ async function calculateTeamContribution(teamId) {
     if (emailLc && emailToMember.has(emailLc)) {
       matchedMember = emailToMember.get(emailLc);
     } else {
-      // Fallback khi email không match: đối chiếu github_username với author info
-      matchedMember =
-        teamMembers.find((m) => {
-          const ghUser = m?.student_id?.integrations?.github?.username;
-          return commitBelongsToAuthor(
-            { author_email: c?.author_email, author_name: c?.author_name },
-            m?.student_id?.email ? [m.student_id.email] : [],
-            [m?.github_username, ghUser].filter(Boolean),
-            m?.student_id?.full_name ? [m.student_id.full_name] : []
-          );
-        }) || null;
+      matchedMember = pickMemberForCommit(
+        { author_email: c?.author_email, author_name: c?.author_name },
+        teamMembers
+      );
     }
 
     if (!matchedMember?._id) continue;

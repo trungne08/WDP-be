@@ -1,7 +1,7 @@
 const models = require('../models');
 const IntegrationService = require('../services/IntegrationService');
 const GithubService = require('../services/GithubService');
-const { commitBelongsToAuthor } = require('../utils/commitUtils');
+const { commitBelongsToAuthor, pickMemberForCommit } = require('../utils/commitUtils');
 
 const JiraService = require('../services/JiraService');
 const JiraAuthService = require('../services/JiraAuthService');
@@ -1555,32 +1555,36 @@ exports.getTeamCommits = async (req, res) => {
         // 2. KÉO 1 MẺ TOÀN BỘ COMMIT CỦA TEAM 
         // ==========================================
         const allCommits = await GithubCommit.find({ team_id: teamObjectId })
-            .sort({ commit_date: -1 }) // Xếp mới nhất lên đầu
+            .sort({ commit_date: -1 })
             .lean();
 
         // ==========================================
-        // 3. MỔ XẺ VÀ CHIA COMMIT CHO TỪNG NGƯỜI
+        // 3. Gán mỗi commit đúng MỘT member (pickMemberForCommit — tránh đếm trùng & map nhầm Leader)
         // ==========================================
-        const membersCommits = members.map(m => {
-            const email = m.student_id?.email?.toLowerCase()?.trim() || '';
-            const githubUsernames = [m.github_username, m.student_id?.integrations?.github?.username].filter(
-              (x) => x && String(x).trim()
-            );
-            const displayNames = [m.student_id?.full_name].filter((x) => x && String(x).trim());
+        const byMemberId = new Map();
+        for (const m of members) {
+            byMemberId.set(String(m._id), []);
+        }
+        const unassigned = [];
+        const assignmentByIndex = [];
 
-            const myCommits = allCommits.filter((c) =>
-              commitBelongsToAuthor(
-                {
-                  author_email: c.author_email,
-                  author_name: c.author_name
-                },
-                email ? [email] : [],
-                githubUsernames,
-                displayNames
-              )
-            );
+        for (let i = 0; i < allCommits.length; i++) {
+            const c = allCommits[i];
+            const winner = pickMemberForCommit(c, members);
+            if (winner) {
+                byMemberId.get(String(winner._id)).push(c);
+                assignmentByIndex[i] = {
+                    assigned_member_id: String(winner._id),
+                    assigned_student_id: winner.student_id?._id ? String(winner.student_id._id) : null
+                };
+            } else {
+                unassigned.push(c);
+                assignmentByIndex[i] = { assigned_member_id: null, assigned_student_id: null };
+            }
+        }
 
-            // Format lại data trả về khớp với JSON Frontend đang đợi
+        const buildMemberRow = (m, list) => {
+            const sorted = [...list].sort((a, b) => new Date(b.commit_date) - new Date(a.commit_date));
             return {
                 member: {
                     _id: m._id,
@@ -1588,20 +1592,47 @@ exports.getTeamCommits = async (req, res) => {
                     role_in_team: m.role_in_team,
                     github_username: m.github_username
                 },
-                total_commits: myCommits.length, // Lấy số lượng tổng
-                approved_commits: myCommits.filter(c => c.is_counted).length // Bonus thêm số commit hợp lệ cho FE
+                total_commits: sorted.length,
+                approved_commits: sorted.filter((x) => x.is_counted).length,
+                commits: sorted.map((doc) => GithubCommit.localizeCommitForApi(doc))
             };
-        });
+        };
 
-        // Tùy chọn: Đẩy mấy ông Leader lên đầu danh sách cho đẹp
+        let membersCommits = members.map((m) => buildMemberRow(m, byMemberId.get(String(m._id)) || []));
+
         membersCommits.sort((a, b) => {
             if (a.member.role_in_team === 'Leader') return -1;
             if (b.member.role_in_team === 'Leader') return 1;
             return 0;
         });
 
+        if (unassigned.length > 0) {
+            const uSorted = [...unassigned].sort((a, b) => new Date(b.commit_date) - new Date(a.commit_date));
+            membersCommits.push({
+                member: null,
+                unassigned: true,
+                total_commits: uSorted.length,
+                approved_commits: uSorted.filter((x) => x.is_counted).length,
+                commits: uSorted.map((doc) => GithubCommit.localizeCommitForApi(doc))
+            });
+        }
+
+        const sumMemberCounts = membersCommits.reduce((s, row) => s + row.total_commits, 0);
+        const allCommitsDetailed = allCommits.map((c, i) => {
+            const a = assignmentByIndex[i] || { assigned_member_id: null, assigned_student_id: null };
+            return {
+                ...GithubCommit.localizeCommitForApi(c),
+                author: {
+                    email: c.author_email ?? null,
+                    name: c.author_name ?? null
+                },
+                assigned_member_id: a.assigned_member_id,
+                assigned_student_id: a.assigned_student_id
+            };
+        });
+
         // ==========================================
-        // 4. TRẢ VỀ FRONTEND
+        // 4. TRẢ VỀ FRONTEND — total_commits team = tổng các dòng member (+ unassigned nếu có)
         // ==========================================
         return res.status(200).json({
             team: {
@@ -1610,9 +1641,12 @@ exports.getTeamCommits = async (req, res) => {
             },
             summary: {
                 total_members: members.length,
-                total_commits: allCommits.length // Tổng commit của cả Team
+                total_commits: sumMemberCounts,
+                total_commits_in_db: allCommits.length,
+                unassigned_commits: unassigned.length
             },
-            members_commits: membersCommits
+            members_commits: membersCommits,
+            all_commits: allCommitsDetailed
         });
 
     } catch (error) {
@@ -1773,35 +1807,28 @@ exports.getMemberCommits = async (req, res) => {
     const limit = Math.min(100, Math.max(1, Number(req.query?.limit || 50)));
     const branch = (req.query?.branch || '').trim() || null;
 
-    const andParts = [{ team_id: teamId }];
-    if (emails.length > 0 || githubUsernames.length > 0 || displayNames.length > 0) {
-      const authorOr = [];
-      if (emails.length > 0) {
-        authorOr.push({ author_email: { $in: emails.map(e => (e || '').toLowerCase().trim()) } });
-      }
-      for (const u of githubUsernames) {
-        if (!u || typeof u !== 'string') continue;
-        const escaped = u.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        authorOr.push({ author_email: new RegExp(escaped + '@users\\.noreply\\.github\\.com', 'i') });
-        authorOr.push({ author_email: new RegExp('\\+' + escaped + '@users\\.noreply', 'i') });
-        authorOr.push({ author_name: new RegExp('^' + escaped + '$', 'i') });
-      }
-      for (const name of displayNames) {
-        const escaped = String(name).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-        authorOr.push({ author_name: new RegExp('^' + escaped + '$', 'i') });
-      }
-      if (authorOr.length > 0) andParts.push({ $or: authorOr });
-    }
-    if (branch) {
-      andParts.push({ $or: [{ branch }, { branches: branch }] });
-    }
     let commits = [];
     if (emails.length > 0 || githubUsernames.length > 0 || displayNames.length > 0) {
-      const query = andParts.length > 1 ? { $and: andParts } : andParts[0];
-      commits = await GithubCommit.find(query)
+      const baseQuery = { team_id: teamId };
+      if (branch) {
+        baseQuery.$or = [{ branch }, { branches: branch }];
+      }
+      const fetchCap = Math.min(4000, Math.max(limit * 60, 200));
+      const raw = await GithubCommit.find(baseQuery)
         .sort({ commit_date: -1 })
-        .limit(limit)
+        .limit(fetchCap)
         .lean();
+      commits = raw
+        .filter((c) =>
+          commitBelongsToAuthor(
+            { author_email: c.author_email, author_name: c.author_name },
+            emails,
+            githubUsernames,
+            displayNames
+          )
+        )
+        .slice(0, limit)
+        .map((doc) => GithubCommit.localizeCommitForApi(doc));
     }
 
     return res.json({
@@ -1812,7 +1839,7 @@ exports.getMemberCommits = async (req, res) => {
         github_username: member.github_username
       },
       total: commits.length,
-      commits: commits
+      commits
     });
 
   } catch (error) {

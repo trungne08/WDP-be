@@ -3,7 +3,7 @@ const bcrypt = require('bcryptjs');
 const Team = require('../models/Team');
 const Project = require('../models/Project');
 const TeamMember = require('../models/TeamMember');
-const { commitBelongsToAuthor } = require('../utils/commitUtils');
+const { pickMemberForCommit } = require('../utils/commitUtils');
 const Student = require('../models/Student');
 const GithubCommit = require('../models/GitData');
 const { Sprint, JiraTask } = require('../models/JiraData');
@@ -544,15 +544,12 @@ exports.getRanking = async (req, res) => {
         for (const m of members) {
             countedCommitsByMember.set(m._id.toString(), 0);
         }
+        // Mỗi commit chỉ tính cho đúng một member (đồng bộ với getTeamCommits / pickMemberForCommit)
         for (const c of commits) {
-            for (const m of members) {
-                const emails = [m.student_id?.email].filter(Boolean);
-                const ghUser = m.student_id?.integrations?.github?.username;
-                const githubUsernames = [m.github_username, ghUser].filter(Boolean);
-                const displayNames = [m.student_id?.full_name].filter(Boolean);
-                if (commitBelongsToAuthor(c, emails, githubUsernames, displayNames)) {
-                    countedCommitsByMember.set(m._id.toString(), (countedCommitsByMember.get(m._id.toString()) || 0) + 1);
-                }
+            const winner = pickMemberForCommit(c, members);
+            if (winner) {
+                const k = winner._id.toString();
+                countedCommitsByMember.set(k, (countedCommitsByMember.get(k) || 0) + 1);
             }
         }
 

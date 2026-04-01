@@ -5,6 +5,7 @@ const TeamMember = require('../models/TeamMember');
 const { SprintAssessment } = require('../models/Assessment');
 const { JiraTask } = require('../models/JiraData'); 
 const GithubCommit = require('../models/GitData');
+const { pickMemberForCommit } = require('../utils/commitUtils');
 const PeerReview = require('../models/PeerReview');
 const Admin = require('../models/Admin');
 const Lecturer = require('../models/Lecturer');
@@ -257,7 +258,7 @@ exports.getTeamDashboardOverview = async (req, res) => {
         if (!team) return res.status(404).json({ error: 'Không tìm thấy Nhóm.' });
 
         const members = await TeamMember.find({ team_id: teamId, is_active: true })
-            .populate('student_id', 'student_code full_name email avatar_url')
+            .populate('student_id', 'student_code full_name email avatar_url integrations')
             .lean();
 
         if (members.length === 0) return res.json({ message: "Nhóm chưa có thành viên.", data: null });
@@ -337,39 +338,32 @@ exports.getTeamDashboardOverview = async (req, res) => {
             }
         });
 
+        // Gán mỗi commit đúng một member (đồng bộ getTeamCommits / ranking / webhook leaderboard)
+        const commitStatsByMemberId = new Map();
+        for (const m of members) {
+            commitStatsByMemberId.set(m._id.toString(), { total: 0, approved: 0, gitScore: 0 });
+        }
+        for (const c of allCommits) {
+            const winner = pickMemberForCommit(c, members);
+            if (!winner) continue;
+            const k = winner._id.toString();
+            const s = commitStatsByMemberId.get(k);
+            if (!s) continue;
+            s.total += 1;
+            if (c.is_counted) s.approved += 1;
+            if (c.ai_score) s.gitScore += Number(c.ai_score) || 0;
+        }
+
         // ==========================================
         // 4. MỔ XẺ CHI TIẾT TỪNG THÀNH VIÊN
         // ==========================================
         const membersBreakdown = members.map(m => {
             const mId = m._id.toString();
-            const email = m.student_id?.email?.toLowerCase()?.trim() || "";
-            const username = m.github_username?.toLowerCase()?.trim() || "";
             const jiraAccId = m.jira_account_id || "";
-
-            // 🔥 THUẬT TOÁN QUÉT COMMIT CHUẨN XÁC 100% (Khớp với Integration API)
-            let myTotalCommits = 0;
-            let myApprovedCommits = 0;
-            let myGitScore = 0;
-
-            allCommits.forEach(c => {
-                const cEmail = (c.author_email || "").toLowerCase().trim();
-                const cName = (c.author_name || "").toLowerCase().trim();
-
-                // Kiểm tra xem commit này có phải của sinh viên này không (Check bằng Email hoặc Username)
-                const isMyCommit = 
-                    (email && cEmail === email) || 
-                    (username && (
-                        cEmail === `${username}@users.noreply.github.com` || 
-                        cEmail.includes(`+${username}@users.noreply`) || 
-                        cName === username
-                    ));
-
-                if (isMyCommit) {
-                    myTotalCommits++;
-                    if (c.is_counted) myApprovedCommits++;
-                    if (c.ai_score) myGitScore += c.ai_score;
-                }
-            });
+            const stats = commitStatsByMemberId.get(mId) || { total: 0, approved: 0, gitScore: 0 };
+            const myTotalCommits = stats.total;
+            const myApprovedCommits = stats.approved;
+            const myGitScore = stats.gitScore;
 
             // Khớp Jira
             const myJiraTasks = jiraTaskMap[mId] || jiraTaskMap[jiraAccId] || 0; 
