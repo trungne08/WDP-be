@@ -7,6 +7,7 @@ const JiraService = require('../services/JiraService');
 const JiraAuthService = require('../services/JiraAuthService');
 const JiraSyncService = require('../services/JiraSyncService');
 const mongoose = require('mongoose');
+<<<<<<< HEAD
 const {
   getBackendBaseUrl,
   stripTrailingSlash,
@@ -15,6 +16,13 @@ const {
   resolveOAuthRedirectBaseUrl,
   coerceOAuthRedirectForProduction
 } = require('../utils/frontendUrl');
+=======
+
+function getClientBaseUrl(req) {
+  // FE có thể truyền redirect riêng; nếu không có thì dùng env
+  return process.env.CLIENT_URL || `${req.protocol}://${req.get('host')}`;
+}
+>>>>>>> 19f45d5 (sửa api lấy commit 1 team)
 
 function getGithubConfig(req, platform = 'web') {
   // Hỗ trợ 2 OAuth App khác nhau cho GitHub: WEB & MOBILE
@@ -44,14 +52,14 @@ function getGithubConfig(req, platform = 'web') {
     }
   }
 
-  const redirectUri = process.env.GITHUB_CALLBACK_URL || `${getBackendBaseUrl(req)}/api/integrations/github/callback`;
+  const redirectUri = process.env.GITHUB_CALLBACK_URL || `${getClientBaseUrl(req)}/api/integrations/github/callback`;
   return { clientId, clientSecret, redirectUri, platform: normalizedPlatform };
 }
 
 function getAtlassianConfig(req) {
   const clientId = process.env.ATLASSIAN_CLIENT_ID;
   const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
-  const redirectUri = process.env.ATLASSIAN_CALLBACK_URL || `${getBackendBaseUrl(req)}/api/integrations/jira/callback`;
+  const redirectUri = process.env.ATLASSIAN_CALLBACK_URL || `${getClientBaseUrl(req)}/api/integrations/jira/callback`;
   if (!clientId || !clientSecret) {
     throw new Error('Thiếu cấu hình ATLASSIAN_CLIENT_ID hoặc ATLASSIAN_CLIENT_SECRET trong .env');
   }
@@ -239,7 +247,9 @@ exports.githubCallback = async (req, res) => {
     
     await user.save();
 
-    const frontendUrl = resolveOAuthRedirectBaseUrl(decoded);
+    // Redirect về frontend sau khi thành công
+    // Dùng frontendRedirectUri từ state (đã được frontend truyền khi connect) hoặc fallback về CLIENT_URL
+    const frontendUrl = decoded.frontendRedirectUri || process.env.CLIENT_URL || 'http://localhost:3000';
     return res.redirect(`${frontendUrl}/callback/github?success=true&username=${encodeURIComponent(ghUser.username)}`);
   } catch (error) {
     // Log chi tiết lỗi từ GitHub API
@@ -410,8 +420,8 @@ exports.jiraCallback = async (req, res) => {
     console.log(`   - Cloud ID: ${cloudId}`);
     console.log(`   - Account ID: ${me.accountId}`);
 
-    // 8) Redirect về frontend (state đã ký — resolve an toàn)
-    const frontendUrl = resolveOAuthRedirectBaseUrl(decoded);
+    // 8) Redirect về frontend
+    const frontendUrl = decoded.frontendRedirectUri?.trim() || process.env.CLIENT_URL || 'http://localhost:3000';
     
     // Xử lý mobile deep link
     if (decoded.platform === 'mobile') {
@@ -974,33 +984,25 @@ exports.syncMyProjectData = async (req, res) => {
               continue; // Bỏ qua commit không phải của user
             }
 
-            const checkResult = await GithubCommit.processCommit(commit, teamId, { isSync: true });
+            const checkResult = await GithubCommit.processCommit(commit, teamId);
             const branchesToAdd = (commit.branches && commit.branches.length)
               ? commit.branches
               : (commit.branch ? [commit.branch] : []);
             const primaryBranch = commit.branch || (commit.branches && commit.branches[0]) || null;
             const extractedJiraIssues = [...new Set((commit.message || '').match(jiraRegex) || [])];
 
-            const setFields = {
-              team_id: teamId,
-              author_email: commit.author_email,
-              author_name: commit.author_name,
-              message: commit.message,
-              commit_date: commit.commit_date,
-              url: commit.url,
-              branch: primaryBranch,
-              is_counted: checkResult.is_counted,
-              is_merge_commit: !!checkResult.isMergeCommit,
-              rejection_reason: checkResult.is_counted ? null : checkResult.reason,
-              scoring_note_vi: checkResult.scoringNoteVi != null ? checkResult.scoringNoteVi : null
-            };
-            if (checkResult.isMergeCommit) {
-              setFields.ai_score = null;
-              setFields.ai_review = null;
-              setFields.scoring_note_vi = null;
-            }
             const updateDoc = {
-              $set: setFields
+              $set: {
+                team_id: teamId,
+                author_email: commit.author_email,
+                author_name: commit.author_name,
+                message: commit.message,
+                commit_date: commit.commit_date,
+                url: commit.url,
+                branch: primaryBranch,
+                is_counted: checkResult.is_counted,
+                rejection_reason: checkResult.reason
+              }
             };
             const addToSetFields = {};
             if (branchesToAdd.length > 0) addToSetFields.branches = { $each: branchesToAdd };
@@ -1207,13 +1209,11 @@ exports.getCommitsByJiraIssue = async (req, res) => {
       .limit(limit)
       .lean();
 
-    const commitsVi = commits.map((c) => GithubCommit.localizeCommitForApi(c));
-
     return res.json({
       issueKey: issueKey.trim().toUpperCase(),
       projectId,
-      total: commitsVi.length,
-      commits: commitsVi
+      total: commits.length,
+      commits
     });
   } catch (error) {
     console.error('Get Commits By Jira Issue Error:', error);
@@ -1335,12 +1335,10 @@ exports.getMyCommits = async (req, res) => {
 
     const projects = await Project.find({ team_id: { $in: teamIds } }).select('_id name team_id').lean();
 
-    const commitsVi = commits.map((c) => GithubCommit.localizeCommitForApi(c));
-
     return res.json({
       projects: projects.map(p => ({ _id: p._id, name: p.name, team_id: p.team_id })),
-      total: commitsVi.length,
-      commits: commitsVi
+      total: commits.length,
+      commits
     });
   } catch (error) {
     console.error('Get My Commits Error:', error);
@@ -1425,95 +1423,105 @@ exports.getMyTasks = async (req, res) => {
  * Leader: Lấy commits GitHub của cả team
  */
 exports.getTeamCommits = async (req, res) => {
-  try {
-    const user = req.user;
-    const { teamId } = req.params;
-    
-    if (!user) {
-      return res.status(404).json({ error: 'Không tìm thấy user' });
+    try {
+        // 🔥 THÊM 3 DÒNG NÀY ĐỂ KÉO MODEL RA TỪ OBJECT 'models' CỦA BẠN
+        const Team = models.Team;
+        const TeamMember = models.TeamMember;
+        const GithubCommit = models.GithubCommit;
+
+        const { teamId } = req.params;
+        const teamObjectId = new mongoose.Types.ObjectId(teamId);
+
+        // 1. Lấy thông tin Team & Members
+        const team = await Team.findById(teamId).lean();
+        if (!team) return res.status(404).json({ error: 'Không tìm thấy Nhóm.' });
+
+        const members = await TeamMember.find({ team_id: teamId, is_active: true })
+            .populate('student_id', 'student_code full_name email avatar_url')
+            .lean();
+
+        if (members.length === 0) {
+            return res.json({ message: "Nhóm chưa có thành viên.", data: null });
+        }
+
+        // Phân quyền (Ai có trong nhóm, hoặc là Giảng viên mới được xem)
+        if (req.role === 'STUDENT') {
+            const isMember = members.find(m => m.student_id?._id.toString() === req.user._id.toString());
+            if (!isMember) {
+                return res.status(403).json({ error: 'Chỉ thành viên trong nhóm mới được xem danh sách Commit.' });
+            }
+        }
+
+        // ==========================================
+        // 2. KÉO 1 MẺ TOÀN BỘ COMMIT CỦA TEAM 
+        // ==========================================
+        const allCommits = await GithubCommit.find({ team_id: teamObjectId })
+            .sort({ commit_date: -1 }) // Xếp mới nhất lên đầu
+            .lean();
+
+        // ==========================================
+        // 3. MỔ XẺ VÀ CHIA COMMIT CHO TỪNG NGƯỜI
+        // ==========================================
+        const membersCommits = members.map(m => {
+            const email = m.student_id?.email?.toLowerCase()?.trim() || "";
+            const username = m.github_username?.toLowerCase()?.trim() || "";
+
+            // Lọc ra những commit thuộc về thành viên này bằng logic CHUẨN của Dashboard
+            const myCommits = allCommits.filter(c => {
+                const cEmail = (c.author_email || "").toLowerCase().trim();
+                const cName = (c.author_name || "").toLowerCase().trim();
+
+                const isMyCommit = 
+                    (email && cEmail === email) || 
+                    (username && (
+                        cEmail === `${username}@users.noreply.github.com` || 
+                        cEmail.includes(`+${username}@users.noreply`) || 
+                        cName === username
+                    ));
+
+                return isMyCommit;
+            });
+
+            // Format lại data trả về khớp với JSON Frontend đang đợi
+            return {
+                member: {
+                    _id: m._id,
+                    student: m.student_id,
+                    role_in_team: m.role_in_team,
+                    github_username: m.github_username
+                },
+                total_commits: myCommits.length, // Lấy số lượng tổng
+                approved_commits: myCommits.filter(c => c.is_counted).length // Bonus thêm số commit hợp lệ cho FE
+            };
+        });
+
+        // Tùy chọn: Đẩy mấy ông Leader lên đầu danh sách cho đẹp
+        membersCommits.sort((a, b) => {
+            if (a.member.role_in_team === 'Leader') return -1;
+            if (b.member.role_in_team === 'Leader') return 1;
+            return 0;
+        });
+
+        // ==========================================
+        // 4. TRẢ VỀ FRONTEND
+        // ==========================================
+        return res.status(200).json({
+            team: {
+                _id: team._id,
+                project_name: team.project_name || `Group ${team.team_name || ''}`
+            },
+            summary: {
+                total_members: members.length,
+                total_commits: allCommits.length // Tổng commit của cả Team
+            },
+            members_commits: membersCommits
+        });
+
+    } catch (error) {
+        console.error("❌ Lỗi API getTeamCommits:", error);
+        return res.status(500).json({ error: "Lỗi hệ thống khi lấy danh sách Commit của nhóm." });
     }
-
-    const Team = models.Team;
-    const TeamMember = models.TeamMember;
-    const GithubCommit = models.GithubCommit;
-
-    // Kiểm tra team tồn tại
-    const team = await Team.findById(teamId);
-    if (!team) {
-      return res.status(404).json({ error: 'Không tìm thấy team' });
-    }
-
-    // Kiểm tra user có phải leader không
-    if (req.role === 'STUDENT') {
-      const teamMember = await TeamMember.findOne({
-        team_id: teamId,
-        student_id: user._id
-      });
-
-      if (!teamMember || teamMember.role_in_team !== 'Leader') {
-        return res.status(403).json({ error: 'Chỉ Leader hoặc Giảng viên mới có quyền xem dữ liệu của cả team' });
-      }
-    }
-
-    // Lấy tất cả members
-    const members = await TeamMember.find({ team_id: teamId })
-      .populate('student_id', 'student_code email full_name')
-      .lean();
-
-    const limit = Math.min(500, Math.max(1, Number(req.query?.limit || 100)));
-    const branch = (req.query?.branch || '').trim() || null;
-
-    let query = { team_id: teamId };
-    if (branch) {
-      query.$or = [
-        { branch: branch },
-        { branches: branch }
-      ];
-    }
-
-    const allCommits = await GithubCommit.find(query)
-      .sort({ commit_date: -1 })
-      .limit(limit)
-      .lean();
-
-    // Phân loại commits theo member (match author_email hoặc github_username)
-    const commitsByMember = members.map(member => {
-      const emails = [member.student_id?.email].filter(Boolean);
-      const githubUsernames = [member.github_username].filter(Boolean);
-      const memberCommits = allCommits.filter(c =>
-        commitBelongsToAuthor(c, emails, githubUsernames)
-      );
-
-      return {
-        member: {
-          _id: member._id,
-          student: member.student_id,
-          role_in_team: member.role_in_team,
-          github_username: member.github_username
-        },
-        total: memberCommits.length,
-        commits: memberCommits.map((c) => GithubCommit.localizeCommitForApi(c))
-      };
-    });
-
-    return res.json({
-      team: {
-        _id: team._id,
-        project_name: team.project_name
-      },
-      summary: {
-        total_members: members.length,
-        total_commits: allCommits.length
-      },
-      members_commits: commitsByMember
-    });
-
-  } catch (error) {
-    console.error('Get Team Commits Error:', error);
-    return res.status(500).json({ error: error.message });
-  }
 };
-
 /**
  * GET /api/integrations/team/:teamId/tasks
  * Leader: Lấy tasks Jira của cả team
@@ -1692,8 +1700,6 @@ exports.getMemberCommits = async (req, res) => {
         .lean();
     }
 
-    const commitsVi = commits.map((c) => GithubCommit.localizeCommitForApi(c));
-
     return res.json({
       member: {
         _id: member._id,
@@ -1701,8 +1707,8 @@ exports.getMemberCommits = async (req, res) => {
         role_in_team: member.role_in_team,
         github_username: member.github_username
       },
-      total: commitsVi.length,
-      commits: commitsVi
+      total: commits.length,
+      commits: commits
     });
 
   } catch (error) {
