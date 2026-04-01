@@ -147,7 +147,7 @@ router.get('/api/reviews/team/:teamId', authenticateToken, ReviewController.getT
  *       500:
  *         description: Lỗi máy chủ nội bộ.
  */
-router.post('/api/reviews/calculate', authenticateToken, ReviewController.calculateSprintGrades);
+router.post('/api/reviews/calculate', authenticateToken, ReviewController.calculateProjectGrades);
 
 /**
  * @swagger

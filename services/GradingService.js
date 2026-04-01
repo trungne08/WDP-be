@@ -2,8 +2,12 @@ const { PeerReview, SprintAssessment } = require('../models/Assessment');
 const TeamMember = require('../models/TeamMember');
 const Team = require('../models/Team');
 
-const calculateSprintGrades = async (teamId, groupGrade = 10) => {
-    // 1. Lấy thông tin Team & Config
+const calculateProjectGrades = async (teamId, groupGrade = 10) => {
+    const Team = require('../models/Team');
+    const TeamMember = require('../models/TeamMember');
+    const PeerReview = require('../models/PeerReview');
+    const { SprintAssessment } = require('../models/Assessment');
+
     const team = await Team.findById(teamId).populate('class_id');
     if (!team) throw new Error('Không tìm thấy Nhóm');
 
@@ -11,19 +15,18 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
         jiraWeight: 0.4, gitWeight: 0.4, reviewWeight: 0.2, allowOverCeiling: false 
     };
 
-    // 2. Lấy danh sách thành viên
     const members = await TeamMember.find({ team_id: teamId, is_active: true })
         .populate('student_id', 'email');
     
     const memberCount = members.length;
     if (memberCount === 0) return [];
 
-    // 3. Lấy dữ liệu Đánh giá chéo (Peer Review)
     const reviews = await PeerReview.find({ team_id: teamId });
     const reviewStats = {};
     let totalReviewScore = 0;
 
     reviews.forEach(r => {
+        // Lấy ID của STUDENT để gom nhóm Review
         const eId = r.evaluated_id ? r.evaluated_id.toString() : (r.reviewee_id ? r.reviewee_id.toString() : null);
         const rating = r.rating || r.score_attitude;
         
@@ -35,34 +38,31 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
         }
     });
 
-    // ==========================================
-    // 4. TÍNH TOÁN VÀ CHUẨN BỊ BULK WRITE
-    // ==========================================
     const totalPointPool = groupGrade * memberCount;
-    
     const bulkAssessmentUpdates = [];
     const bulkMemberUpdates = [];
     const assessmentResults = [];
 
     for (const member of members) {
         const mId = member._id.toString();
+        
+        // Trích xuất ID của STUDENT để đi móc điểm Review
+        const sId = member.student_id._id ? member.student_id._id.toString() : member.student_id.toString();
 
-        // -- Lấy % Data Thập Phân Từ AI (Không cần chia mẫu số) --
-        const pGit = member.scores?.git_score || 0; 
-        const pJira = member.scores?.jira_score || 0;
+        // 🔥 CHỈ LẤY DATA TỪ NGOÀI GỐC (Dọn sạch .scores)
+        const pGit = member.git_score || 0; 
+        const pJira = member.jira_score || 0;
 
-        // -- Riêng Review do con người chấm nên vẫn chia % --
-        const myReviewTotal = reviewStats[mId] ? reviewStats[mId].total : 0;
-        const avgStar = reviewStats[mId] && reviewStats[mId].count > 0 
-            ? reviewStats[mId].total / reviewStats[mId].count 
+        // Đi móc Review bằng STUDENT ID
+        const myReviewTotal = reviewStats[sId] ? reviewStats[sId].total : 0;
+        const avgStar = reviewStats[sId] && reviewStats[sId].count > 0 
+            ? reviewStats[sId].total / reviewStats[sId].count 
             : 0;
         const pReview = totalReviewScore > 0 ? (myReviewTotal / totalReviewScore) : (1 / memberCount);
 
-        // -- Tính Đóng Góp & Rút Điểm --
         const finalContributionPercent = (pJira * config.jiraWeight) + (pGit * config.gitWeight) + (pReview * config.reviewWeight);
         let finalScore = totalPointPool * finalContributionPercent;
 
-        // -- Chặn Trần (Max 10) --
         if (!config.allowOverCeiling && finalScore > 10.0) {
             finalScore = 10.0; 
         }
@@ -70,7 +70,6 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
         finalScore = Number(finalScore.toFixed(2));
         const displayFactor = Number((finalScore / groupGrade).toFixed(2));
 
-        // -- Gói Data --
         const assessmentData = {
             group_grade: groupGrade,
             jira_percentage: pJira,
@@ -83,7 +82,6 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
 
         assessmentResults.push({ team_id: teamId, member_id: mId, ...assessmentData });
 
-        // 🔥 NẠP LỆNH BULK UPDATE CHO SPRINT ASSESSMENT
         bulkAssessmentUpdates.push({
             updateOne: {
                 filter: { team_id: teamId, member_id: mId },
@@ -92,23 +90,19 @@ const calculateSprintGrades = async (teamId, groupGrade = 10) => {
             }
         });
 
-        // 🔥 NẠP LỆNH BULK UPDATE CHO TEAM MEMBER
+        // Chỉ update contribution_percent ngoài gốc, bỏ qua cái scores.total_score
         bulkMemberUpdates.push({
             updateOne: {
                 filter: { _id: mId },
                 update: { 
                     $set: { 
-                        contribution_percent: Number((finalContributionPercent * 100).toFixed(1)),
-                        'scores.total_score': finalScore
+                        contribution_percent: Number((finalContributionPercent * 100).toFixed(1))
                     } 
                 }
             }
         });
     }
 
-    // ==========================================
-    // 5. THỰC THI GHI XUỐNG DB (TỐC ĐỘ BÀN THỜ)
-    // ==========================================
     if (bulkAssessmentUpdates.length > 0) {
         await SprintAssessment.bulkWrite(bulkAssessmentUpdates);
     }
