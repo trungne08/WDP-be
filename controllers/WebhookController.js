@@ -277,21 +277,28 @@ exports.receiveJiraWebhook = async (req, res) => {
       is_active: true
     }).lean();
 
-    if (!teamMember) {
-      console.log(`⚠️ [Jira Webhook] Không tìm thấy Team cho project: ${dbProject._id}`);
+    // team_id: ưu tiên TeamMember; fallback Project.team_id (tránh webhook im lặng khi thiếu bản ghi TeamMember)
+    const teamId = teamMember?.team_id || dbProject.team_id || null;
+    if (!teamId) {
+      console.log(`⚠️ [Jira Webhook] Không có team_id cho project: ${dbProject._id}`);
       return res.status(200).send('Jira Webhook received');
     }
-
-    const teamId = teamMember.team_id;
+    if (!teamMember && dbProject.team_id) {
+      console.warn(
+        `⚠️ [Jira Webhook] Không có TeamMember active cho project ${dbProject._id}; dùng team_id từ Project.`
+      );
+    }
 
     const emitTaskEvent = (eventName, taskData) => {
       const io = req.app.get('io');
-      if (io) {
-        // Đồng bộ tên room với join_project trong index.js
-        const projectRoom = `project:${String(dbProject._id)}`;
-        io.to(projectRoom).emit(eventName, taskData);
-        io.emit(eventName, taskData);
+      if (!io) return;
+      const projectRoom = `project:${String(dbProject._id)}`;
+      io.to(projectRoom).emit(eventName, taskData);
+      // Cùng id với socket.on('join_class', ...) trong index.js — FE màn Tasks theo lớp thường chỉ join room này
+      if (dbProject.class_id) {
+        io.to(String(dbProject.class_id)).emit(eventName, taskData);
       }
+      io.emit(eventName, taskData);
     };
 
     if (eventType === 'jira:issue_deleted') {
