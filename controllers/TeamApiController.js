@@ -452,7 +452,8 @@ exports.getCommits = async (req, res) => {
             .limit(limit)
             .lean();
 
-        res.json({ total: commits.length, commits });
+        const commitsVi = commits.map((c) => GithubCommit.localizeCommitForApi(c));
+        res.json({ total: commitsVi.length, commits: commitsVi });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }

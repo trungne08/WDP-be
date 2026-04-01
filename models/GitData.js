@@ -27,7 +27,11 @@ const GithubCommitSchema = new Schema({
     
     // LOGIC TÍNH ĐIỂM (QUALIFIED)
     is_counted: { type: Boolean, default: false },
-    rejection_reason: String, // 'Spam', 'Too soon', 'Empty'
+    /** true = merge commit (Merge branch / Merge pull request...) — không tính điểm, không chấm AI */
+    is_merge_commit: { type: Boolean, default: false },
+    rejection_reason: String, // Lý do không tính điểm (tiếng Việt)
+    /** Cảnh báo nhẹ khi vẫn tính điểm (vd: message chưa chuẩn) — hiển thị cho cột “lý do / cảnh báo” */
+    scoring_note_vi: { type: String, default: null },
 
     // AI grading (lưu điểm & nhận xét code review Gemini)
     ai_score: { type: Number, default: null },
@@ -38,15 +42,84 @@ const GithubCommitSchema = new Schema({
 // tránh việc 2 team khác nhau chia sẻ cùng history mà bị "đè" lẫn nhau.
 GithubCommitSchema.index({ team_id: 1, hash: 1 }, { unique: true });
 
+/** Merge commit (Git/GitHub) — không tính điểm leaderboard / không chấm AI */
+function isMergeCommitMessage(message) {
+    const firstLine = String(message || '')
+        .trim()
+        .split(/\r?\n/)[0]
+        .trim();
+    if (!firstLine) return false;
+    return (
+        /^merge\s+branch\s+/i.test(firstLine) ||
+        /^merge\s+pull\s+request\s+/i.test(firstLine) ||
+        /^merge\s+remote-tracking\s+branch/i.test(firstLine)
+    );
+}
+
+GithubCommitSchema.statics.isMergeCommitMessage = isMergeCommitMessage;
+
+/**
+ * Chuẩn hóa lý do từ DB (cũ có thể là tiếng Anh) → tiếng Việt cho API/FE.
+ */
+GithubCommitSchema.statics.localizeRejectionReason = function (reason) {
+    if (reason == null || reason === '') return null;
+    const s = String(reason).trim();
+    const legacy = {
+        'Message format penalty':
+            'Tin nhắn commit chưa đạt chuẩn (quá ngắn hoặc chưa theo Conventional Commits). Điểm AI vẫn tính nhưng bị giảm hệ số khi chấm.',
+        'Merge commit — không tính điểm':
+            'Đây là commit merge (ghép nhánh hoặc Pull Request) — không tính điểm xếp hạng.'
+    };
+    if (legacy[s]) return legacy[s];
+    const m = /^Too soon \((\d+)m < 10m\)$/.exec(s);
+    if (m) {
+        return `Đẩy commit quá sát nhau: cách lần được tính điểm trước đó khoảng ${m[1]} phút; cần tối thiểu 10 phút giữa hai lần tính điểm.`;
+    }
+    return s;
+};
+
+/**
+ * Một dòng để cột UI hiển thị: ưu tiên lý do loại khỏi điểm, sau đó cảnh báo format (vẫn tính điểm).
+ */
+GithubCommitSchema.statics.penaltyDisplayVi = function (doc) {
+    if (!doc) return null;
+    const reject = doc.rejection_reason
+        ? this.localizeRejectionReason(doc.rejection_reason)
+        : null;
+    if (reject) return reject;
+    if (doc.scoring_note_vi) return String(doc.scoring_note_vi).trim() || null;
+    return null;
+};
+
+/** Gắn thêm field tiếng Việt thống nhất cho JSON trả về FE (không đổi dữ liệu gốc DB). */
+GithubCommitSchema.statics.localizeCommitForApi = function (doc) {
+    if (!doc || typeof doc !== 'object') return doc;
+    return {
+        ...doc,
+        rejection_reason: doc.rejection_reason ? this.localizeRejectionReason(doc.rejection_reason) : null,
+        penalty_display_vi: this.penaltyDisplayVi(doc)
+    };
+};
+
 // --- LOGIC XỬ LÝ COOLDOWN 10 PHÚT (Viết ngay trong Model) ---
 GithubCommitSchema.statics.processCommit = async function(commitData, teamId) {
+    const rawMessage = String(commitData.message || '').trim();
+
+    // Merge commit: không tính điểm (không phải penalty cooldown)
+    if (isMergeCommitMessage(rawMessage)) {
+        return {
+            is_counted: false,
+            reason: 'Đây là commit merge (ghép nhánh hoặc Pull Request) — không tính điểm xếp hạng.',
+            isMergeCommit: true,
+            scoringNoteVi: null
+        };
+    }
+
     // 1. Commit message sai format KHÔNG loại commit khỏi vòng tính điểm nữa.
     //    Penalty sẽ được xử lý ở bước chấm AI score.
-    const rawMessage = String(commitData.message || '').trim();
     const messageLooksBad =
         !rawMessage ||
-        rawMessage.length < 10 ||
-        rawMessage.toLowerCase().includes('merge pull request');
+        rawMessage.length < 10;
 
     // 2. Check Cooldown 30 Phút (theo schema note: "True if Cooldown > 30m")
     // Tìm commit gần nhất ĐÃ ĐƯỢC TÍNH (is_counted = true) của email này
@@ -63,17 +136,29 @@ GithubCommitSchema.statics.processCommit = async function(commitData, teamId) {
         const diffInMs = Math.abs(currentTs - lastTs);
         const diffInMinutes = diffInMs / (1000 * 60);
 
-        if (diffInMinutes < 10) { // Cooldown > 10m theo schema
-            return { is_counted: false, reason: `Too soon (${Math.round(diffInMinutes)}m < 10m)` };
+        if (diffInMinutes < 10) {
+            const mins = Math.round(diffInMinutes);
+            return {
+                is_counted: false,
+                reason: `Đẩy commit quá sát nhau: cách lần được tính điểm trước đó khoảng ${mins} phút; cần tối thiểu 10 phút giữa hai lần tính điểm.`,
+                isMergeCommit: false,
+                scoringNoteVi: null
+            };
         }
     }
 
-    // Nếu message có vấn đề thì vẫn counted=true, chỉ gắn cờ để downstream áp penalty.
+    // Message chưa đẹp: vẫn counted=true; ghi rõ cảnh báo tiếng Việt (hệ số AI xử lý ở bước chấm điểm).
     if (messageLooksBad) {
-        return { is_counted: true, reason: 'Message format penalty' };
+        return {
+            is_counted: true,
+            reason: null,
+            isMergeCommit: false,
+            scoringNoteVi:
+                'Tin nhắn commit chưa đạt chuẩn (quá ngắn hoặc chưa theo Conventional Commits). Điểm AI vẫn tính nhưng bị giảm hệ số khi chấm.'
+        };
     }
 
-    return { is_counted: true, reason: null };
+    return { is_counted: true, reason: null, isMergeCommit: false, scoringNoteVi: null };
 };
 
 module.exports = mongoose.model('GithubCommit', GithubCommitSchema);

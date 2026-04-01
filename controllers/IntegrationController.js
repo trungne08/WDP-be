@@ -965,18 +965,26 @@ exports.syncMyProjectData = async (req, res) => {
             const primaryBranch = commit.branch || (commit.branches && commit.branches[0]) || null;
             const extractedJiraIssues = [...new Set((commit.message || '').match(jiraRegex) || [])];
 
+            const setFields = {
+              team_id: teamId,
+              author_email: commit.author_email,
+              author_name: commit.author_name,
+              message: commit.message,
+              commit_date: commit.commit_date,
+              url: commit.url,
+              branch: primaryBranch,
+              is_counted: checkResult.is_counted,
+              is_merge_commit: !!checkResult.isMergeCommit,
+              rejection_reason: checkResult.is_counted ? null : checkResult.reason,
+              scoring_note_vi: checkResult.scoringNoteVi != null ? checkResult.scoringNoteVi : null
+            };
+            if (checkResult.isMergeCommit) {
+              setFields.ai_score = null;
+              setFields.ai_review = null;
+              setFields.scoring_note_vi = null;
+            }
             const updateDoc = {
-              $set: {
-                team_id: teamId,
-                author_email: commit.author_email,
-                author_name: commit.author_name,
-                message: commit.message,
-                commit_date: commit.commit_date,
-                url: commit.url,
-                branch: primaryBranch,
-                is_counted: checkResult.is_counted,
-                rejection_reason: checkResult.reason
-              }
+              $set: setFields
             };
             const addToSetFields = {};
             if (branchesToAdd.length > 0) addToSetFields.branches = { $each: branchesToAdd };
@@ -1183,11 +1191,13 @@ exports.getCommitsByJiraIssue = async (req, res) => {
       .limit(limit)
       .lean();
 
+    const commitsVi = commits.map((c) => GithubCommit.localizeCommitForApi(c));
+
     return res.json({
       issueKey: issueKey.trim().toUpperCase(),
       projectId,
-      total: commits.length,
-      commits
+      total: commitsVi.length,
+      commits: commitsVi
     });
   } catch (error) {
     console.error('Get Commits By Jira Issue Error:', error);
@@ -1309,10 +1319,12 @@ exports.getMyCommits = async (req, res) => {
 
     const projects = await Project.find({ team_id: { $in: teamIds } }).select('_id name team_id').lean();
 
+    const commitsVi = commits.map((c) => GithubCommit.localizeCommitForApi(c));
+
     return res.json({
       projects: projects.map(p => ({ _id: p._id, name: p.name, team_id: p.team_id })),
-      total: commits.length,
-      commits
+      total: commitsVi.length,
+      commits: commitsVi
     });
   } catch (error) {
     console.error('Get My Commits Error:', error);
@@ -1464,7 +1476,7 @@ exports.getTeamCommits = async (req, res) => {
           github_username: member.github_username
         },
         total: memberCommits.length,
-        commits: memberCommits
+        commits: memberCommits.map((c) => GithubCommit.localizeCommitForApi(c))
       };
     });
 
@@ -1664,6 +1676,8 @@ exports.getMemberCommits = async (req, res) => {
         .lean();
     }
 
+    const commitsVi = commits.map((c) => GithubCommit.localizeCommitForApi(c));
+
     return res.json({
       member: {
         _id: member._id,
@@ -1671,8 +1685,8 @@ exports.getMemberCommits = async (req, res) => {
         role_in_team: member.role_in_team,
         github_username: member.github_username
       },
-      total: commits.length,
-      commits: commits
+      total: commitsVi.length,
+      commits: commitsVi
     });
 
   } catch (error) {

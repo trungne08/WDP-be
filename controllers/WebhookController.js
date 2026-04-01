@@ -542,18 +542,27 @@ exports.receiveGithubWebhook = async (req, res) => {
       const branchesToAdd = branch ? [branch] : [];
       const extractedJiraIssues = [...new Set((commit.message || '').match(jiraRegex) || [])];
 
+      const setFields = {
+        team_id: teamId,
+        author_email: commit.author_email,
+        author_name: commit.author_name,
+        message: commit.message,
+        commit_date: commit.commit_date,
+        url: commit.url,
+        branch,
+        is_counted: checkResult.is_counted,
+        is_merge_commit: !!checkResult.isMergeCommit,
+        rejection_reason: checkResult.is_counted ? null : checkResult.reason,
+        scoring_note_vi: checkResult.scoringNoteVi != null ? checkResult.scoringNoteVi : null
+      };
+      if (checkResult.isMergeCommit) {
+        setFields.ai_score = null;
+        setFields.ai_review = null;
+        setFields.scoring_note_vi = null;
+      }
+
       const updateDoc = {
-        $set: {
-          team_id: teamId,
-          author_email: commit.author_email,
-          author_name: commit.author_name,
-          message: commit.message,
-          commit_date: commit.commit_date,
-          url: commit.url,
-          branch,
-          is_counted: checkResult.is_counted,
-          rejection_reason: checkResult.is_counted ? null : checkResult.reason
-        }
+        $set: setFields
       };
 
       const addToSetFields = {};
@@ -567,7 +576,9 @@ exports.receiveGithubWebhook = async (req, res) => {
         { upsert: true, new: true }
       );
       commitsSaved += 1;
-      commitsToGrade.add(commit.hash);
+      if (checkResult.is_counted) {
+        commitsToGrade.add(commit.hash);
+      }
     }
 
     const io = req.app.get('io');

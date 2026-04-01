@@ -107,6 +107,24 @@ async function reviewGithubCommitWithGemini(projectId, commitHash, user, genAI, 
     };
   }
 
+  const teamId = project.team_id;
+  if (!teamId) {
+    return { ok: false, error: 'Không tìm thấy team_id để lưu ai_score.' };
+  }
+
+  // Merge commit: không chấm AI (tránh tốn quota / diff merge vô nghĩa)
+  let commitDocPre = await models.GithubCommit.findOne({ team_id: teamId, hash: sha }).lean();
+  if (!commitDocPre && sha.length < 40) {
+    const re = new RegExp('^' + escapeRegex(sha));
+    commitDocPre = await models.GithubCommit.findOne({ team_id: teamId, hash: re }).lean();
+  }
+  if (
+    commitDocPre?.is_merge_commit ||
+    (commitDocPre && models.GithubCommit.isMergeCommitMessage(commitDocPre.message))
+  ) {
+    return { ok: false, error: 'Merge commit — không chấm điểm' };
+  }
+
   let commitMessage;
   let files;
   try {
@@ -119,6 +137,10 @@ async function reviewGithubCommitWithGemini(projectId, commitHash, user, genAI, 
       ok: false,
       error: status === 404 ? 'Không tìm thấy commit hoặc không có quyền truy cập repo.' : msg
     };
+  }
+
+  if (models.GithubCommit.isMergeCommitMessage(commitMessage)) {
+    return { ok: false, error: 'Merge commit — không chấm điểm' };
   }
 
   const filtered = (files || []).filter(
@@ -182,11 +204,6 @@ async function reviewGithubCommitWithGemini(projectId, commitHash, user, genAI, 
     return { ok: false, error: 'JSON từ Gemini thiếu score/review hợp lệ.' };
   }
 
-  const teamId = project.team_id;
-  if (!teamId) {
-    return { ok: false, error: 'Không tìm thấy team_id để lưu ai_score.' };
-  }
-
   // Tìm commit trong DB theo hash (ưu tiên match exact, fallback match theo prefix nếu ai gửi short SHA)
   let resolvedHash = sha;
   let commitDoc = await models.GithubCommit.findOne({ team_id: teamId, hash: resolvedHash }).lean();
@@ -210,7 +227,7 @@ async function reviewGithubCommitWithGemini(projectId, commitHash, user, genAI, 
 
   const penaltyNote = conventionalOk
     ? ''
-    : '\n\n[Penalty] Commit message chưa theo Conventional Commits -> áp hệ số 0.7 vào AI score.';
+    : '\n\n[Hệ số] Tin nhắn commit chưa theo Conventional Commits — áp hệ số 0,7 vào điểm AI (thang 10).';
 
   await models.GithubCommit.findOneAndUpdate(
     { team_id: teamId, hash: resolvedHash },
