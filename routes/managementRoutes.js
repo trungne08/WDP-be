@@ -446,7 +446,7 @@ module.exports = (app) => {
 
     /**
      * @swagger
-     * /api/academic/classes/{classId}/contribution-config:
+     * /api/management/classes/{classId}/contribution-config:
      *   put:
      *     summary: Cập nhật trọng số điểm Assignment (Jira, Git, Review)
      *     tags: [19. Teaching]
