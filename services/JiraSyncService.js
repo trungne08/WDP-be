@@ -795,8 +795,31 @@ async function fetchAllBoardIssues({ accessToken, cloudId, boardId, onTokenRefre
  * @returns {Promise<void>}
  */
 async function addIssueToSprint({ accessToken, cloudId, sprintId, issueKey, onTokenRefresh }) {
+  const numericSprintId = Number(sprintId);
+  if (!Number.isFinite(numericSprintId) || numericSprintId <= 0) {
+    throw new Error(
+      `addIssueToSprint: Jira Agile API chỉ nhận sprintId số (jira_sprint_id). Nhận được: ${JSON.stringify(sprintId)}`
+    );
+  }
+
   const client = createJiraAgileClient({ accessToken, cloudId, onTokenRefresh });
-  await client.post(`/sprint/${sprintId}/issue`, { issues: [issueKey] });
+  const relPath = `/sprint/${numericSprintId}/issue`;
+  const payload = { issues: [issueKey] };
+  const fullUrl = `https://api.atlassian.com/ex/jira/${cloudId}/rest/agile/1.0${relPath}`;
+  console.log('[Jira Agile] addIssueToSprint →', { fullUrl, sprintIdJira: numericSprintId, payload });
+
+  try {
+    const res = await client.post(relPath, payload);
+    console.log('[Jira Agile] addIssueToSprint OK', { status: res.status, issueKey });
+  } catch (err) {
+    console.error('[Jira Agile] addIssueToSprint FAILED', {
+      fullUrl,
+      payload,
+      status: err.response?.status,
+      data: err.response?.data
+    });
+    throw err;
+  }
 }
 
 /**

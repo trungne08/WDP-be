@@ -32,6 +32,18 @@ const SELF_ASSIGNEE_TOKENS = new Set([
   'mình'
 ]);
 
+function escapeRegex(s) {
+  return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Chỉ nhận jira_sprint_id (số Jira Cloud) — không dùng Mongo _id làm sprintId API. */
+function toPositiveJiraSprintNumeric(v) {
+  if (v == null || v === '') return null;
+  const n = Number(v);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return Math.trunc(n);
+}
+
 /**
  * @param {import('express').Request} req
  * @param {string|null|undefined} projectId
@@ -59,38 +71,81 @@ async function resolveJiraAssigneeAccountId(req, projectId, args) {
 }
 
 /**
- * Sprint đang active (Mongo) hoặc sprintId do AI truyền → số jira_sprint_id dùng Agile API.
+ * Trả về **jira_sprint_id** (số Jira Agile API), lấy từ collection Sprint — không bao giờ dùng Mongo _id làm sprintId gọi Jira.
  * @returns {Promise<number|null>}
  */
 async function resolveJiraSprintNumericForCreate(req, projectId, args) {
   const proj = await models.Project.findById(projectId).select('team_id').lean();
   if (!proj?.team_id) return null;
+  const teamId = proj.team_id;
 
-  const raw = (args.sprintId || '').trim();
-  if (raw) {
-    if (mongoose.Types.ObjectId.isValid(raw) && String(raw).length === 24) {
-      const sp = await models.Sprint.findOne({
-        _id: raw,
-        team_id: proj.team_id
-      })
-        .select('jira_sprint_id')
-        .lean();
-      const n = sp?.jira_sprint_id;
-      return typeof n === 'number' && n > 0 ? n : null;
-    }
-    const n = Number(raw);
-    if (Number.isFinite(n) && n > 0) return n;
-    return null;
+  async function activeJiraSprintNumeric() {
+    const active = await models.Sprint.findOne({
+      team_id: teamId,
+      state: 'active'
+    })
+      .select('jira_sprint_id name')
+      .lean();
+    return toPositiveJiraSprintNumeric(active?.jira_sprint_id);
   }
 
-  const active = await models.Sprint.findOne({
-    team_id: proj.team_id,
-    state: 'active'
+  const raw = (args.sprintId || '').trim();
+  if (!raw) return activeJiraSprintNumeric();
+
+  // Mongo _id → chỉ để lookup bản ghi Sprint, API vẫn dùng field jira_sprint_id
+  if (mongoose.Types.ObjectId.isValid(raw) && String(raw).length === 24) {
+    const sp = await models.Sprint.findOne({
+      _id: raw,
+      team_id: teamId
+    })
+      .select('jira_sprint_id')
+      .lean();
+    const jid = toPositiveJiraSprintNumeric(sp?.jira_sprint_id);
+    return jid ?? (await activeJiraSprintNumeric());
+  }
+
+  // Khớp tên đúng (vd: "Sprint 1", "sprint 1")
+  const byExactName = await models.Sprint.findOne({
+    team_id: teamId,
+    name: new RegExp(`^${escapeRegex(raw)}$`, 'i')
   })
     .select('jira_sprint_id')
     .lean();
-  const n = active?.jira_sprint_id;
-  return typeof n === 'number' && n > 0 ? n : null;
+  let jid = toPositiveJiraSprintNumeric(byExactName?.jira_sprint_id);
+  if (jid) return jid;
+
+  // Chỉ số "1".."99" → ưu tiên tên kiểu Jira "Sprint 1" (tránh nhầm với jira_sprint_id=1)
+  if (/^\d{1,3}$/.test(raw)) {
+    const bySprintLabel = await models.Sprint.findOne({
+      team_id: teamId,
+      $or: [
+        { name: new RegExp(`^\\s*Sprint\\s*${raw}\\s*$`, 'i') },
+        { name: new RegExp(`^\\s*Sprint\\s*${raw}\\s*[:\\-]`, 'i') }
+      ]
+    })
+      .select('jira_sprint_id')
+      .lean();
+    jid = toPositiveJiraSprintNumeric(bySprintLabel?.jira_sprint_id);
+    if (jid) return jid;
+    return activeJiraSprintNumeric();
+  }
+
+  // Chuỗi số dài → coi là jira_sprint_id thật trên Jira Cloud
+  if (/^\d{4,}$/.test(raw)) {
+    jid = toPositiveJiraSprintNumeric(raw);
+    if (jid) return jid;
+  }
+
+  // Tên lỏng (chứa cụm user nhập)
+  const loose = await models.Sprint.findOne({
+    team_id: teamId,
+    name: new RegExp(escapeRegex(raw), 'i')
+  })
+    .sort({ updatedAt: -1 })
+    .select('jira_sprint_id')
+    .lean();
+  jid = toPositiveJiraSprintNumeric(loose?.jira_sprint_id);
+  return jid ?? (await activeJiraSprintNumeric());
 }
 
 function canUserAccessProjectChat(req, project) {
@@ -136,7 +191,7 @@ const PROJECT_CHAT_TOOLS = {
           sprintId: {
             type: SchemaType.STRING,
             description:
-              'Tùy chọn. ID sprint để tạo task đúng board sprint: dùng activeSprintId (Mongo) hoặc activeJiraSprintId (số Jira) trong project context. Nếu user không nói rõ, bỏ qua — server mặc định gán vào sprint đang active (state=active) của team.'
+              'Tùy chọn. Để gán đúng sprint: (1) tên sprint như "Sprint 1", (2) activeSprintId (Mongo) trong context — server map sang số Jira, (3) activeJiraSprintId (số dài từ Jira). Không truyền số ngắn như "1" làm ID Jira. Bỏ trống = sprint đang active (state=active).'
           }
         },
         required: ['summary', 'issueType']
@@ -262,13 +317,33 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey, projec
           });
 
           if (jiraSprintNumeric != null && agileContext) {
-            await JiraSyncService.addIssueToSprint({
-              accessToken: agileContext.getAccessToken(),
-              cloudId: agileContext.cloudId,
-              sprintId: jiraSprintNumeric,
-              issueKey: data.key,
-              onTokenRefresh: agileContext.onTokenRefresh
-            });
+            try {
+              await JiraSyncService.addIssueToSprint({
+                accessToken: agileContext.getAccessToken(),
+                cloudId: agileContext.cloudId,
+                sprintId: jiraSprintNumeric,
+                issueKey: data.key,
+                onTokenRefresh: agileContext.onTokenRefresh
+              });
+            } catch (sprintErr) {
+              const st = sprintErr.response?.status;
+              const body = sprintErr.response?.data;
+              const sprintDetail =
+                (Array.isArray(body?.errorMessages) && body.errorMessages.join('; ')) ||
+                (body && typeof body === 'object' ? JSON.stringify(body) : null) ||
+                sprintErr.message;
+              out.push({
+                name: fc.name,
+                response: {
+                  ok: false,
+                  issueCreated: true,
+                  issueKey: data.key,
+                  issueId: data.id,
+                  error: `Đã tạo issue ${data.key} nhưng KHÔNG đưa được vào sprint Jira (jira_sprint_id=${jiraSprintNumeric}). ${st ? `HTTP ${st}. ` : ''}${sprintDetail}`
+                }
+              });
+              continue;
+            }
           }
 
           out.push({
@@ -277,7 +352,7 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey, projec
               ok: true,
               issueKey: data.key,
               issueId: data.id,
-              ...(jiraSprintNumeric != null ? { sprintId: jiraSprintNumeric } : {})
+              ...(jiraSprintNumeric != null ? { jiraSprintId: jiraSprintNumeric } : {})
             }
           });
         } catch (err) {
