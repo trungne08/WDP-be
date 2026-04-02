@@ -531,6 +531,7 @@ exports.getRanking = async (req, res) => {
         const commits = await GithubCommit.find({ team_id: teamId, is_counted: true })
             .select('author_email author_name')
             .lean();
+            
         const totalTeamValidCommits = commits.length;
         console.log(`[getRanking] teamId=${teamId}, total_team_valid_commits=${totalTeamValidCommits}`);
 
@@ -546,10 +547,16 @@ exports.getRanking = async (req, res) => {
             }
         }
 
+        // ==========================================
+        // 🛠️ FIX BUG 1: CHẶN ĐỨNG TASK VÔ CHỦ
+        // ==========================================
         const taskAggByJiraId = new Map();
         for (const t of tasks) {
             const jiraId = t.assignee_account_id;
-            if (!jiraId) continue;
+            
+            // Nếu task không có ai làm (null, undefined, chuỗi rỗng, chuỗi 'null') -> Bỏ qua ngay!
+            if (!jiraId || jiraId === 'null') continue; 
+
             const prev = taskAggByJiraId.get(jiraId) || { done_count: 0, done_sp: 0, total_count: 0, total_sp: 0 };
             const sp = Number(t.story_point) || 0;
             prev.total_count += 1;
@@ -567,15 +574,31 @@ exports.getRanking = async (req, res) => {
         }
 
         const rows = members.map((m) => {
-            const jiraId = memberJiraAccountId(m);
-            const taskAgg = jiraId ? taskAggByJiraId.get(jiraId) : null;
+            // ==========================================
+            // 🛠️ FIX BUG 2: DÒ TÌM JIRA ID THÔNG MINH
+            // ==========================================
+            // Lấy từ TeamMember trước, nếu null thì móc từ m.student_id.integrations ra
+            const safeJiraId = m.jira_account_id 
+                || m.student_id?.integrations?.jira?.jiraAccountId 
+                || null;
+
+            // Chỉ tra cứu map khi có ID xịn
+            const taskAgg = (safeJiraId && safeJiraId !== 'null') ? taskAggByJiraId.get(safeJiraId) : null;
+            
             const personalValidCommits = countedCommitsByMember.get(m._id.toString()) || 0;
-            const gitScore =
-                totalTeamValidCommits > 0 ? personalValidCommits / totalTeamValidCommits : 0;
+            
+            // Tính toán và "gọt" số thập phân thừa
+            let gitScore = totalTeamValidCommits > 0 ? personalValidCommits / totalTeamValidCommits : 0;
+            gitScore = Number(gitScore.toFixed(4)); // Cắt xuống còn max 4 số lẻ (VD: 0.2397)
+
             const personalDoneSp = taskAgg ? taskAgg.done_sp : 0;
-            const jiraScore =
-                totalTeamDoneStoryPoints > 0 ? personalDoneSp / totalTeamDoneStoryPoints : 0;
-            const ghResolved = resolveGithubUsernameForMember(m);
+            
+            let jiraScore = totalTeamDoneStoryPoints > 0 ? personalDoneSp / totalTeamDoneStoryPoints : 0;
+            jiraScore = Number(jiraScore.toFixed(4));
+
+            // Sẵn tiện check luôn GitHub thông minh
+            const ghResolved = resolveGithubUsernameForMember(m) || m.student_id?.integrations?.github?.username || null;
+            
             console.log(
                 `[getRanking] Member ${m.student_id?.student_code || m._id}: github_username=${ghResolved || 'N/A'}, personal_valid=${personalValidCommits}, git_ratio=${gitScore}`
             );
@@ -585,7 +608,7 @@ exports.getRanking = async (req, res) => {
                 student: m.student_id,
                 role_in_team: m.role_in_team,
                 mapping: {
-                    jira_account_id: m.jira_account_id || null,
+                    jira_account_id: safeJiraId, // Trả ra UI ID xịn
                     github_username: ghResolved
                 },
                 jira: {
