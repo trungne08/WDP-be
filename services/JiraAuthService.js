@@ -41,7 +41,7 @@ const JIRA_SCOPES =
   'manage:jira-webhook ' +
   'read:webhook:jira write:webhook:jira delete:webhook:jira ' + // Dynamic webhooks (param scope: space-separated; URL-encoded %20)
   // Agile scopes cho Board/Sprint (bao gồm delete sprint)
-  'read:board-scope:jira-software read:sprint:jira-software write:sprint:jira-software delete:sprint:jira-software write:board-scope:jira-software read:project:jira';
+  'read:board-scope:jira-software read:sprint:jira-software write:sprint:jira-software delete:sprint:jira-software write:board-scope:jira-software read:project:jira read:issue:jira-software';
 
 // =========================
 // 2. HELPER FUNCTIONS

@@ -6,6 +6,18 @@ const MarkdownIt = require('markdown-it');
 const puppeteer = require('puppeteer');
 const models = require('../models');
 const GithubService = require('./GithubService');
+const {
+  GEMINI_QUOTA_USER_MESSAGE,
+  isGeminiRateLimitError
+} = require('../utils/geminiQuota');
+const { withGemini429Retry } = require('../utils/geminiRotation');
+
+const PUPPETEER_LAUNCH_ARGS = [
+  '--no-sandbox',
+  '--disable-setuid-sandbox',
+  '--disable-dev-shm-usage',
+  '--disable-gpu'
+];
 
 const JUNK_PATTERNS = [
   'package-lock.json',
@@ -89,10 +101,10 @@ function isConventionalCommitMessage(message) {
 
 /**
  * Tool: lấy diff commit + chấm/review bằng Gemini (không gọi Python).
- * @param {import('@google/generative-ai').GoogleGenerativeAI} genAI
+ * Round-robin key + retry 429 nội bộ qua `withGemini429Retry`.
  * @param {string} modelName
  */
-async function reviewGithubCommitWithGemini(projectId, commitHash, user, genAI, modelName) {
+async function reviewGithubCommitWithGemini(projectId, commitHash, user, modelName) {
   const sha = (commitHash || '').trim();
   if (!sha) {
     return { ok: false, error: 'Thiếu commitHash.' };
@@ -168,29 +180,40 @@ async function reviewGithubCommitWithGemini(projectId, commitHash, user, genAI, 
       ? `${codeDiffString.slice(0, MAX_DIFF_CHARS)}\n\n...[diff bị cắt bớt]`
       : codeDiffString;
 
-  const reviewer = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction:
-      'BẠT BUỘC CHỈ TRẢ VỀ 1 JSON OBJECT HỢP LỆ (không kèm text khác ngoài JSON).\n' +
-      'JSON có cấu trúc chính xác: { "score": <number 0..10>, "review": "<string nhận xét chi tiết>" }.\n' +
-      '\n' +
-      'Chấm điểm công bằng theo 2 tiêu chí (thang 10):\n' +
-      '1) Tiêu chí 1 (20%): Format commit message (ưu tiên Conventional Commits).\n' +
-      '- Nếu commit message không rõ ràng / sai chuẩn Conventional Commits => giảm điểm CHỈ ở phần Format.\n' +
-      '- Sai tên/format commit message KHÔNG được phép kéo final score về 0 nếu code diff tốt.\n' +
-      '2) Tiêu chí 2 (80%): Chất lượng code diff.\n' +
-      '- Nếu diff xử lý logic tốt, tối ưu, không có lỗi nghiêm trọng => BẮT BUỘC chấm điểm cao cho tiêu chí 2.\n' +
-      '\n' +
-      'Quy tắc bắt buộc:\n' +
-      '- Tuyệt đối KHÔNG chấm 0 điểm chỉ vì sai format commit message.\n' +
-      '- Luôn chấm tiêu chí 2 nếu diff tồn tại (không bỏ qua).\n' +
-      '- Final score phải phản ánh đúng trọng số 20%/80%. Nếu code diff tốt thì final score phải cao (không được “quên” tiêu chí 2).\n' +
-      '\n' +
-      'Không dùng Markdown code fence. Trả lời tiếng Việt trong trường "review", viết rõ ràng, phân tích vừa đủ chi tiết và có đề xuất cải thiện cụ thể.'
-  });
+  const systemInstruction =
+    'BẠT BUỘC CHỈ TRẢ VỀ 1 JSON OBJECT HỢP LỆ (không kèm text khác ngoài JSON).\n' +
+    'JSON có cấu trúc chính xác: { "score": <number 0..10>, "review": "<string nhận xét chi tiết>" }.\n' +
+    '\n' +
+    'Chấm điểm công bằng theo 2 tiêu chí (thang 10):\n' +
+    '1) Tiêu chí 1 (20%): Format commit message (ưu tiên Conventional Commits).\n' +
+    '- Nếu commit message không rõ ràng / sai chuẩn Conventional Commits => giảm điểm CHỈ ở phần Format.\n' +
+    '- Sai tên/format commit message KHÔNG được phép kéo final score về 0 nếu code diff tốt.\n' +
+    '2) Tiêu chí 2 (80%): Chất lượng code diff.\n' +
+    '- Nếu diff xử lý logic tốt, tối ưu, không có lỗi nghiêm trọng => BẮT BUỘC chấm điểm cao cho tiêu chí 2.\n' +
+    '\n' +
+    'Quy tắc bắt buộc:\n' +
+    '- Tuyệt đối KHÔNG chấm 0 điểm chỉ vì sai format commit message.\n' +
+    '- Luôn chấm tiêu chí 2 nếu diff tồn tại (không bỏ qua).\n' +
+    '- Final score phải phản ánh đúng trọng số 20%/80%. Nếu code diff tốt thì final score phải cao (không được “quên” tiêu chí 2).\n' +
+    '\n' +
+    'Không dùng Markdown code fence. Trả lời tiếng Việt trong trường "review", viết rõ ràng, phân tích vừa đủ chi tiết và có đề xuất cải thiện cụ thể.';
 
   const prompt = `Commit message:\n${commitMessage}\n\nDiff (patch):\n${diffTruncated}`;
-  const result = await reviewer.generateContent(prompt);
+  let result;
+  try {
+    result = await withGemini429Retry(async (genAI) => {
+      const reviewer = genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction
+      });
+      return reviewer.generateContent(prompt);
+    });
+  } catch (err) {
+    if (isGeminiRateLimitError(err)) {
+      return { ok: false, error: GEMINI_QUOTA_USER_MESSAGE, quotaExceeded: true };
+    }
+    throw err;
+  }
   const rawText = (result?.response?.text?.() || '').trim();
   if (!rawText) {
     return { ok: false, error: 'Gemini không trả về nội dung JSON.' };
@@ -391,8 +414,7 @@ const MAX_EXPORT_REPORT_CHARS = 120000;
 /**
  * Sinh Markdown báo cáo (SRS / tiến độ / tổng quan) từ context dự án — dùng cho tool exportReport.
  */
-async function generateExportReportMarkdown(contextData, reportType, genAI, modelName) {
-  const model = genAI.getGenerativeModel({ model: modelName || 'gemini-2.5-flash' });
+async function generateExportReportMarkdown(contextData, reportType, modelName) {
   const type = String(reportType || 'general').toLowerCase();
 
   let instruction = '';
@@ -419,7 +441,19 @@ Chỉ dựa trên dữ liệu JSON sau, không bịa.`;
   }
 
   const prompt = `Dữ liệu thực tế dự án (JSON):\n${contextData}\n\n${instruction}`;
-  const result = await model.generateContent(prompt);
+  const resolvedModel = modelName || 'gemini-2.5-flash';
+  let result;
+  try {
+    result = await withGemini429Retry(async (genAI) => {
+      const model = genAI.getGenerativeModel({ model: resolvedModel });
+      return model.generateContent(prompt);
+    });
+  } catch (err) {
+    if (isGeminiRateLimitError(err)) {
+      return { ok: false, error: GEMINI_QUOTA_USER_MESSAGE, quotaExceeded: true };
+    }
+    throw err;
+  }
   let md = result?.response?.text?.() || '';
   if (!String(md).trim()) {
     return { ok: false, error: 'Model không trả về nội dung báo cáo.' };
@@ -474,7 +508,7 @@ async function saveMarkdownAsPdfFile(markdown, projectId, req) {
 
   const browser = await puppeteer.launch({
     headless: true,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage']
+    args: PUPPETEER_LAUNCH_ARGS
   });
   try {
     const page = await browser.newPage();
@@ -501,8 +535,8 @@ async function saveMarkdownAsPdfFile(markdown, projectId, req) {
  * Sinh Markdown (Gemini) rồi xuất PDF; trả `downloadUrl` cho tool exportReport.
  * Dùng puppeteer (đã khai báo trong package.json); html-pdf-node giữ trong deps nếu cần mở rộng sau.
  */
-async function generateExportReportWithPdf(contextData, reportType, genAI, modelName, { projectId, req }) {
-  const mdResult = await generateExportReportMarkdown(contextData, reportType, genAI, modelName);
+async function generateExportReportWithPdf(contextData, reportType, modelName, { projectId, req }) {
+  const mdResult = await generateExportReportMarkdown(contextData, reportType, modelName);
   if (!mdResult.ok) return mdResult;
   try {
     const { filename, downloadUrl, filePath } = await saveMarkdownAsPdfFile(
@@ -532,5 +566,7 @@ module.exports = {
   reviewGithubCommitWithGemini,
   generateExportReportMarkdown,
   saveMarkdownAsPdfFile,
-  generateExportReportWithPdf
+  generateExportReportWithPdf,
+  GEMINI_QUOTA_USER_MESSAGE,
+  isGeminiRateLimitError
 };

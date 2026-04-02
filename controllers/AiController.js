@@ -1,11 +1,15 @@
 const mongoose = require('mongoose');
 const {
-  GoogleGenerativeAI,
   SchemaType,
   FunctionCallingMode
 } = require('@google/generative-ai');
 
 const models = require('../models');
+const {
+  GEMINI_QUOTA_USER_MESSAGE,
+  isGeminiRateLimitError
+} = require('../utils/geminiQuota');
+const { hasGeminiApiKeys, withGemini429Retry } = require('../utils/geminiRotation');
 const {
   gatherProjectContext,
   gatherClassContext,
@@ -15,7 +19,6 @@ const {
 } = require('../services/AiChatService');
 const JiraSyncService = require('../services/JiraSyncService');
 
-const GEMINI_API_KEY = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || '';
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
 function canUserAccessProjectChat(req, project) {
@@ -226,7 +229,7 @@ async function fetchMemberStatsForProject(projectId) {
  * Thực thi lần lượt từng function call (giữ thứ tự; hỗn hợp Jira + review).
  */
 async function executeProjectChatToolRound(req, functionCalls, ctx) {
-  const { jiraProjectKey, projectId, genAI, geminiModel } = ctx;
+  const { jiraProjectKey, projectId, geminiModel } = ctx;
   const outputs = [];
   let reviewCount = 0;
   const THROTTLE_MS = Number(process.env.GEMINI_THROTTLE_MS || 1000);
@@ -246,14 +249,18 @@ async function executeProjectChatToolRound(req, functionCalls, ctx) {
           projectId,
           fc.args?.commitHash,
           req.user,
-          genAI,
           geminiModel
         );
         outputs.push({ name: fc.name, response: res });
       } catch (e) {
         outputs.push({
           name: fc.name,
-          response: { ok: false, error: e.message || 'Lỗi review commit.' }
+          response: {
+            ok: false,
+            error: isGeminiRateLimitError(e)
+              ? GEMINI_QUOTA_USER_MESSAGE
+              : e.message || 'Lỗi review commit.'
+          }
         });
       }
     } else if (fc.name === 'exportReport') {
@@ -276,7 +283,6 @@ async function executeProjectChatToolRound(req, functionCalls, ctx) {
             const rep = await generateExportReportWithPdf(
               contextStr,
               rt,
-              ctx.genAI,
               ctx.geminiModel,
               { projectId: pid, req: ctx.req }
             );
@@ -285,7 +291,12 @@ async function executeProjectChatToolRound(req, functionCalls, ctx) {
         } catch (e) {
           outputs.push({
             name: fc.name,
-            response: { ok: false, error: e.message || 'Lỗi exportReport.' }
+            response: {
+              ok: false,
+              error: isGeminiRateLimitError(e)
+                ? GEMINI_QUOTA_USER_MESSAGE
+                : e.message || 'Lỗi exportReport.'
+            }
           });
         }
       }
@@ -333,7 +344,7 @@ exports.projectChat = async (req, res) => {
       return res.status(400).json({ error: 'message là bắt buộc.' });
     }
 
-    if (!GEMINI_API_KEY) {
+    if (!hasGeminiApiKeys()) {
       return res.status(503).json({
         error: 'Chưa cấu hình GEMINI_API_KEY (hoặc GOOGLE_AI_API_KEY) trên server.'
       });
@@ -513,15 +524,14 @@ ${TOOL_GUIDE}
 
 Nguyên tắc: Trả lời tin nhắn hiện tại; phân tích tiến độ, task trễ, đóng góp khi được hỏi — dùng context; nếu cần số liệu tỷ lệ đã lưu trên hệ thống, ưu tiên gọi getMemberStats. Không bịa dữ liệu. Tiếng Việt, Markdown. Không liệt kê menu lệnh cố định.`;
 
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    const model = genAI.getGenerativeModel({
+    const modelConfig = {
       model: GEMINI_MODEL,
       systemInstruction,
       tools: [PROJECT_CHAT_TOOLS],
       toolConfig: {
         functionCallingConfig: { mode: FunctionCallingMode.AUTO }
       }
-    });
+    };
 
     const contents = [
       {
@@ -533,7 +543,6 @@ Nguyên tắc: Trả lời tin nhắn hiện tại; phân tích tiến độ, ta
     const toolCtx = {
       jiraProjectKey,
       projectId: toolProjectId ? String(toolProjectId) : null,
-      genAI,
       geminiModel: GEMINI_MODEL,
       req
     };
@@ -542,7 +551,18 @@ Nguyên tắc: Trả lời tin nhắn hiện tại; phân tích tiến độ, ta
     let responseText = '';
 
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const result = await model.generateContent({ contents });
+      let result;
+      try {
+        result = await withGemini429Retry(async (genAI) => {
+          const model = genAI.getGenerativeModel(modelConfig);
+          return model.generateContent({ contents });
+        });
+      } catch (err) {
+        if (isGeminiRateLimitError(err)) {
+          return res.status(200).json({ reply: GEMINI_QUOTA_USER_MESSAGE });
+        }
+        throw err;
+      }
       const response = result.response;
       const calls = response.functionCalls?.();
 
@@ -574,9 +594,15 @@ Nguyên tắc: Trả lời tin nhắn hiện tại; phân tích tiến độ, ta
 
     if (!responseText || !String(responseText).trim()) {
       try {
-        const finalResult = await model.generateContent({ contents });
+        const finalResult = await withGemini429Retry(async (genAI) => {
+          const model = genAI.getGenerativeModel(modelConfig);
+          return model.generateContent({ contents });
+        });
         responseText = finalResult.response.text();
-      } catch {
+      } catch (err) {
+        if (isGeminiRateLimitError(err)) {
+          return res.status(200).json({ reply: GEMINI_QUOTA_USER_MESSAGE });
+        }
         responseText = '';
       }
     }
@@ -587,6 +613,9 @@ Nguyên tắc: Trả lời tin nhắn hiện tại; phân tích tiến độ, ta
 
     return res.status(200).json({ reply: responseText.trim() });
   } catch (error) {
+    if (isGeminiRateLimitError(error)) {
+      return res.status(200).json({ reply: GEMINI_QUOTA_USER_MESSAGE });
+    }
     console.error('[AiController] projectChat error:', error.message);
     return res.status(500).json({
       error: error.message || 'Lỗi khi gọi Gemini.'
@@ -606,7 +635,7 @@ exports.exportSrs = async (req, res) => {
       return res.status(400).json({ error: 'projectId hợp lệ là bắt buộc.' });
     }
 
-    if (!GEMINI_API_KEY) {
+    if (!hasGeminiApiKeys()) {
       return res.status(503).json({
         error: 'Chưa cấu hình GEMINI_API_KEY (hoặc GOOGLE_AI_API_KEY) trên server.'
       });
@@ -626,8 +655,13 @@ exports.exportSrs = async (req, res) => {
       return res.status(404).json({ error: 'Không tìm thấy dữ liệu context để tạo SRS.' });
     }
 
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-    const rep = await generateExportReportMarkdown(contextData, 'srs', genAI, 'gemini-2.5-flash');
+    const rep = await generateExportReportMarkdown(contextData, 'srs', GEMINI_MODEL);
+    if (rep.quotaExceeded || rep.error === GEMINI_QUOTA_USER_MESSAGE) {
+      return res.status(200).json({
+        message: GEMINI_QUOTA_USER_MESSAGE,
+        quotaExceeded: true
+      });
+    }
     if (!rep.ok || !rep.markdown) {
       return res.status(502).json({ error: rep.error || 'Gemini không trả về nội dung SRS.' });
     }
@@ -639,6 +673,12 @@ exports.exportSrs = async (req, res) => {
     res.setHeader('Content-type', 'text/markdown');
     return res.status(200).send(rep.markdown);
   } catch (error) {
+    if (isGeminiRateLimitError(error)) {
+      return res.status(200).json({
+        message: GEMINI_QUOTA_USER_MESSAGE,
+        quotaExceeded: true
+      });
+    }
     console.error('[AiController] exportSrs error:', error.message);
     return res.status(500).json({ error: error.message || 'Lỗi xuất SRS.' });
   }

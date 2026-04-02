@@ -6,8 +6,9 @@ const GithubService = require('../services/GithubService');
 const { commitBelongsToAuthor, pickMemberForCommit } = require('../utils/commitUtils');
 const { persistTeamMemberGitScores } = require('../utils/memberGitScorePersistence');
 const { persistTeamMemberJiraScores } = require('../utils/memberJiraScorePersistence');
-const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { reviewGithubCommitWithGemini } = require('../services/AiChatService');
+const { isGeminiRateLimitError } = require('../utils/geminiQuota');
+const { hasGeminiApiKeys, withGemini429Retry } = require('../utils/geminiRotation');
 
 function escapeRegex(s) {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -46,18 +47,15 @@ function tryParseJsonArray(text) {
   }
 }
 
-async function gradeTeamMembersWithGemini({ teamId, leaderboard, genAI, modelName }) {
+async function gradeTeamMembersWithGemini({ teamId, leaderboard, modelName }) {
   const list = Array.isArray(leaderboard) ? leaderboard : [];
   if (list.length === 0) return [];
 
-  const grader = genAI.getGenerativeModel({
-    model: modelName,
-    systemInstruction:
-      'BẮT BUỘC CHỈ TRẢ VỀ 1 JSON ARRAY HỢP LỆ (không kèm Markdown, không kèm giải thích).\n' +
-      'Mỗi phần tử đúng cấu trúc: {"student_code": "SE...", "grade": 8.5, "review_comment": "..."}\n' +
-      'Không được trả về object bao ngoài. Không được thêm text trước/sau JSON.\n' +
-      'grade là number 0..10.'
-  });
+  const systemInstruction =
+    'BẮT BUỘC CHỈ TRẢ VỀ 1 JSON ARRAY HỢP LỆ (không kèm Markdown, không kèm giải thích).\n' +
+    'Mỗi phần tử đúng cấu trúc: {"student_code": "SE...", "grade": 8.5, "review_comment": "..."}\n' +
+    'Không được trả về object bao ngoài. Không được thêm text trước/sau JSON.\n' +
+    'grade là number 0..10.';
 
   const input = list.map((r) => ({
     student_code: r.student_code || null,
@@ -73,7 +71,22 @@ async function gradeTeamMembersWithGemini({ teamId, leaderboard, genAI, modelNam
     'Trả về JSON ARRAY theo đúng cấu trúc yêu cầu.\n\n' +
     JSON.stringify({ teamId: String(teamId), members: input });
 
-  const result = await grader.generateContent(prompt);
+  let result;
+  try {
+    result = await withGemini429Retry(async (genAI) => {
+      const grader = genAI.getGenerativeModel({
+        model: modelName,
+        systemInstruction
+      });
+      return grader.generateContent(prompt);
+    });
+  } catch (err) {
+    if (isGeminiRateLimitError(err)) {
+      console.warn('[GitHub Webhook] Gemini quota/rate limit — bỏ qua chấm điểm nhóm lần này.');
+      return [];
+    }
+    throw err;
+  }
   const raw = (result?.response?.text?.() || '').trim();
   const arr = tryParseJsonArray(raw);
   if (!arr) {
@@ -692,12 +705,11 @@ exports.receiveGithubWebhook = async (req, res) => {
     }
 
     // Background AI grading + leaderboard update (không chặn webhook response)
-    const geminiKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_AI_API_KEY || '';
     const geminiModel = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
     const THROTTLE_MS = Number(process.env.GEMINI_THROTTLE_MS || 1000);
 
     const backgroundCommitHashes = Array.from(commitsToGrade);
-    if (backgroundCommitHashes.length > 0 && geminiKey && project?._id) {
+    if (backgroundCommitHashes.length > 0 && hasGeminiApiKeys() && project?._id) {
       const githubUser =
         teamMembers.find((tm) => tm?.student_id?.integrations?.github?.accessToken)?.student_id ||
         null;
@@ -709,8 +721,6 @@ exports.receiveGithubWebhook = async (req, res) => {
 
         setImmediate(async () => {
           try {
-            const genAI = new GoogleGenerativeAI(geminiKey);
-
             for (const hash of backgroundCommitHashes) {
               try {
                 // Chỉ review khi commit chưa có ai_score (để tránh chấm lặp)
@@ -724,7 +734,6 @@ exports.receiveGithubWebhook = async (req, res) => {
                   projectIdStr,
                   hash,
                   githubUser,
-                  genAI,
                   geminiModel
                 );
 
@@ -742,7 +751,6 @@ exports.receiveGithubWebhook = async (req, res) => {
                 const grades = await gradeTeamMembersWithGemini({
                   teamId: teamIdStr,
                   leaderboard: leaderboardData.leaderboard,
-                  genAI,
                   modelName: geminiModel
                 });
 
