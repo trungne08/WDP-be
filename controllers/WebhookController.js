@@ -282,10 +282,27 @@ exports.receiveJiraWebhook = async (req, res) => {
     }
 
     const projectKey = project.key;
-    const dbProject = await models.Project.findOne({
-      jiraProjectKey: projectKey,
-      jiraCloudId: webhookCloudId
-    }).lean();
+    // Jira webhook trả về cloudId theo user thực hiện hành động, trong DB Project lưu cloudId của Leader/setup Jira.
+    // Vì vậy KHÔNG ràng buộc cloudId khi tìm Project, chỉ dùng cloudId như phương án dự phòng nếu jiraProjectKey bị trùng.
+    const candidatesByKey = await models.Project.find({
+      jiraProjectKey: projectKey
+    })
+      .sort({ updatedAt: -1 })
+      .lean();
+
+    let dbProject = null;
+    if (candidatesByKey.length === 1) {
+      dbProject = candidatesByKey[0];
+    } else if (candidatesByKey.length > 1) {
+      dbProject = candidatesByKey.find((p) => String(p.jiraCloudId || '') === webhookCloudId) || candidatesByKey[0];
+    } else {
+      // fallback cũ (chỉ để phòng trường hợp DB chưa có jiraProjectKey đúng format)
+      dbProject = await models.Project.findOne({
+        jiraProjectKey: projectKey,
+        jiraCloudId: webhookCloudId
+      })
+        .lean();
+    }
 
     if (!dbProject) {
       console.log(`⚠️ [Jira Webhook] Không tìm thấy Project với key: ${projectKey} (cloudId=${webhookCloudId})`);
