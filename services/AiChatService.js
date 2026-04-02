@@ -301,6 +301,13 @@ async function gatherProjectContext(projectId) {
   const sprints = await models.Sprint.find({ team_id: teamId }).select('_id').lean();
   const sprintIds = sprints.map((s) => s._id);
 
+  const activeSprintDoc = await models.Sprint.findOne({
+    team_id: teamId,
+    state: 'active'
+  })
+    .select('_id name jira_sprint_id')
+    .lean();
+
   const jiraTasksRaw = await models.JiraTask.find({
     $or: [{ team_id: teamId }, { sprint_id: { $in: sprintIds } }]
   })
@@ -363,7 +370,11 @@ async function gatherProjectContext(projectId) {
       class_name: project.class_id?.name || null,
       jiraProjectKey: project.jiraProjectKey || '',
       githubRepoUrl: project.githubRepoUrl || '',
-      team_id: teamId ? String(teamId) : null
+      team_id: teamId ? String(teamId) : null,
+      activeSprintId: activeSprintDoc?._id ? String(activeSprintDoc._id) : null,
+      activeJiraSprintId:
+        typeof activeSprintDoc?.jira_sprint_id === 'number' ? activeSprintDoc.jira_sprint_id : null,
+      activeSprintName: activeSprintDoc?.name || null
     },
     members,
     jiraTasks,

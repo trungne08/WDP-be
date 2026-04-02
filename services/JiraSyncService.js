@@ -1460,8 +1460,15 @@ async function syncWithAutoRefresh({ user, clientId, clientSecret, syncFunction 
     onTokenRefresh
   });
 
-  // Thực hiện sync function
-  return await syncFunction(client);
+  /** Cho syncFunction gọi Agile API (add issue vào sprint) với token đồng bộ sau refresh. */
+  const agileContext = {
+    getAccessToken: () => currentAccessToken,
+    cloudId: jira.cloudId,
+    onTokenRefresh
+  };
+
+  // Thực hiện sync function (tham số 2: agileContext — optional, caller cũ bỏ qua được)
+  return await syncFunction(client, agileContext);
 }
 
 // =========================

@@ -58,6 +58,41 @@ async function resolveJiraAssigneeAccountId(req, projectId, args) {
   return id || undefined;
 }
 
+/**
+ * Sprint đang active (Mongo) hoặc sprintId do AI truyền → số jira_sprint_id dùng Agile API.
+ * @returns {Promise<number|null>}
+ */
+async function resolveJiraSprintNumericForCreate(req, projectId, args) {
+  const proj = await models.Project.findById(projectId).select('team_id').lean();
+  if (!proj?.team_id) return null;
+
+  const raw = (args.sprintId || '').trim();
+  if (raw) {
+    if (mongoose.Types.ObjectId.isValid(raw) && String(raw).length === 24) {
+      const sp = await models.Sprint.findOne({
+        _id: raw,
+        team_id: proj.team_id
+      })
+        .select('jira_sprint_id')
+        .lean();
+      const n = sp?.jira_sprint_id;
+      return typeof n === 'number' && n > 0 ? n : null;
+    }
+    const n = Number(raw);
+    if (Number.isFinite(n) && n > 0) return n;
+    return null;
+  }
+
+  const active = await models.Sprint.findOne({
+    team_id: proj.team_id,
+    state: 'active'
+  })
+    .select('jira_sprint_id')
+    .lean();
+  const n = active?.jira_sprint_id;
+  return typeof n === 'number' && n > 0 ? n : null;
+}
+
 function canUserAccessProjectChat(req, project) {
   const role = req.role;
   const userId = (req.userId || req.user?._id)?.toString();
@@ -97,6 +132,11 @@ const PROJECT_CHAT_TOOLS = {
             type: SchemaType.STRING,
             description:
               'Tùy chọn. Jira Account ID (UUID Atlassian) của người được gán — lấy từ trường jira_account_id trong context.members. Để gán cho chính user đang chat ("gán cho tôi", "assign cho mình"), truyền đúng chữ self (server map sang TeamMember của user).'
+          },
+          sprintId: {
+            type: SchemaType.STRING,
+            description:
+              'Tùy chọn. ID sprint để tạo task đúng board sprint: dùng activeSprintId (Mongo) hoặc activeJiraSprintId (số Jira) trong project context. Nếu user không nói rõ, bỏ qua — server mặc định gán vào sprint đang active (state=active) của team.'
           }
         },
         required: ['summary', 'issueType']
@@ -179,7 +219,7 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey, projec
     user: req.user,
     clientId,
     clientSecret,
-    syncFunction: async (client) => {
+    syncFunction: async (client, agileContext) => {
       const out = [];
       for (const fc of functionCalls) {
         const args = fc.args || {};
@@ -208,6 +248,8 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey, projec
             continue;
           }
 
+          const jiraSprintNumeric = await resolveJiraSprintNumericForCreate(req, projectId, args);
+
           const data = await JiraSyncService.createIssue({
             client,
             projectKey: jiraProjectKey,
@@ -218,9 +260,25 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey, projec
               ...(assigneeAccountId ? { assigneeAccountId } : {})
             }
           });
+
+          if (jiraSprintNumeric != null && agileContext) {
+            await JiraSyncService.addIssueToSprint({
+              accessToken: agileContext.getAccessToken(),
+              cloudId: agileContext.cloudId,
+              sprintId: jiraSprintNumeric,
+              issueKey: data.key,
+              onTokenRefresh: agileContext.onTokenRefresh
+            });
+          }
+
           out.push({
             name: fc.name,
-            response: { ok: true, issueKey: data.key, issueId: data.id }
+            response: {
+              ok: true,
+              issueKey: data.key,
+              issueId: data.id,
+              ...(jiraSprintNumeric != null ? { sprintId: jiraSprintNumeric } : {})
+            }
           });
         } catch (err) {
           const msg =
@@ -554,7 +612,7 @@ exports.projectChat = async (req, res) => {
 Công cụ (function calling): suy luận ý định từ ngôn ngữ tự nhiên — không cần khớp từ khóa cứng.
 - exportReport({ reportType }): tạo báo cáo PDF (và bản Markdown nội bộ) — SRS/đặc tả (srs), tiến độ (progress), tổng quan (general). Phản hồi của tool có downloadUrl (link tải PDF). Khi có downloadUrl, bắt buộc gửi cho user dạng Markdown: [Tải báo cáo tại đây](downloadUrl) kèm một lời chúc may mắn ngắn gọn. Ví dụ ý định: "xuất SRS", "xuất file", "tải báo cáo PDF", "báo cáo tiến độ".
 - getMemberStats(): điểm Git/Jira và tỷ lệ đóng góp từng thành viên (khi hỏi ranking, điểm, ai đóng góp nhiều). Có thể kết hợp với dữ liệu trong context.
-- create_jira_task({ summary, issueType, description?, assigneeId? }): Tạo task/issue Jira. Bạn hoàn toàn có thể gán task cho chính user đang chat: trong context mỗi member có jira_account_id; hoặc truyền assigneeId = self để server gán đúng người đang chat (TeamMember).
+- create_jira_task({ summary, issueType, description?, assigneeId?, sprintId? }): Tạo task/issue Jira. Sprint: trong context.project có activeSprintId và activeJiraSprintId — nếu user không chỉ sprint, bỏ sprintId để server đưa task vào sprint đang active; nếu chỉ rõ sprint khác, truyền sprintId (Mongo hoặc số Jira). Gán cho mình: assigneeId = self. Context có jira_account_id từng member.
 - review_github_commit: Review/chấm commit khi user đưa SHA hoặc yêu cầu review (commitHash trong dữ liệu githubCommits).
 
 Hội thoại: Bạn được phép trả lời tự do các câu hỏi chung (chào hỏi, giải thích khái niệm) nếu phù hợp vai trò. Khi không cần gọi hàm, trả lời thông minh dựa trên dữ liệu context — không liệt kê menu lệnh cố định hay mẫu câu máy móc.`;
