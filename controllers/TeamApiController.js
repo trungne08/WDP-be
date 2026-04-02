@@ -629,10 +629,17 @@ exports.getRanking = async (req, res) => {
 
         // 5. SẮP XẾP RANKING LẠI THEO ĐIỂM TỪ DATABASE
         rows.sort((a, b) => {
-            if (b.jira.jira_score !== a.jira.jira_score) {
-                return b.jira.jira_score - a.jira.jira_score; // Ưu tiên xếp theo % điểm Jira trước
+            // Tính tổng điểm đóng góp của 2 thanh niên
+            const totalScoreA = (a.jira.jira_score || 0) + (a.github.git_score || 0);
+            const totalScoreB = (b.jira.jira_score || 0) + (b.github.git_score || 0);
+
+            // Xếp hạng theo tổng điểm (Thằng nào điểm to hơn lên trước)
+            if (totalScoreB !== totalScoreA) {
+                return totalScoreB - totalScoreA; 
             }
-            return b.github.git_score - a.github.git_score;   // Nếu bằng Jira thì xếp theo % điểm Git
+            
+            // Nếu tổng điểm vô tình bằng nhau y chang, thì ưu tiên thằng code nhiều hơn (Git > Jira)
+            return (b.github.git_score || 0) - (a.github.git_score || 0);
         });
 
         // 6. CHẠY NGẦM BACKGROUND TASK ĐỂ SYNC DB (Giữ nguyên)
