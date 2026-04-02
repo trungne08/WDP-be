@@ -685,11 +685,8 @@ exports.receiveGithubWebhook = async (req, res) => {
         projectId: String(project._id),
         ...(project.class_id ? { classId: String(project.class_id) } : {})
       };
-      // Emit theo room để chỉ client liên quan mới nhận được.
+      // Chỉ room project — không emit tới cả lớp (tránh "bắn cả làng").
       io.to(`project:${String(project._id)}`).emit('GITHUB_NEW_COMMITS', githubNewCommitsPayload);
-      if (project.class_id) {
-        io.to(String(project.class_id)).emit('GITHUB_NEW_COMMITS', githubNewCommitsPayload);
-      }
     } else if (commitsRaw.length > 0 && commitsSaved === 0) {
       console.log(
         `⚠️ [GitHub Webhook] ${owner}/${repo}: có ${commitsRaw.length} commit nhưng không khớp member (email/github_username) hoặc bị bỏ qua.`
@@ -789,11 +786,8 @@ exports.receiveGithubWebhook = async (req, res) => {
 
             const rt = io || global._io;
             if (rt) {
-              // Cùng format room với join_project / join_class (index.js) — không dùng prefix "class:"
+              // Chỉ room project — client vào project qua join_project (index.js).
               rt.to(`project:${projectIdStr}`).emit('LEADERBOARD_UPDATED', leaderboardData);
-              if (project?.class_id) {
-                rt.to(String(project.class_id)).emit('LEADERBOARD_UPDATED', leaderboardData);
-              }
             }
           } catch (e) {
             console.warn('[GitHub Webhook] Background job error:', e?.message || e);

@@ -288,6 +288,7 @@ async function gatherProjectContext(projectId) {
   const members = teamMembers.map((tm) => ({
     role_in_team: tm.role_in_team || null,
     github_username: tm.github_username || null,
+    jira_account_id: tm.jira_account_id || null,
     student_code: tm.student_id?.student_code || null,
     email: tm.student_id?.email || null,
     full_name: tm.student_id?.full_name || null,

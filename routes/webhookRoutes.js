@@ -14,7 +14,7 @@ module.exports = (app) => {
      *       `webhookCloudId` = Atlassian Cloud ID (UUID), khớp `Project.jiraCloudId`.
      *       Sự kiện: `jira:issue_created`, `jira:issue_updated`, `jira:issue_deleted`.
      *       Đăng ký: `registerJiraWebhook` lúc Sync project → URL `.../api/webhooks/jira/<cloudId>`.
-     *       Sau khi cập nhật MongoDB, Socket.io emit `task_created` / `task_updated` (xoá issue: `task_updated` + `action:delete`) tới room `project:<projectId>`, room lớp (`join_class`), và `io.emit` toàn cục.
+     *       Sau khi cập nhật MongoDB, Socket.io chỉ emit `task_created` / `task_updated` (xoá issue: `task_updated` + `action:delete`) tới room `project:<projectId>` (không broadcast toàn server).
      *     requestBody:
      *       required: true
      *       content:

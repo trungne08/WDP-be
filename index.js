@@ -95,6 +95,15 @@ io.on('connection', (socket) => {
     console.log(`Socket ${socket.id} đã join vào phòng project: ${room}`);
   });
 
+  /** Rời room project khi user chuyển trang (FE — gọi `socket.emit('leave_room', projectId)`). */
+  socket.on('leave_room', (projectId) => {
+    const raw = String(projectId || '').trim();
+    if (!raw) return;
+    const room = raw.startsWith('project:') ? raw : `project:${raw}`;
+    socket.leave(room);
+    console.log(`Socket ${socket.id} đã leave phòng project: ${room}`);
+  });
+
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id);
   });

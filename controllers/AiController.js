@@ -21,6 +21,43 @@ const JiraSyncService = require('../services/JiraSyncService');
 
 const GEMINI_MODEL = process.env.GEMINI_MODEL || 'gemini-2.5-flash';
 
+const SELF_ASSIGNEE_TOKENS = new Set([
+  'self',
+  'me',
+  'current_user',
+  'current',
+  'toi',
+  'tôi',
+  'minh',
+  'mình'
+]);
+
+/**
+ * @param {import('express').Request} req
+ * @param {string|null|undefined} projectId
+ * @param {{ assigneeId?: string }} args
+ * @returns {Promise<string|undefined>} Jira assignee accountId hoặc undefined
+ */
+async function resolveJiraAssigneeAccountId(req, projectId, args) {
+  const raw = (args.assigneeId || '').trim();
+  if (!raw) return undefined;
+  if (!SELF_ASSIGNEE_TOKENS.has(raw.toLowerCase())) {
+    return raw;
+  }
+  if (!projectId || !req.user?._id) return undefined;
+  const proj = await models.Project.findById(projectId).select('team_id').lean();
+  if (!proj?.team_id) return undefined;
+  const tm = await models.TeamMember.findOne({
+    team_id: proj.team_id,
+    student_id: req.user._id,
+    is_active: true
+  })
+    .select('jira_account_id')
+    .lean();
+  const id = (tm?.jira_account_id || '').trim();
+  return id || undefined;
+}
+
 function canUserAccessProjectChat(req, project) {
   const role = req.role;
   const userId = (req.userId || req.user?._id)?.toString();
@@ -42,7 +79,8 @@ const PROJECT_CHAT_TOOLS = {
   functionDeclarations: [
     {
       name: 'create_jira_task',
-      description: 'Tạo một task/issue mới trên Jira.',
+      description:
+        'Tạo một task/issue mới trên Jira. Có thể gán cho người dùng đang chat bằng assigneeId = self.',
       parameters: {
         type: SchemaType.OBJECT,
         properties: {
@@ -54,6 +92,11 @@ const PROJECT_CHAT_TOOLS = {
           description: {
             type: SchemaType.STRING,
             description: 'Mô tả chi tiết (tùy chọn)'
+          },
+          assigneeId: {
+            type: SchemaType.STRING,
+            description:
+              'Tùy chọn. Jira Account ID (UUID Atlassian) của người được gán — lấy từ trường jira_account_id trong context.members. Để gán cho chính user đang chat ("gán cho tôi", "assign cho mình"), truyền đúng chữ self (server map sang TeamMember của user).'
           }
         },
         required: ['summary', 'issueType']
@@ -107,7 +150,7 @@ const PROJECT_CHAT_TOOLS = {
   ]
 };
 
-async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey) {
+async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey, projectId) {
   const clientId = process.env.ATLASSIAN_CLIENT_ID;
   const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
 
@@ -148,13 +191,31 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey) {
             });
             continue;
           }
+          const assigneeAccountId = await resolveJiraAssigneeAccountId(req, projectId, args);
+          if (
+            (args.assigneeId || '').trim() &&
+            SELF_ASSIGNEE_TOKENS.has(String(args.assigneeId).trim().toLowerCase()) &&
+            !assigneeAccountId
+          ) {
+            out.push({
+              name: fc.name,
+              response: {
+                ok: false,
+                error:
+                  'Không gán được cho bạn: chưa có jira_account_id trên TeamMember. Hãy gắn tài khoản Jira (WDP) trước.'
+              }
+            });
+            continue;
+          }
+
           const data = await JiraSyncService.createIssue({
             client,
             projectKey: jiraProjectKey,
             data: {
               summary: args.summary,
               description: args.description || '',
-              issueType: args.issueType || 'Task'
+              issueType: args.issueType || 'Task',
+              ...(assigneeAccountId ? { assigneeAccountId } : {})
             }
           });
           out.push({
@@ -236,7 +297,7 @@ async function executeProjectChatToolRound(req, functionCalls, ctx) {
 
   for (const fc of functionCalls) {
     if (fc.name === 'create_jira_task') {
-      const [one] = await executeJiraCreateBatch(req, [fc], jiraProjectKey);
+      const [one] = await executeJiraCreateBatch(req, [fc], jiraProjectKey, projectId);
       outputs.push(one);
     } else if (fc.name === 'review_github_commit') {
       try {
@@ -493,7 +554,7 @@ exports.projectChat = async (req, res) => {
 Công cụ (function calling): suy luận ý định từ ngôn ngữ tự nhiên — không cần khớp từ khóa cứng.
 - exportReport({ reportType }): tạo báo cáo PDF (và bản Markdown nội bộ) — SRS/đặc tả (srs), tiến độ (progress), tổng quan (general). Phản hồi của tool có downloadUrl (link tải PDF). Khi có downloadUrl, bắt buộc gửi cho user dạng Markdown: [Tải báo cáo tại đây](downloadUrl) kèm một lời chúc may mắn ngắn gọn. Ví dụ ý định: "xuất SRS", "xuất file", "tải báo cáo PDF", "báo cáo tiến độ".
 - getMemberStats(): điểm Git/Jira và tỷ lệ đóng góp từng thành viên (khi hỏi ranking, điểm, ai đóng góp nhiều). Có thể kết hợp với dữ liệu trong context.
-- create_jira_task: Tạo task/issue Jira khi user muốn tạo việc mới.
+- create_jira_task({ summary, issueType, description?, assigneeId? }): Tạo task/issue Jira. Bạn hoàn toàn có thể gán task cho chính user đang chat: trong context mỗi member có jira_account_id; hoặc truyền assigneeId = self để server gán đúng người đang chat (TeamMember).
 - review_github_commit: Review/chấm commit khi user đưa SHA hoặc yêu cầu review (commitHash trong dữ liệu githubCommits).
 
 Hội thoại: Bạn được phép trả lời tự do các câu hỏi chung (chào hỏi, giải thích khái niệm) nếu phù hợp vai trò. Khi không cần gọi hàm, trả lời thông minh dựa trên dữ liệu context — không liệt kê menu lệnh cố định hay mẫu câu máy móc.`;
@@ -515,7 +576,7 @@ Nguyên tắc: Trả lời tin nhắn hiện tại của user; chỉ dựa trên
         : `${ID_SAFETY_RULE}
 
 Bạn là AI Scrum Master của dự án.
-Dữ liệu nhóm (Jira & GitHub; members có thể có git_contribution_ratio / jira_contribution_ratio nếu đã persist):
+Dữ liệu nhóm (Jira & GitHub; mỗi member có jira_account_id nếu đã gắn Jira; git_contribution_ratio / jira_contribution_ratio nếu đã persist):
 ${contextData}
 
 Jira project key trên WDP: ${activeProjectKeyForTools}
