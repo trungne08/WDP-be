@@ -27,19 +27,31 @@ async function persistTeamMemberJiraScores(models, teamId) {
 
   let totalTeamStoryPoints = 0;
   const personalByAssignee = new Map();
+  
   for (const t of tasks) {
     if (!isJiraTaskDone(t)) continue;
-    const sp = Number(t.story_point) || 0;
-    totalTeamStoryPoints += sp;
+    
+    // 🔥 FIX 1: CHẶN ĐỨNG TASK VÔ CHỦ NGAY TỪ ĐẦU
     const aid = (t.assignee_account_id || '').toString().trim();
-    if (!aid) continue;
+    if (!aid || aid === 'null') continue; 
+
+    const sp = Number(t.story_point) || 0;
+    
+    // 🔥 FIX 2: Chỉ cộng vào quỹ điểm chung khi task CÓ NGƯỜI LÀM
+    totalTeamStoryPoints += sp; 
+    
     personalByAssignee.set(aid, (personalByAssignee.get(aid) || 0) + sp);
   }
 
   const bulk = members.map((m) => {
     const jiraId = memberJiraAccountId(m);
-    const personal = jiraId ? personalByAssignee.get(jiraId) || 0 : 0;
+    
+    // 🔥 BẢO VỆ 2 LỚP: Đảm bảo không map nhầm null === null
+    const safeJiraId = (jiraId && jiraId !== 'null') ? jiraId : null;
+    
+    const personal = safeJiraId ? personalByAssignee.get(safeJiraId) || 0 : 0;
     const jiraScore = totalTeamStoryPoints > 0 ? personal / totalTeamStoryPoints : 0;
+    
     return {
       updateOne: {
         filter: { _id: m._id },

@@ -18,16 +18,21 @@ async function persistTeamMemberGitScores(models, teamId) {
     .select('author_email author_name author_github_id')
     .lean();
 
-  const total = commits.length;
+  // 🔥 FIX 1: Khởi tạo mẫu số = 0
+  let total = 0; 
   const counts = new Map();
   for (const m of members) {
     counts.set(String(m._id), 0);
   }
+  
   for (const c of commits) {
     const winner = pickMemberForCommit(c, members);
     if (winner) {
       const k = String(winner._id);
       counts.set(k, (counts.get(k) || 0) + 1);
+      
+      // 🔥 FIX 2: Chỉ cộng vào mẫu số tổng khi commit ĐÃ TÌM ĐƯỢC CHỦ
+      total++;
     }
   }
 
