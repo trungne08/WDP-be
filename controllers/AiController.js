@@ -90,6 +90,7 @@ async function resolveJiraSprintNumericForCreate(req, projectId, args) {
   }
 
   const raw = (args.sprintId || '').trim();
+  const isExplicitSprint = !!raw;
   if (!raw) return activeJiraSprintNumeric();
 
   // Mongo _id → chỉ để lookup bản ghi Sprint, API vẫn dùng field jira_sprint_id
@@ -101,7 +102,7 @@ async function resolveJiraSprintNumericForCreate(req, projectId, args) {
       .select('jira_sprint_id')
       .lean();
     const jid = toPositiveJiraSprintNumeric(sp?.jira_sprint_id);
-    return jid ?? (await activeJiraSprintNumeric());
+    return jid;
   }
 
   // Khớp tên đúng (vd: "Sprint 1", "sprint 1")
@@ -126,26 +127,17 @@ async function resolveJiraSprintNumericForCreate(req, projectId, args) {
       .select('jira_sprint_id')
       .lean();
     jid = toPositiveJiraSprintNumeric(bySprintLabel?.jira_sprint_id);
-    if (jid) return jid;
-    return activeJiraSprintNumeric();
+    return jid;
   }
 
   // Chuỗi số dài → coi là jira_sprint_id thật trên Jira Cloud
   if (/^\d{4,}$/.test(raw)) {
     jid = toPositiveJiraSprintNumeric(raw);
-    if (jid) return jid;
+    return jid;
   }
-
-  // Tên lỏng (chứa cụm user nhập)
-  const loose = await models.Sprint.findOne({
-    team_id: teamId,
-    name: new RegExp(escapeRegex(raw), 'i')
-  })
-    .sort({ updatedAt: -1 })
-    .select('jira_sprint_id')
-    .lean();
-  jid = toPositiveJiraSprintNumeric(loose?.jira_sprint_id);
-  return jid ?? (await activeJiraSprintNumeric());
+  // Nếu user đã truyền sprintId/sprintName rõ ràng (raw non-empty) mà không match theo các rule ở trên,
+  // thì trả null để tránh Jira tự fallback vào Backlog/Default Sprint.
+  return null;
 }
 
 function canUserAccessProjectChat(req, project) {
@@ -259,19 +251,68 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey, projec
     }));
   }
 
-  if (!req.user?.integrations?.jira?.accessToken) {
+  // IMPORTANT: lấy Jira credentials từ Leader/setup Jira của Project/Team
+  // để addIssueToSprint / transition lên board chung không bị 404 do cloudId khác nhau.
+  async function resolveLeaderJiraUserForProject(pid) {
+    const project = await models.Project.findById(pid).select('leader_id team_id').lean();
+    if (!project?.team_id) return null;
+
+    // 1) Prefer Project.leader_id
+    if (project.leader_id) {
+      const student = await models.Student.findById(project.leader_id);
+      if (student?.integrations?.jira?.accessToken && student.integrations.jira.cloudId) {
+        return student;
+      }
+    }
+
+    // 2) Fallback: TeamMember role_in_team=Leader
+    const leaderTm = await models.TeamMember.findOne({
+      team_id: project.team_id,
+      role_in_team: 'Leader',
+      is_active: true
+    })
+      .populate('student_id')
+      .lean();
+
+    const leaderStudentId = leaderTm?.student_id?._id || leaderTm?.student_id;
+    if (leaderStudentId) {
+      const student = await models.Student.findById(leaderStudentId);
+      if (student?.integrations?.jira?.accessToken && student.integrations.jira.cloudId) {
+        return student;
+      }
+    }
+
+    // 3) Final fallback: any active member that has Jira connected
+    const anyMember = await models.TeamMember.findOne({
+      team_id: project.team_id,
+      is_active: true
+    })
+      .populate('student_id')
+      .lean();
+
+    const anyStudentId = anyMember?.student_id?._id || anyMember?.student_id;
+    if (anyStudentId) {
+      const student = await models.Student.findById(anyStudentId);
+      if (student?.integrations?.jira?.accessToken && student.integrations.jira.cloudId) {
+        return student;
+      }
+    }
+    return null;
+  }
+
+  const leaderJiraUser = await resolveLeaderJiraUserForProject(projectId);
+  if (!leaderJiraUser) {
     return functionCalls.map((fc) => ({
       name: fc.name,
       response: {
         ok: false,
-        error:
-          'Tài khoản chưa kết nối Jira OAuth. Vui lòng kết nối Jira để dùng tính năng này.'
+        error: 'Chưa cấu hình Jira cho Leader/Project. Vui lòng setup Jira trước khi tạo task.'
       }
     }));
   }
 
   return JiraSyncService.syncWithAutoRefresh({
-    user: req.user,
+    user: leaderJiraUser,
     clientId,
     clientSecret,
     syncFunction: async (client, agileContext) => {
@@ -304,6 +345,20 @@ async function executeJiraCreateBatch(req, functionCalls, jiraProjectKey, projec
           }
 
           const jiraSprintNumeric = await resolveJiraSprintNumericForCreate(req, projectId, args);
+          const rawSprintArg = String(args.sprintId || '').trim();
+          if (jiraSprintNumeric == null) {
+            out.push({
+              name: fc.name,
+              response: {
+                ok: false,
+                issueCreated: false,
+                error: rawSprintArg
+                  ? `Không tìm thấy sprint "${rawSprintArg}" trong team để gán cho Jira.`
+                  : 'Không tìm thấy sprint đang active (state=active) trong team để gán cho Jira.'
+              }
+            });
+            continue;
+          }
 
           const data = await JiraSyncService.createIssue({
             client,
