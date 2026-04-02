@@ -1,3 +1,4 @@
+const mongoose = require('mongoose');
 const { Sprint, JiraTask } = require('../models/JiraData');
 const Team = require('../models/Team');
 const Project = require('../models/Project');
@@ -67,6 +68,106 @@ async function getJiraOAuthConfig(req) {
     jira, 
     clientId, 
     clientSecret, 
+    onTokenRefresh,
+    accessToken: jira.accessToken,
+    cloudId: jira.cloudId
+  };
+}
+
+/**
+ * Lấy Jira OAuth config (cloudId + accessToken + onTokenRefresh) dựa trên Leader/setup Jira của TEAM.
+ * Mục tiêu: các request cập nhật status/transition trên cùng Project board phải dùng đúng credentials có quyền,
+ * KHÔNG dùng credentials của user đang request (vì mỗi user có cloudId khác nhau → 404).
+ *
+ * @param {string|import('mongoose').Types.ObjectId} teamId
+ * @returns {Promise<{user:any, jira:any, clientId:string, clientSecret:string, onTokenRefresh:Function, accessToken:string, cloudId:string}>}
+ */
+async function getJiraOAuthConfigForTeamLeader(teamId) {
+  const _teamId = String(teamId || '').trim();
+  if (!mongoose.Types.ObjectId.isValid(_teamId)) {
+    const err = new Error('team_id không hợp lệ để lấy Jira OAuth.');
+    err.code = 'INVALID_TEAM_ID';
+    err.status = 400;
+    throw err;
+  }
+
+  const clientId = process.env.ATLASSIAN_CLIENT_ID;
+  const clientSecret = process.env.ATLASSIAN_CLIENT_SECRET;
+  if (!clientId || !clientSecret) {
+    throw new Error('Thiếu ATLASSIAN_CLIENT_ID hoặc ATLASSIAN_CLIENT_SECRET trong .env');
+  }
+
+  // 1) Ưu tiên: Leader của Project (Project.leader_id)
+  const project = await Project.findOne({ team_id: _teamId }).sort({ updatedAt: -1 }).lean();
+  let leaderStudentId = project?.leader_id;
+
+  // 2) Fallback: TeamMember có role_in_team = 'Leader'
+  if (!leaderStudentId) {
+    const leaderTm = await models.TeamMember.findOne({
+      team_id: _teamId,
+      role_in_team: 'Leader',
+      is_active: true
+    }).populate('student_id');
+    leaderStudentId = leaderTm?.student_id?._id;
+  }
+
+  let chosenStudent = null;
+  if (leaderStudentId) {
+    chosenStudent = await models.Student.findById(leaderStudentId);
+  }
+
+  // 3) Final fallback: bất kỳ member nào có integrations.jira đầy đủ
+  if (!chosenStudent?.integrations?.jira?.accessToken || !chosenStudent?.integrations?.jira?.cloudId) {
+    const members = await models.TeamMember.find({ team_id: _teamId, is_active: true })
+      .select('student_id')
+      .populate('student_id');
+    for (const tm of members) {
+      const s = tm?.student_id;
+      if (s?.integrations?.jira?.accessToken && s.integrations.jira.cloudId) {
+        chosenStudent = s;
+        break;
+      }
+    }
+  }
+
+  const jira = chosenStudent?.integrations?.jira;
+  if (!jira?.accessToken || !jira?.cloudId) {
+    const error = new Error(
+      'Chưa kết nối Jira cho Leader/hoặc người đã setup Jira của Project này. Vui lòng thiết lập Jira trước.'
+    );
+    error.code = 'JIRA_NOT_CONNECTED';
+    error.status = 400;
+    throw error;
+  }
+
+  const onTokenRefresh = async () => {
+    if (!jira.refreshToken) {
+      const error = new Error('Không có refresh_token. Vui lòng đăng nhập lại Jira.');
+      error.code = 'REFRESH_TOKEN_MISSING';
+      throw error;
+    }
+
+    const { accessToken, refreshToken, cloudId: newCloudId } = await JiraAuthService.refreshAccessToken({
+      clientId,
+      clientSecret,
+      refreshToken: jira.refreshToken
+    });
+
+    chosenStudent.integrations.jira.accessToken = accessToken;
+    chosenStudent.integrations.jira.refreshToken = refreshToken;
+    if (newCloudId) {
+      chosenStudent.integrations.jira.cloudId = newCloudId;
+    }
+    await chosenStudent.save();
+
+    return accessToken;
+  };
+
+  return {
+    user: chosenStudent,
+    jira,
+    clientId,
+    clientSecret,
     onTokenRefresh,
     accessToken: jira.accessToken,
     cloudId: jira.cloudId
@@ -601,7 +702,9 @@ exports.updateTask = async (req, res) => {
             ? formatDateOnlyForJira(due_date)
             : null;
 
-        const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfig(req);
+        // IMPORTANT: Không dùng credentials của req.user để transition/cập nhật lên Project board chung.
+        // Mỗi user có cloudId/accessToken khác nhau → 404.
+        const { accessToken, cloudId, onTokenRefresh } = await getJiraOAuthConfigForTeamLeader(team_id);
         const clientV2 = JiraSyncService.createJiraApiV2Client({ accessToken, cloudId, onTokenRefresh });
 
         // === BƯỚC 1–3: GỌI TẤT CẢ JIRA API TRƯỚC — thất bại bất kỳ -> throw
