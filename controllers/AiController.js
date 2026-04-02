@@ -685,16 +685,42 @@ Nguyên tắc: Trả lời tin nhắn hiện tại; phân tích tiến độ, ta
 };
 
 /**
- * GET /api/ai/project/:projectId/export-srs
- * Xuất báo cáo SRS (Markdown) cho project.
+ * FE có thể gửi TEAM_ID hoặc PROJECT_ID. Ưu tiên: Team → Project (mới nhất theo updatedAt); fallback: Project theo id.
+ * @returns {Promise<{ project: object, resolvedTeamId: string|null }|{ error: string, status: number }>}
+ */
+async function resolveProjectForSrsExport(rawId) {
+  if (!rawId || !mongoose.Types.ObjectId.isValid(String(rawId))) {
+    return { error: 'id hợp lệ là bắt buộc.', status: 400 };
+  }
+
+  const team = await models.Team.findById(rawId).lean();
+  if (team) {
+    const project = await models.Project.findOne({ team_id: team._id })
+      .sort({ updatedAt: -1 })
+      .lean();
+    if (!project) {
+      return {
+        error: 'Không tìm thấy project gắn với nhóm này (team chưa có Project trên WDP).',
+        status: 404
+      };
+    }
+    return { project, resolvedTeamId: String(team._id) };
+  }
+
+  const project = await models.Project.findById(rawId).lean();
+  if (!project) {
+    return { error: 'Không tìm thấy nhóm hoặc project.', status: 404 };
+  }
+  return { project, resolvedTeamId: project.team_id ? String(project.team_id) : null };
+}
+
+/**
+ * GET /api/ai/project/:projectId/export-srs | GET /api/ai/teams/:id/export-srs
+ * Xuất báo cáo SRS (Markdown) cho project (context theo team của project — GitHub/Jira đúng nhóm).
  */
 exports.exportSrs = async (req, res) => {
   try {
-    const { projectId } = req.params || {};
-
-    if (!projectId || !mongoose.Types.ObjectId.isValid(String(projectId))) {
-      return res.status(400).json({ error: 'projectId hợp lệ là bắt buộc.' });
-    }
+    const rawId = req.params.projectId || req.params.id;
 
     if (!hasGeminiApiKeys()) {
       return res.status(503).json({
@@ -702,16 +728,17 @@ exports.exportSrs = async (req, res) => {
       });
     }
 
-    const project = await models.Project.findById(projectId).lean();
-    if (!project) {
-      return res.status(404).json({ error: 'Không tìm thấy project.' });
+    const resolved = await resolveProjectForSrsExport(rawId);
+    if (resolved.error) {
+      return res.status(resolved.status).json({ error: resolved.error });
     }
+    const { project, resolvedTeamId } = resolved;
 
     if (!canUserAccessProjectChat(req, project)) {
       return res.status(403).json({ error: 'Bạn không có quyền truy cập project này.' });
     }
 
-    const contextData = await gatherProjectContext(String(projectId));
+    const contextData = await gatherProjectContext(String(project._id));
     if (!contextData) {
       return res.status(404).json({ error: 'Không tìm thấy dữ liệu context để tạo SRS.' });
     }

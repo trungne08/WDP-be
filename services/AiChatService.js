@@ -352,19 +352,33 @@ async function gatherProjectContext(projectId) {
     countedCommitsByAuthorEmail[key] = (countedCommitsByAuthorEmail[key] || 0) + 1;
   }
 
+  const totalStoryPoints = jiraTasksRaw.reduce((a, t) => a + (Number(t.story_point) || 0), 0);
+  const doneStoryPoints = jiraTasksRaw
+    .filter((t) => taskLooksDone(t))
+    .reduce((a, t) => a + (Number(t.story_point) || 0), 0);
+
   const payload = {
     project: {
       name: project.name,
       class_name: project.class_id?.name || null,
       jiraProjectKey: project.jiraProjectKey || '',
-      githubRepoUrl: project.githubRepoUrl || ''
+      githubRepoUrl: project.githubRepoUrl || '',
+      team_id: teamId ? String(teamId) : null
     },
     members,
     jiraTasks,
     githubCommits,
     precomputed: {
       doneTasksByAssignee,
-      countedCommitsByAuthorEmail
+      countedCommitsByAuthorEmail,
+      teamDashboard: {
+        team_id: String(teamId),
+        total_jira_tasks: jiraTasksRaw.length,
+        total_story_points: totalStoryPoints,
+        done_story_points: doneStoryPoints,
+        total_commits: commitsRaw.length,
+        counted_commits: commitsRaw.filter((c) => c.is_counted).length
+      }
     }
   };
 
@@ -534,15 +548,21 @@ async function saveMarkdownAsPdfFile(markdown, projectId, req) {
 
 /**
  * Sinh Markdown (Gemini) rồi xuất PDF; trả `downloadUrl` cho tool exportReport.
- * Dùng puppeteer (đã khai báo trong package.json); html-pdf-node giữ trong deps nếu cần mở rộng sau.
+ * `projectId` — Project._id (đã resolve); `teamId` (optional) — nếu FE gửi team id, truyền để tên file PDF gắn team.
  */
-async function generateExportReportWithPdf(contextData, reportType, modelName, { projectId, req }) {
+async function generateExportReportWithPdf(
+  contextData,
+  reportType,
+  modelName,
+  { projectId, req, teamId }
+) {
   const mdResult = await generateExportReportMarkdown(contextData, reportType, modelName);
   if (!mdResult.ok) return mdResult;
   try {
+    const pdfScopeId = teamId ? `${String(projectId)}_team${String(teamId)}` : projectId;
     const { filename, downloadUrl, filePath } = await saveMarkdownAsPdfFile(
       mdResult.markdown,
-      projectId,
+      pdfScopeId,
       req
     );
     return {

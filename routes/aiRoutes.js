@@ -10,4 +10,9 @@ module.exports = (app) => {
     authenticateToken,
     AiController.exportSrs
   );
+  app.get(
+    '/api/ai/teams/:id/export-srs',
+    authenticateToken,
+    AiController.exportSrs
+  );
 };
